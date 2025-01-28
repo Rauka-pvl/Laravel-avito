@@ -21,12 +21,12 @@ class UpdateController extends Controller
     }
     public function update()
     {
-        $handle = popen('python3 /path/to/script.py > /dev/null 2>&1 &', 'r');
+        $handle = popen('python3 /home/admin/web/233204.fornex.cloud/public_html/python_modules/price_photo_update/main.py > /dev/null 2>&1 &', 'r');
         pclose($handle);
     }
     public function update1()
     {
-        $pythonScript = '/путь/к/вашему/script.py';
+        $pythonScript = '/home/admin/web/233204.fornex.cloud/public_html/python_modules/price_photo_update/main.py';
 
         // Формируем команду для запуска в фоне
         $command = "nohup python3 $pythonScript > /dev/null 2>&1 &";
