@@ -9,13 +9,17 @@ import time
 from datetime import datetime
 
 
+# Пути для логов и XML
+LOGS_PATH = "/home/admin/web/233204.fornex.cloud/public_html/storage/logs/update/"
+XML_OUTPUT_PATH = "/home/admin/web/233204.fornex.cloud/public_html/public/"
+
+
 # Настройка логирования
 
 def setup_logging():
     # Уникальное имя файла для каждого запуска
-    log_dir = "logs"
-    os.makedirs(log_dir, exist_ok=True)  # Создаем папку logs, если ее нет
-    log_filename = os.path.join(log_dir, f"update_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+    os.makedirs(LOGS_PATH, exist_ok=True)  # Создаем папку для логов, если ее нет
+    log_filename = os.path.join(LOGS_PATH, f"update_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
 
     # Настройка логирования
     logger = logging.getLogger()
@@ -128,18 +132,27 @@ def combine_yml_files(urls):
 
     return combined_root
 
-def save_xml_with_formatting(root, output_file):
+def save_xml_with_formatting(root, filename):
+    """
+    Сохраняет отформатированный XML в XML_OUTPUT_PATH.
+    """
     try:
+        os.makedirs(XML_OUTPUT_PATH, exist_ok=True)  # Создаем папку для XML, если ее нет
+        output_file = os.path.join(XML_OUTPUT_PATH, filename)
+
         # Добавляем отступы для форматирования XML
         ET.indent(root, space="    ", level=0)
 
-        # Создаем дерево XML и сохраняем в файл
+        # Сохраняем XML
         tree = ET.ElementTree(root)
-        tree.write(output_file, encoding='utf-8', xml_declaration=True)
-        logging.info(f"XML успешно сохранен в {output_file} с форматированием.")
-    except Exception as e:
-        logging.error(f"Ошибка при сохранении XML с форматированием: {e}")
+        tree.write(output_file, encoding="utf-8", xml_declaration=True)
 
+        logging.info(f"XML успешно сохранен в {output_file}")
+        return output_file
+    except Exception as e:
+        logging.error(f"Ошибка при сохранении XML: {e}")
+        return None
+    
 # Подключение к базе данных MySQL
 def connect_to_db():
     try:
@@ -276,10 +289,13 @@ def process_yml_catalog(root, db_connection):
             logging.info(f"Обрабатываем Offer ID: {offer.get('id')}, Бренд: {vendor}, Артикул: {vendor_code}")
 
             # Обновляем цену
-            updated = update_price_yml(offer, vendor, vendor_code, db_connection)
+            price_updated = update_price_yml(offer, vendor, vendor_code, db_connection)
 
-            # Обновляем фото (при необходимости)
-            if updated:
+            # Обновляем фото
+            photo_updated = update_photo_yml(offer, db_connection)
+
+            # Увеличиваем счетчик, если хоть одно из значений было обновлено
+            if price_updated or photo_updated:
                 updated_offers_count += 1
 
     except Exception as e:
