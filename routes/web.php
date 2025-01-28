@@ -54,8 +54,8 @@ Route::middleware('auth')->group(function () {
     Route::get('/update', [UpdateController::class, 'index'])->name('update');
 });
 
-Route::get('/update', [UpdateController::class, 'update'])->name('update');
-Route::get('/update1', [UpdateController::class, 'update1'])->name('update1');
+Route::get('/update1', [UpdateController::class, 'update'])->name('update');
+Route::get('/update2', [UpdateController::class, 'update1'])->name('update1');
 
 Route::get('/phpInfo', function () {
     phpinfo();
