@@ -144,9 +144,9 @@ def save_xml_with_formatting(root, output_file):
 def connect_to_db():
     try:
         return mysql.connector.connect(
-            host="localhost",
-            user="root",
-            password="",
+            host="127.0.0.1",
+            user="uploader",
+            password="uploader",
             database="avito"
         )
     except mysql.connector.Error as err:
