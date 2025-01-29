@@ -52,10 +52,11 @@ Route::middleware('auth')->group(function () {
     Route::delete('brands/{id}/clear', [BrandSpravController::class, 'clear'])->name('brands.clear');
 
     Route::get('/update', [UpdateController::class, 'index'])->name('update');
+    Route::get('/update/status', [UpdateController::class, 'updateStatus'])->name('updateStatus');
 });
 
-Route::get('/update1', [UpdateController::class, 'update'])->name('update');
-Route::get('/update2', [UpdateController::class, 'update1'])->name('update1');
+Route::get('/update1', [UpdateController::class, 'update'])->name('updateXML2');
+Route::get('/updateXML', [UpdateController::class, 'update1'])->name('updateXML');
 
 Route::get('/phpInfo', function () {
     phpinfo();

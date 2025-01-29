@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\BrandSpravController;
 use App\Http\Controllers\ImagesController;
+use App\Http\Controllers\UpdateController;
 use App\Jobs\UpdateXmlJob;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\BrandSprav;
+use App\Models\Config;
 use App\Models\Update;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
@@ -15,16 +16,20 @@ class UpdateController extends Controller
 
     public function index()
     {
-        $timeXML = Update::find(1);
-        $timeYAML = Update::find(2);
-        return view('update', compact('timeXML', 'timeYAML'));
+        $statusXML = Config::where('name', '=', 'xml_update_status')->first();
+        $statusYML = Config::where('name', '=', 'yml_update_status')->first();
+        $timeXML = Config::where('name', '=', 'xml_update_time')->first();
+        $timeYML = Config::where('name', '=', 'yml_update_time')->first();
+        return view('update', compact('timeXML', 'timeYML', 'statusXML', 'statusYML'));
     }
-    public function update()
+    public function update1()
     {
         $handle = popen('python3 /home/admin/web/233204.fornex.cloud/public_html/python_modules/price_photo_update/main.py > /dev/null 2>&1 &', 'r');
         pclose($handle);
+
+        return redirect()->back()->with(['success' => 'Запуск обновления цен и фотографий запущен']);
     }
-    public function update1()
+    public function update()
     {
         $pythonScript = '/home/admin/web/233204.fornex.cloud/public_html/python_modules/price_photo_update/main.py';
 
@@ -35,6 +40,15 @@ class UpdateController extends Controller
         exec($command);
 
         // PHP-код продолжает выполняться сразу после запуска Python-скрипта
-        echo "Python-скрипт запущен в фоне, выполнение PHP-кода продолжается.";
+        return redirect()->back()->with(['success' => 'Запуск обновления цен и фотографий запущен']);
+    }
+
+    public function updateStatus()
+    {
+        $data[0] = Config::where('name', '=', 'xml_update_status')->first();
+        $data[1] = Config::where('name', '=', 'yml_update_status')->first();
+        $data[2] = Config::where('name', '=', 'xml_update_time')->first();
+        $data[3] = Config::where('name', '=', 'yml_update_time')->first();
+        return response()->json($data);
     }
 }

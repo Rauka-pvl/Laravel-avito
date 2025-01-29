@@ -25,23 +25,19 @@
                     <div class="flex gap-4 mb-6">
                         <a href="{{ route('updateXML') }}"
                             class="px-6 py-3 bg-blue-500 hover:bg-blue-600 text-white font-semibold rounded-md shadow-md transition">
-                            Обновление XML
-                        </a>
-                        <a href="{{ route('updateYaml') }}"
-                            class="px-6 py-3 bg-green-500 hover:bg-green-600 text-white font-semibold rounded-md shadow-md transition">
-                            Обновление YAML
+                            Обновление XML и YML
                         </a>
                     </div>
 
                     <!-- Блок последнего обновления -->
                     <div class="mt-6">
-                        <h2 class="text-xl font-semibold mb-2">Последнее обновление</h2>
+                        <h2 class="text-xl font-semibold mb-2">Статус и Время обновление</h2>
                         <div class="bg-gray-100 dark:bg-gray-700 p-4 rounded-md shadow-md">
                             <p class="text-gray-700 dark:text-gray-300">
-                                <strong>XML:</strong> {{ $timeXML->updated_at ?? 'Данные отсутствуют' }}
+                                <strong>XML:</strong> <span id="xml-status">{{ $statusXML->value ?? 'Данные отсутствуют' }}</span> - <span id="xml-time">{{ $timeXML->value ?? 'Данные отсутствуют' }}</span>
                             </p>
                             <p class="text-gray-700 dark:text-gray-300">
-                                <strong>YAML:</strong> {{ $timeYAML->updated_at ?? 'Данные отсутствуют' }}
+                                <strong>YML:</strong> <span id="yml-status">{{ $timeYML->value ?? 'Данные отсутствуют' }}</span> - <span id="yml-status">{{ $timeYML->value ?? 'Данные отсутствуют' }}</span>
                             </p>
                         </div>
                     </div>
@@ -56,4 +52,21 @@
             </div>
         </div>
     </div>
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            function updateStatus() {
+                fetch("{{ url('/update/status') }}")
+                    .then(response => response.json())
+                    .then(data => {
+                        document.getElementById("xml-status").textContent = data[0]['value'] || "Данные отсутствуют";
+                        document.getElementById("yml-status").textContent = data[1]['value'] || "Данные отсутствуют";
+                    })
+                    .catch(error => console.error("Ошибка при обновлении статуса:", error));
+            }
+
+            // Обновлять каждые 5 минут (300000 мс)
+            setInterval(updateStatus, 300000);
+            updateStatus(); // Вызываем сразу при загрузке страницы
+        });
+    </script>
 </x-app-layout>
