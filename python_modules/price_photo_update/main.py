@@ -438,10 +438,14 @@ def process_articles():
                 ]
                 combined_root_1 = combine_xml_files(urls_file_1)
                 update_articles_and_save(combined_root_1, "avito_xml.xml")
-                update_config_status(db_connection, "xml_update_status", "done")  # XML успешно обработан
+
+                # Записываем время завершения обновления XML
+                update_config_status(db_connection, "xml_update_status", "done")
+                update_config_status(db_connection, "xml_update_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
             except Exception as e:
                 logging.error(f"Ошибка при обработке XML: {e}")
-                update_config_status(db_connection, "xml_update_status", "failed")  # Ошибка при обработке XML
+                update_config_status(db_connection, "xml_update_status", "failed")
 
             # Обработка YML
             try:
@@ -453,10 +457,14 @@ def process_articles():
                 updated_count = process_yml_catalog(combined_root_2, db_connection)
                 save_xml_with_formatting(combined_root_2, "zzap_yml.xml")
                 logging.info(f"Обновлено {updated_count} предложений во втором наборе.")
-                update_config_status(db_connection, "yml_update_status", "done")  # YML успешно обработан
+
+                # Записываем время завершения обновления YML
+                update_config_status(db_connection, "yml_update_status", "done")
+                update_config_status(db_connection, "yml_update_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
             except Exception as e:
                 logging.error(f"Ошибка при обработке YML: {e}")
-                update_config_status(db_connection, "yml_update_status", "failed")  # Ошибка при обработке YML
+                update_config_status(db_connection, "yml_update_status", "failed")
 
     except Exception as e:
         logging.error(f"Критическая ошибка при выполнении процесса: {e}")
