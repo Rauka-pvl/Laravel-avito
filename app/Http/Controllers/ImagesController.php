@@ -34,7 +34,7 @@ class ImagesController extends Controller
                 ->orWhereRaw('LOWER(sprav) LIKE LOWER(CONCAT("%", ?, "%"))', [$request->brand])
                 ->orWhereRaw('LOWER(sprav) = LOWER(?)', [$request->brand]);
         })->first();
-        if ($brands->count() > 0) {
+        if ($brands && $brands->count() > 0) {
             $brand = $brands->brand;
         } else {
             $brand = $request->brand;
