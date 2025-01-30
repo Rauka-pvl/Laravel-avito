@@ -103,7 +103,7 @@ class ImagesController extends Controller
             }
 
             foreach ($result as $row) {
-                $url = "https://233204.fornex.cloud/storage/uploads/" . strtolower($row->brand) . "/" . strtolower($row->articul);
+                $url = "https://233204.fornex.cloud/storage/uploads/" . strtolower($row->brand) . "/" . $row->articul;
                 $url = str_replace(' ', '%20', $url);
 
                 // Проверяем, существует ли файл
