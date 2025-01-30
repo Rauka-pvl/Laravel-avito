@@ -67,10 +67,19 @@ class ImagesController extends Controller
         $pdo = DB::connection()->getPdo();
         $json = json_decode($request->getContent());
         $json = $json[0] ?? $json;
-        $stmt1 = $pdo->prepare("SELECT brand FROM brand_sprav WHERE LOWER(brand) = LOWER(:brand) OR LOWER(sprav) LIKE LOWER(CONCAT('% | ',:sprav,' | %')) OR LOWER(sprav) LIKE LOWER(CONCAT('%',:sprav,'%')) OR LOWER(sprav) = LOWER(:sprav)");
-        $stmt1->bindParam(':brand', $json->brand, PDO::PARAM_STR);
-        $stmt1->bindParam(':sprav', $json->brand, PDO::PARAM_STR);
-        $stmt1->execute();
+        $stmt1 = $pdo->prepare("SELECT brand FROM brand_sprav
+            WHERE LOWER(brand) = LOWER(:brand)
+            OR LOWER(sprav) LIKE LOWER(CONCAT('% | ', :sprav1, ' | %'))
+            OR LOWER(sprav) LIKE LOWER(CONCAT('%', :sprav2, '%'))
+            OR LOWER(sprav) = LOWER(:sprav3)");
+
+        $stmt1->execute([
+            ':brand' => $json->brand,
+            ':sprav1' => $json->brand,
+            ':sprav2' => $json->brand,
+            ':sprav3' => $json->brand,
+        ]);
+
         $sprav = $stmt1->fetch(PDO::FETCH_COLUMN);
         if ($sprav) {
             $brand = $sprav[0];
