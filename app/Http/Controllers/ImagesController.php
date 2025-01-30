@@ -47,7 +47,7 @@ class ImagesController extends Controller
         $data = [];
         if ($images->count() > 0) {
             foreach ($images as $image) {
-                $url = "https://233204.fornex.cloud/uploads/" . strtolower($image->brand) . "/" . strtolower($image->articul);
+                $url = "https://233204.fornex.cloud/storage/uploads/" . strtolower($image->brand) . "/" . strtolower($image->articul);
                 $url = str_replace(' ', '%20', $url);
                 $imageInfo = getimagesize($url);
                 if ($imageInfo !== false) {
