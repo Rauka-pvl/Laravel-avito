@@ -96,12 +96,22 @@ class ImagesController extends Controller
 
         $data = [];
         if (!empty($result)) {
+            function remoteFileExists($url)
+            {
+                $headers = @get_headers($url);
+                return $headers && strpos($headers[0], '200') !== false;
+            }
+
             foreach ($result as $row) {
-                $url = "https://233204.fornex.cloud/uploads/" . strtolower($row->brand) . "/" . strtolower($row->articul);
+                $url = "https://233204.fornex.cloud/uploads/" . ucfirst(strtolower($row->brand)) . "/" . strtolower($row->articul);
                 $url = str_replace(' ', '%20', $url);
-                $imageInfo = getimagesize($url);
-                if ($imageInfo !== false) {
-                    array_push($data, ["url" => $url]);
+
+                // Проверяем, существует ли файл
+                if (remoteFileExists($url)) {
+                    $imageInfo = getimagesize($url);
+                    if ($imageInfo !== false) {
+                        array_push($data, ["url" => $url]);
+                    }
                 }
             }
 
