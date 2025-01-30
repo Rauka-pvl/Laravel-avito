@@ -123,7 +123,7 @@ class ImagesController extends Controller
                 return response()->json(["error" => "Изображение не найдено"], 404);
             }
         } else {
-            return response()->json(["error" => "Изображение не найдено!"], 404);
+            return response()->json(["error" => "Изображение не найдено!", $result], 404);
         }
     }
     public function view(Request $request)
