@@ -34,7 +34,7 @@ class ImagesController extends Controller
                 ->orWhereRaw('LOWER(sprav) LIKE LOWER(CONCAT("%", ?, "%"))', [$request->brand])
                 ->orWhereRaw('LOWER(sprav) = LOWER(?)', [$request->brand]);
         })->get();
-        dump($brands);
+        var_dump($brands);
 
         // $stmt1 = $pdo->prepare("SELECT brand FROM brand_sprav WHERE LOWER(brand) = LOWER(:brand) OR LOWER(sprav) LIKE LOWER(CONCAT('% | ',:sprav,' | %')) OR LOWER(sprav) LIKE LOWER(CONCAT('%',:sprav,'%')) OR LOWER(sprav) = LOWER(:sprav)");
         // $stmt1->bindParam(':brand', $json->brand, PDO::PARAM_STR);
