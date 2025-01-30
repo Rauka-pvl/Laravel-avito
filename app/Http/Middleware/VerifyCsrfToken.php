@@ -13,6 +13,6 @@ class VerifyCsrfToken extends Middleware
      */
     protected $except = [
         "api/imagesM/storeM",
-        '/multifinderbrands.php',
+        'multifinderbrands.php',
     ];
 }
