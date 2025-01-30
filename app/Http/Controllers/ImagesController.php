@@ -86,7 +86,7 @@ class ImagesController extends Controller
         } else {
             $brand = $json->brand;
         }
-        var_dump($brand, '<br>', $json->article, '<br>');
+
         $sql = "SELECT * FROM images WHERE LOWER(brand) = LOWER(:brand) AND LOWER(articul) LIKE LOWER(CONCAT('%', :articul, '%'))";
         $stmt = $pdo->prepare($sql);
         $stmt->bindParam(':brand', $brand, PDO::PARAM_STR);
@@ -121,7 +121,7 @@ class ImagesController extends Controller
                 return response()->json(["error" => "Изображение не найдено"], 404);
             }
         } else {
-            return response()->json(["error" => "Изображение не найдено!", $result], 404);
+            return response()->json(["error" => "Изображение не найдено!"], 404);
         }
     }
     public function view(Request $request)
