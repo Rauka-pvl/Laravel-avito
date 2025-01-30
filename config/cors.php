@@ -19,7 +19,7 @@ return [
 
     'allowed_methods' => ['*'],
 
-    'allowed_origins' => ['*'],
+    'allowed_origins' => ['*', 'https://www.buszap.ru/'],
 
     'allowed_origins_patterns' => [],
 
