@@ -73,7 +73,7 @@ class ImagesController extends Controller
         $stmt1->execute();
         $sprav = $stmt1->fetch(PDO::FETCH_COLUMN);
         if ($sprav) {
-            $brand = $sprav;
+            $brand = $sprav[0];
         } else {
             $brand = $json->brand;
         }
