@@ -33,8 +33,36 @@ class ImagesController extends Controller
                 ->orWhereRaw('LOWER(sprav) LIKE LOWER(CONCAT("% | ", ?, " | %"))', [$request->brand])
                 ->orWhereRaw('LOWER(sprav) LIKE LOWER(CONCAT("%", ?, "%"))', [$request->brand])
                 ->orWhereRaw('LOWER(sprav) = LOWER(?)', [$request->brand]);
-        })->get();
-        var_dump($brands);
+        })->first();
+        if ($brands->count() > 0) {
+            $brand = $brands->brand;
+        } else {
+            $brand = $request->brand;
+        }
+
+        $images = Image::whereRaw('LOWER(brand) like LOWER(?)', ['%' . $brand . '%'])
+            ->whereRaw('LOWER(articul) like LOWER(?)', ['%' . $request->article . '%'])
+            ->get();
+
+        $data = [];
+        if ($images->count() > 0) {
+            foreach ($images as $image) {
+                $url = "https://233204.fornex.cloud/uploads/" . strtolower($image->brand) . "/" . strtolower($image->articul);
+                $url = str_replace(' ', '%20', $url);
+                $imageInfo = getimagesize($url);
+                if ($imageInfo !== false) {
+                    array_push($data, ["url" => $url]);
+                }
+            }
+
+            if (!empty($data)) {
+                return response()->json($data);
+            } else {
+                return response()->json(["error" => "Изображение не найдено"], 404);
+            }
+        } else {
+            return response()->json(["error" => "Изображение не найдено!"], 404);
+        }
 
         // $stmt1 = $pdo->prepare("SELECT brand FROM brand_sprav WHERE LOWER(brand) = LOWER(:brand) OR LOWER(sprav) LIKE LOWER(CONCAT('% | ',:sprav,' | %')) OR LOWER(sprav) LIKE LOWER(CONCAT('%',:sprav,'%')) OR LOWER(sprav) = LOWER(:sprav)");
         // $stmt1->bindParam(':brand', $json->brand, PDO::PARAM_STR);
