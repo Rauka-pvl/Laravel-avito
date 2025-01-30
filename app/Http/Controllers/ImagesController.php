@@ -106,6 +106,8 @@ class ImagesController extends Controller
                 $url = "https://233204.fornex.cloud/storage/uploads/" . strtolower($row->brand) . "/" . $row->articul;
                 $url = str_replace(' ', '%20', $url);
 
+                var_dump($url);
+
                 // Проверяем, существует ли файл
                 if (remoteFileExists($url)) {
                     $imageInfo = getimagesize($url);
