@@ -27,7 +27,7 @@ class ImagesController extends Controller
     }
     public function getOnArticul(Request $request)
     {
-        $brands = BrandSprav::select('brand')->where('LOWER(brand)', '=', 'LOWER(' . $request->brand . ')')->get();
+        $brands = BrandSprav::select('brand')->where('brand', '=', $request->brand)->get();
         dump($brands);
 
         // $stmt1 = $pdo->prepare("SELECT brand FROM brand_sprav WHERE LOWER(brand) = LOWER(:brand) OR LOWER(sprav) LIKE LOWER(CONCAT('% | ',:sprav,' | %')) OR LOWER(sprav) LIKE LOWER(CONCAT('%',:sprav,'%')) OR LOWER(sprav) = LOWER(:sprav)");
