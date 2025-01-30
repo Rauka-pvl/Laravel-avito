@@ -27,65 +27,27 @@ class ImagesController extends Controller
     }
     public function getOnArticul(Request $request)
     {
-        $brands = BrandSprav::select('brand')->where('brand', '=', $request->brand)->get();
-        $brands = BrandSprav::where(function ($query) use ($request) {
-            $query->whereRaw('LOWER(brand) = LOWER(?)', [$request->brand])
-                ->orWhereRaw('LOWER(sprav) LIKE LOWER(CONCAT("% | ", ?, " | %"))', [$request->brand])
-                ->orWhereRaw('LOWER(sprav) LIKE LOWER(CONCAT("%", ?, "%"))', [$request->brand])
-                ->orWhereRaw('LOWER(sprav) = LOWER(?)', [$request->brand]);
-        })->first();
-        if ($brands && $brands->count() > 0) {
-            $brand = $brands->brand;
-        } else {
-            $brand = $request->brand;
-        }
-
-        $images = Image::whereRaw('LOWER(brand) like LOWER(?)', ['%' . $brand . '%'])
-            ->whereRaw('LOWER(articul) like LOWER(?)', ['%' . $request->article . '%'])
-            ->get();
-
-        $data = [];
-        if ($images->count() > 0) {
-            foreach ($images as $image) {
-                $url = "https://233204.fornex.cloud/storage/uploads/" . strtolower($image->brand) . "/" . $image->articul;
-                $url = str_replace(' ', '%20', $url);
-                $imageInfo = getimagesize($url);
-                if ($imageInfo !== false) {
-                    array_push($data, ["url" => $url]);
-                }
-            }
-
-            if (!empty($data)) {
-                return response()->json($data);
-            } else {
-                return response()->json(["error" => "Изображение не найдено"], 404);
-            }
-        } else {
-            return response()->json(["error" => "Изображение не найдено!"], 404);
-        }
-
-        // $stmt1 = $pdo->prepare("SELECT brand FROM brand_sprav WHERE LOWER(brand) = LOWER(:brand) OR LOWER(sprav) LIKE LOWER(CONCAT('% | ',:sprav,' | %')) OR LOWER(sprav) LIKE LOWER(CONCAT('%',:sprav,'%')) OR LOWER(sprav) = LOWER(:sprav)");
-        // $stmt1->bindParam(':brand', $json->brand, PDO::PARAM_STR);
-        // $stmt1->bindParam(':sprav', $json->brand, PDO::PARAM_STR);
-        // $stmt1->execute();
-        // $sprav = $stmt1->fetch(PDO::FETCH_COLUMN);
-        // if ($sprav) {
-        //     $brand = $sprav;
+        // $brands = BrandSprav::select('brand')->where('brand', '=', $request->brand)->get();
+        // $brands = BrandSprav::where(function ($query) use ($request) {
+        //     $query->whereRaw('LOWER(brand) = LOWER(?)', [$request->brand])
+        //         ->orWhereRaw('LOWER(sprav) LIKE LOWER(CONCAT("% | ", ?, " | %"))', [$request->brand])
+        //         ->orWhereRaw('LOWER(sprav) LIKE LOWER(CONCAT("%", ?, "%"))', [$request->brand])
+        //         ->orWhereRaw('LOWER(sprav) = LOWER(?)', [$request->brand]);
+        // })->first();
+        // if ($brands && $brands->count() > 0) {
+        //     $brand = $brands->brand;
         // } else {
-        //     $brand = $json->brand;
+        //     $brand = $request->brand;
         // }
 
-        // $sql = "SELECT * FROM images WHERE LOWER(brand) = LOWER(:brand) AND LOWER(articul) LIKE LOWER(CONCAT(:articul, '%'))";
-        // $stmt = $pdo->prepare($sql);
-        // $stmt->bindParam(':brand', $brand, PDO::PARAM_STR);
-        // $stmt->bindParam(':articul', $json->article, PDO::PARAM_STR);
-        // $stmt->execute();
-        // $result = $stmt->fetchAll();
+        // $images = Image::whereRaw('LOWER(brand) like LOWER(?)', ['%' . $brand . '%'])
+        //     ->whereRaw('LOWER(articul) like LOWER(?)', ['%' . $request->article . '%'])
+        //     ->get();
 
         // $data = [];
-        // if (!empty($result)) {
-        //     foreach ($result as $row) {
-        //         $url = "https://233204.fornex.cloud/uploads/" . strtolower($row['brand']) . "/" . strtolower($row['articul']);
+        // if ($images->count() > 0) {
+        //     foreach ($images as $image) {
+        //         $url = "https://233204.fornex.cloud/storage/uploads/" . strtolower($image->brand) . "/" . $image->articul;
         //         $url = str_replace(' ', '%20', $url);
         //         $imageInfo = getimagesize($url);
         //         if ($imageInfo !== false) {
@@ -101,6 +63,47 @@ class ImagesController extends Controller
         // } else {
         //     return response()->json(["error" => "Изображение не найдено!"], 404);
         // }
+
+        $pdo = DB::connection()->getPdo();
+        $json = json_decode($request->getContent());
+
+        $stmt1 = $pdo->prepare("SELECT brand FROM brand_sprav WHERE LOWER(brand) = LOWER(:brand) OR LOWER(sprav) LIKE LOWER(CONCAT('% | ',:sprav,' | %')) OR LOWER(sprav) LIKE LOWER(CONCAT('%',:sprav,'%')) OR LOWER(sprav) = LOWER(:sprav)");
+        $stmt1->bindParam(':brand', $json->brand, PDO::PARAM_STR);
+        $stmt1->bindParam(':sprav', $json->brand, PDO::PARAM_STR);
+        $stmt1->execute();
+        $sprav = $stmt1->fetch(PDO::FETCH_COLUMN);
+        if ($sprav) {
+            $brand = $sprav;
+        } else {
+            $brand = $json->brand;
+        }
+
+        $sql = "SELECT * FROM images WHERE LOWER(brand) = LOWER(:brand) AND LOWER(articul) LIKE LOWER(CONCAT(:articul, '%'))";
+        $stmt = $pdo->prepare($sql);
+        $stmt->bindParam(':brand', $brand, PDO::PARAM_STR);
+        $stmt->bindParam(':articul', $json->article, PDO::PARAM_STR);
+        $stmt->execute();
+        $result = $stmt->fetchAll();
+
+        $data = [];
+        if (!empty($result)) {
+            foreach ($result as $row) {
+                $url = "https://233204.fornex.cloud/uploads/" . strtolower($row['brand']) . "/" . strtolower($row['articul']);
+                $url = str_replace(' ', '%20', $url);
+                $imageInfo = getimagesize($url);
+                if ($imageInfo !== false) {
+                    array_push($data, ["url" => $url]);
+                }
+            }
+
+            if (!empty($data)) {
+                return response()->json($data);
+            } else {
+                return response()->json(["error" => "Изображение не найдено"], 404);
+            }
+        } else {
+            return response()->json(["error" => "Изображение не найдено!"], 404);
+        }
     }
     public function view(Request $request)
     {
