@@ -83,12 +83,12 @@ class ImagesController extends Controller
         $stmt->bindParam(':brand', $brand, PDO::PARAM_STR);
         $stmt->bindParam(':articul', $json->article, PDO::PARAM_STR);
         $stmt->execute();
-        $result = $stmt->fetchAll();
+        $result = $stmt->fetchAll(PDO::FETCH_OBJ);
 
         $data = [];
         if (!empty($result)) {
             foreach ($result as $row) {
-                $url = "https://233204.fornex.cloud/uploads/" . strtolower($row['brand']) . "/" . strtolower($row['articul']);
+                $url = "https://233204.fornex.cloud/uploads/" . strtolower($row->brand) . "/" . strtolower($row->articul);
                 $url = str_replace(' ', '%20', $url);
                 $imageInfo = getimagesize($url);
                 if ($imageInfo !== false) {
