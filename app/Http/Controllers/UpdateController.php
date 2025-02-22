@@ -18,8 +18,10 @@ class UpdateController extends Controller
     {
         $statusXML = Config::where('name', '=', 'xml_update_status')->first();
         $statusYML = Config::where('name', '=', 'yml_update_status')->first();
+        $statusXLS = Config::where('name', '=', 'xls_update_status')->first();
         $timeXML = Config::where('name', '=', 'xml_update_time')->first();
         $timeYML = Config::where('name', '=', 'yml_update_time')->first();
+        $timeXLS = Config::where('name', '=', 'xls_update_time')->first();
         return view('update', compact('timeXML', 'timeYML', 'statusXML', 'statusYML'));
     }
     public function update1()
@@ -49,6 +51,8 @@ class UpdateController extends Controller
         $data[1] = Config::where('name', '=', 'yml_update_status')->first();
         $data[2] = Config::where('name', '=', 'xml_update_time')->first();
         $data[3] = Config::where('name', '=', 'yml_update_time')->first();
+        $data[4] = Config::where('name', '=', 'xls_update_time')->first();
+        $data[5] = Config::where('name', '=', 'xls_update_status')->first();
         return response()->json($data);
     }
 }

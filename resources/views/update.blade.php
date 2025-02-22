@@ -27,6 +27,10 @@
                             class="px-6 py-3 bg-blue-500 hover:bg-blue-600 text-white font-semibold rounded-md shadow-md transition">
                             Обновление XML и YML
                         </a>
+                        <a href="{{ route('xlsx') }}"
+                            class="px-6 py-3 bg-blue-500 hover:bg-blue-600 text-white font-semibold rounded-md shadow-md transition">
+                            Скачать XLSX
+                        </a>
                     </div>
 
                     <!-- Блок последнего обновления -->
@@ -37,7 +41,10 @@
                                 <strong>XML:</strong> <span id="xml-status">{{ $statusXML->value ?? 'Данные отсутствуют' }}</span> - <span id="xml-time">{{ $timeXML->value ?? 'Данные отсутствуют' }}</span>
                             </p>
                             <p class="text-gray-700 dark:text-gray-300">
-                                <strong>YML:</strong> <span id="yml-status">{{ $timeYML->value ?? 'Данные отсутствуют' }}</span> - <span id="yml-status">{{ $timeYML->value ?? 'Данные отсутствуют' }}</span>
+                                <strong>YML:</strong> <span id="yml-status">{{ $statusYML->value ?? 'Данные отсутствуют' }}</span> - <span id="yml-status">{{ $timeYML->value ?? 'Данные отсутствуют' }}</span>
+                            </p>
+                            <p class="text-gray-700 dark:text-gray-300">
+                                <strong>XLSX:</strong> <span id="xls-status">{{ $statusXLS->value ?? 'Данные отсутствуют' }}</span> - <span id="yml-status">{{ $timeXLS->value ?? 'Данные отсутствуют' }}</span>
                             </p>
                         </div>
                     </div>
@@ -60,6 +67,7 @@
                     .then(data => {
                         document.getElementById("xml-status").textContent = data[0]['value'] || "Данные отсутствуют";
                         document.getElementById("yml-status").textContent = data[1]['value'] || "Данные отсутствуют";
+                        document.getElementById("xls-status").textContent = data[2]['value'] || "Данные отсутствуют";
                     })
                     .catch(error => console.error("Ошибка при обновлении статуса:", error));
             }

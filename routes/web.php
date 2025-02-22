@@ -57,6 +57,15 @@ Route::middleware('auth')->group(function () {
 
 Route::get('/update1', [UpdateController::class, 'update'])->name('updateXML2');
 Route::get('/updateXML', [UpdateController::class, 'update1'])->name('updateXML');
+Route::get('/products.xlsx', function () {
+    $path = "/home/admin/web/233204.fornex.cloud/public_html/storage/app/public/products.xlsx;";
+
+    if (!file_exists($path)) {
+        abort(404, 'Файл не найден');
+    }
+
+    return response()->download($path);
+})->name('xlsx');
 
 Route::post('/multifinderbrands.php', [ImagesController::class, 'getOnArticul'])->name('getOnArticul');
 
