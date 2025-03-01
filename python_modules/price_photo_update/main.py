@@ -7,6 +7,7 @@ import os
 import certifi
 import time
 from datetime import datetime
+import multi_parser
 
 
 # Пути для логов и XML
@@ -525,4 +526,5 @@ def main():
 # Запуск основной функции
 if __name__ == "__main__":
     main()
+    multi_parser.main()
 
