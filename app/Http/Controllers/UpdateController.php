@@ -58,8 +58,8 @@ class UpdateController extends Controller
         $data[1] = Config::where('name', '=', 'yml_update_status')->first();
         $data[2] = Config::where('name', '=', 'xml_update_time')->first();
         $data[3] = Config::where('name', '=', 'yml_update_time')->first();
-        $data[4] = Config::where('name', '=', 'parser_update_time')->first();
-        $data[5] = Config::where('name', '=', 'parser_status')->first();
+        $data[4] = Config::where('name', '=', 'parser_status')->first();
+        $data[5] = Config::where('name', '=', 'parser_update_time')->first();
         return response()->json($data);
     }
 }
