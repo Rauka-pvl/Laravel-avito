@@ -26,31 +26,40 @@ class UpdateController extends Controller
     }
     public function update1()
     {
-        $handle = popen('python3 /home/admin/web/233204.fornex.cloud/public_html/python_modules/price_photo_update/main.py > /dev/null 2>&1 &', 'r');
-        pclose($handle);
-
-        return redirect()->back()->with(['success' => 'Запуск обновления цен и фотографий запущен']);
+        $pythonScript = '/home/admin/web/233204.fornex.cloud/public_html/python_modules/price_photo_update/main.py';
+        $logFile = '/home/admin/web/233204.fornex.cloud/public_html/logs/update1.log';
+    
+        $command = "nohup setsid python3 $pythonScript > $logFile 2>&1 & echo $!";
+    
+        $pid = shell_exec($command);
+    
+        return redirect()->back()->with(['success' => "Запуск обновления цен и фотографий запущен. PID: $pid"]);
     }
+    
     public function updateTrast()
     {
-        $handle = popen('python3 /home/admin/web/233204.fornex.cloud/public_html/python_modules/price_photo_update/multi_parser.py > /dev/null 2>&1 &', 'r');
-        pclose($handle);
-
-        return redirect()->back()->with(['success' => 'Запуск обновления Trast Цен запущен']);
+        $pythonScript = '/home/admin/web/233204.fornex.cloud/public_html/python_modules/price_photo_update/multi_parser.py';
+        $logFile = '/home/admin/web/233204.fornex.cloud/public_html/logs/update_trast.log';
+    
+        $command = "nohup setsid python3 $pythonScript > $logFile 2>&1 & echo $!";
+    
+        $pid = shell_exec($command);
+    
+        return redirect()->back()->with(['success' => "Запуск обновления Trast Цен запущен. PID: $pid"]);
     }
+    
     public function update()
     {
         $pythonScript = '/home/admin/web/233204.fornex.cloud/public_html/python_modules/price_photo_update/main.py';
-
-        // Формируем команду для запуска в фоне
-        $command = "nohup python3 $pythonScript > /dev/null 2>&1 &";
-
-        // Выполняем команду
-        exec($command);
-
-        // PHP-код продолжает выполняться сразу после запуска Python-скрипта
-        return redirect()->back()->with(['success' => 'Запуск обновления цен и фотографий запущен']);
+        $logFile = '/home/admin/web/233204.fornex.cloud/public_html/logs/update.log';
+    
+        $command = "nohup setsid python3 $pythonScript > $logFile 2>&1 & echo $!";
+    
+        $pid = shell_exec($command);
+    
+        return redirect()->back()->with(['success' => "Запуск обновления цен и фотографий запущен. PID: $pid"]);
     }
+    
 
     public function updateStatus()
     {
