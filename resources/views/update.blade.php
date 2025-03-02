@@ -45,10 +45,10 @@
                                 <strong>Avito XML:</strong> <span id="xml-status">{{ $statusXML->value ?? 'Данные отсутствуют' }}</span> - <span id="xml-time">{{ $timeXML->value ?? 'Данные отсутствуют' }}</span>
                             </p>
                             <p class="text-gray-700 dark:text-gray-300">
-                                <strong>ZZAP YML:</strong> <span id="yml-status">{{ $statusYML->value ?? 'Данные отсутствуют' }}</span> - <span id="yml-status">{{ $timeYML->value ?? 'Данные отсутствуют' }}</span>
+                                <strong>ZZAP YML:</strong> <span id="yml-status">{{ $statusYML->value ?? 'Данные отсутствуют' }}</span> - <span id="yml-time">{{ $timeYML->value ?? 'Данные отсутствуют' }}</span>
                             </p>
                             <p class="text-gray-700 dark:text-gray-300">
-                                <strong>Trast Цены:</strong> <span id="xls-status">{{ $statusXLS->value ?? 'Данные отсутствуют' }}</span> - <span id="yml-status">{{ $timeXLS->value ?? 'Данные отсутствуют' }}</span>
+                                <strong>Trast Цены:</strong> <span id="xls-status">{{ $statusXLS->value ?? 'Данные отсутствуют' }}</span> - <span id="xls-time">{{ $timeXLS->value ?? 'Данные отсутствуют' }}</span>
                             </p>
                         </div>
                     </div>

@@ -22,7 +22,7 @@ class UpdateController extends Controller
         $timeXML = Config::where(   'name', '=', 'xml_update_time')->first();
         $timeYML = Config::where(   'name', '=', 'yml_update_time')->first();
         $timeXLS = Config::where(   'name', '=', 'parser_update_time')->first();
-        return view('update', compact('timeXML', 'timeYML', 'statusXML', 'statusYML'));
+        return view('update', compact('timeXML', 'timeYML', 'statusXML', 'statusYML', 'statusXLS', 'timeXLS'));
     }
     public function update1()
     {
