@@ -186,8 +186,7 @@ def main():
                 # Устанавливаем начальный статус для XML и YML
                 update_config_status(db_connection, "parser_status", "in_progress")
                 os.makedirs(OUTPUT_DIR, exist_ok=True)
-                update_config_status(db_connection, "parser_status", "done")
-                update_config_status(db_connection, "parser_update_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                
                 # Полная перезапись файла, если он существует
                 if os.path.exists(OUTPUT_PATH):
                     os.remove(OUTPUT_PATH)
@@ -225,9 +224,12 @@ def main():
                 logger.info(f'📂 Данные сохранены в файл: {OUTPUT_PATH}')
                 logger.info(f'⏳ Конец парсинга: {end_time.strftime("%Y-%m-%d %H:%M:%S")}')
                 logger.info(f'⏱ Общее время работы: {elapsed_time}')
+                update_config_status(db_connection, "parser_status", "done")
+                update_config_status(db_connection, "parser_update_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         except Exception as e:
                 logging.error(f"Ошибка при обработке обновлении цены: {e}")
                 update_config_status(db_connection, "parser_status", "failed")
+                update_config_status(db_connection, "parser_update_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 
 # # Запуск скрипта
