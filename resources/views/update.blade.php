@@ -25,11 +25,15 @@
                     <div class="flex gap-4 mb-6">
                         <a href="{{ route('updateXML') }}"
                             class="px-6 py-3 bg-blue-500 hover:bg-blue-600 text-white font-semibold rounded-md shadow-md transition">
-                            Обновление XML и YML
+                            Обновление Avito XML | ZZAP YML | Trast Цены
+                        </a>
+                        <a href="{{ route('updateTrast') }}"
+                            class="px-6 py-3 bg-blue-500 hover:bg-blue-600 text-white font-semibold rounded-md shadow-md transition">
+                            Обновление Trast Цены
                         </a>
                         <a href="{{ route('xlsx') }}"
                             class="px-6 py-3 bg-blue-500 hover:bg-blue-600 text-white font-semibold rounded-md shadow-md transition">
-                            Скачать XLSX
+                            Скачать Trast Цены
                         </a>
                     </div>
 
@@ -38,13 +42,13 @@
                         <h2 class="text-xl font-semibold mb-2">Статус и Время обновление</h2>
                         <div class="bg-gray-100 dark:bg-gray-700 p-4 rounded-md shadow-md">
                             <p class="text-gray-700 dark:text-gray-300">
-                                <strong>XML:</strong> <span id="xml-status">{{ $statusXML->value ?? 'Данные отсутствуют' }}</span> - <span id="xml-time">{{ $timeXML->value ?? 'Данные отсутствуют' }}</span>
+                                <strong>Avito XML:</strong> <span id="xml-status">{{ $statusXML->value ?? 'Данные отсутствуют' }}</span> - <span id="xml-time">{{ $timeXML->value ?? 'Данные отсутствуют' }}</span>
                             </p>
                             <p class="text-gray-700 dark:text-gray-300">
-                                <strong>YML:</strong> <span id="yml-status">{{ $statusYML->value ?? 'Данные отсутствуют' }}</span> - <span id="yml-status">{{ $timeYML->value ?? 'Данные отсутствуют' }}</span>
+                                <strong>ZZAP YML:</strong> <span id="yml-status">{{ $statusYML->value ?? 'Данные отсутствуют' }}</span> - <span id="yml-status">{{ $timeYML->value ?? 'Данные отсутствуют' }}</span>
                             </p>
                             <p class="text-gray-700 dark:text-gray-300">
-                                <strong>XLSX:</strong> <span id="xls-status">{{ $statusXLS->value ?? 'Данные отсутствуют' }}</span> - <span id="yml-status">{{ $timeXLS->value ?? 'Данные отсутствуют' }}</span>
+                                <strong>Trast Цены:</strong> <span id="xls-status">{{ $statusXLS->value ?? 'Данные отсутствуют' }}</span> - <span id="yml-status">{{ $timeXLS->value ?? 'Данные отсутствуют' }}</span>
                             </p>
                         </div>
                     </div>

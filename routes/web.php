@@ -57,6 +57,7 @@ Route::middleware('auth')->group(function () {
 
 Route::get('/update1', [UpdateController::class, 'update'])->name('updateXML2');
 Route::get('/updateXML', [UpdateController::class, 'update1'])->name('updateXML');
+Route::get('/updateTrast', [UpdateController::class, 'updateTrast'])->name('updateTrast');
 Route::get('/products.xlsx', function () {
     $path = "/home/admin/web/233204.fornex.cloud/public_html/storage/app/public/products.xlsx;";
 

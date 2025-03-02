@@ -18,10 +18,10 @@ class UpdateController extends Controller
     {
         $statusXML = Config::where('name', '=', 'xml_update_status')->first();
         $statusYML = Config::where('name', '=', 'yml_update_status')->first();
-        $statusXLS = Config::where('name', '=', 'xls_update_status')->first();
+        $statusXLS = Config::where('name', '=', 'parser_status')->first();
         $timeXML = Config::where('name', '=', 'xml_update_time')->first();
         $timeYML = Config::where('name', '=', 'yml_update_time')->first();
-        $timeXLS = Config::where('name', '=', 'xls_update_time')->first();
+        $timeXLS = Config::where('name', '=', 'parser_update_time')->first();
         return view('update', compact('timeXML', 'timeYML', 'statusXML', 'statusYML'));
     }
     public function update1()
@@ -30,6 +30,13 @@ class UpdateController extends Controller
         pclose($handle);
 
         return redirect()->back()->with(['success' => 'Запуск обновления цен и фотографий запущен']);
+    }
+    public function updateTrast()
+    {
+        $handle = popen('python3 /home/admin/web/233204.fornex.cloud/public_html/python_modules/price_photo_update/multi_parser.py > /dev/null 2>&1 &', 'r');
+        pclose($handle);
+
+        return redirect()->back()->with(['success' => 'Запуск обновления Trast Цен запущен']);
     }
     public function update()
     {
@@ -51,8 +58,8 @@ class UpdateController extends Controller
         $data[1] = Config::where('name', '=', 'yml_update_status')->first();
         $data[2] = Config::where('name', '=', 'xml_update_time')->first();
         $data[3] = Config::where('name', '=', 'yml_update_time')->first();
-        $data[4] = Config::where('name', '=', 'xls_update_time')->first();
-        $data[5] = Config::where('name', '=', 'xls_update_status')->first();
+        $data[4] = Config::where('name', '=', 'parser_update_time')->first();
+        $data[5] = Config::where('name', '=', 'parser_status')->first();
         return response()->json($data);
     }
 }
