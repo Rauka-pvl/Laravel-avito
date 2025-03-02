@@ -16,12 +16,12 @@ class UpdateController extends Controller
 
     public function index()
     {
-        $statusXML = Config::where('name', '=', 'xml_update_status')->first();
-        $statusYML = Config::where('name', '=', 'yml_update_status')->first();
-        $statusXLS = Config::where('name', '=', 'parser_status')->first();
-        $timeXML = Config::where('name', '=', 'xml_update_time')->first();
-        $timeYML = Config::where('name', '=', 'yml_update_time')->first();
-        $timeXLS = Config::where('name', '=', 'parser_update_time')->first();
+        $statusXML = Config::where( 'name', '=', 'xml_update_status')->first();
+        $statusYML = Config::where( 'name', '=', 'yml_update_status')->first();
+        $statusXLS = Config::where( 'name', '=', 'parser_status')->first();
+        $timeXML = Config::where(   'name', '=', 'xml_update_time')->first();
+        $timeYML = Config::where(   'name', '=', 'yml_update_time')->first();
+        $timeXLS = Config::where(   'name', '=', 'parser_update_time')->first();
         return view('update', compact('timeXML', 'timeYML', 'statusXML', 'statusYML'));
     }
     public function update1()

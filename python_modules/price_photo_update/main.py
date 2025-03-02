@@ -430,6 +430,7 @@ def process_articles():
             # Устанавливаем начальный статус для XML и YML
             update_config_status(db_connection, "xml_update_status", "in_progress")
             update_config_status(db_connection, "yml_update_status", "in_progress")
+            update_config_status(db_connection, "parser_status", "in_progress")
 
             # Обработка XML
             try:
