@@ -71,7 +71,7 @@
                     .then(data => {
                         document.getElementById("xml-status").textContent = data[0]['value'] || "Данные отсутствуют";
                         document.getElementById("yml-status").textContent = data[1]['value'] || "Данные отсутствуют";
-                        document.getElementById("xls-status").textContent = data[2]['value'] || "Данные отсутствуют";
+                        document.getElementById("xls-status").textContent = data[4]['value'] || "Данные отсутствуют";
                     })
                     .catch(error => console.error("Ошибка при обновлении статуса:", error));
             }
