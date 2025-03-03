@@ -69,9 +69,21 @@
                 fetch("{{ url('/update/status') }}")
                     .then(response => response.json())
                     .then(data => {
-                        document.getElementById("xml-status").textContent = data[0]['value'] || "Данные отсутствуют";
-                        document.getElementById("yml-status").textContent = data[1]['value'] || "Данные отсутствуют";
-                        document.getElementById("xls-status").textContent = data[4]['value'] || "Данные отсутствуют";
+                        data.forEach(e => {
+                            if(e['name'] === 'xml_update_status') {
+                                document.getElementById("xml-status").textContent = e['value'] || "Данные отсутствуют";
+                            } else if(e['name'] === 'yml_update_status') {
+                                document.getElementById("yml-status").textContent = e['value'] || "Данные отсутствуют";
+                            } else if(e['name'] === 'xml_update_time') {
+                                document.getElementById("xml-time").textContent = e['value'] || "Данные отсутствуют";
+                            } else if(e['name'] === 'yml_update_time') {
+                                document.getElementById("yml-time").textContent = e['value'] || "Данные отсутствуют";
+                            } else if(e['name'] === 'parser_status') {
+                                document.getElementById("xls-status").textContent = e['value'] || "Данные отсутствуют";
+                            } else if(e['name'] === 'parser_update_time') {
+                                document.getElementById("xls-time").textContent = e['value'] || "Данные отсутствуют";
+                            }
+                        });
                     })
                     .catch(error => console.error("Ошибка при обновлении статуса:", error));
             }
