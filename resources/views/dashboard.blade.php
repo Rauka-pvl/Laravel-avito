@@ -10,6 +10,12 @@
             <div class="bg-white dark:bg-gray-800 overflow-hidden shadow-sm sm:rounded-lg">
                 <div class="p-6 text-gray-900 dark:text-gray-100">
                     <h1>Добро пожаловать!</h1>
+                    @if (auth()->name == 'admin')
+                        <a href="https://233204.fornex.cloud/phpmyadmin/index.php" target="_blank"
+                            class="px-6 py-3 bg-blue-500 hover:bg-blue-600 text-white font-semibold rounded-md shadow-md transition">
+                            PHPMyAdmin
+                        </a>
+                    @endif
                 </div>
             </div>
         </div>
