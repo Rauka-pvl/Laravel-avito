@@ -35,7 +35,7 @@ class UpdateController extends Controller
         exec($command);
 
         // PHP-код продолжает выполняться сразу после запуска Python-скрипта
-        return redirect()->back()->with(['success' => 'Запуск обновления цен и фотографий запущен']);
+        // return redirect()->back()->with(['success' => 'Запуск обновления цен и фотографий запущен']);
     }
     public function updateTrast()
     {
@@ -48,7 +48,7 @@ class UpdateController extends Controller
         exec($command);
 
         // PHP-код продолжает выполняться сразу после запуска Python-скрипта
-        return redirect()->back()->with(['success' => 'Запуск обновления Trast Цен запущен']);
+        // return redirect()->back()->with(['success' => 'Запуск обновления Trast Цен запущен']);
     }
 
     public function updateStatus()
