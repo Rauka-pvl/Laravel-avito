@@ -47,7 +47,7 @@ class UpdateController extends Controller
         // Выполняем команду
         // exec($command);
 
-        $command = "nohup python3 /home/admin/web/233204.fornex.cloud/public_html/python_modules/price_photo_update/multi_parser.py > /home/admin/logs/multi_parser.log 2>&1 &";
+        $command = "nohup python3 /home/admin/web/233204.fornex.cloud/public_html/python_modules/price_photo_update/multi_parser.py > /home/admin/web/233204.fornex.cloud/logs/multi_parser.log 2>&1 &";
         exec($command);
 
         // PHP-код продолжает выполняться сразу после запуска Python-скрипта
