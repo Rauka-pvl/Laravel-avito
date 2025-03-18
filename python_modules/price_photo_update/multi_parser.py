@@ -15,7 +15,7 @@ import logging
 
 
 '''
-23
+24
 '''
 # Настройки
 OUTPUT_DIR = "output"
