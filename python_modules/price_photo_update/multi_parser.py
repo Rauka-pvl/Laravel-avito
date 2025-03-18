@@ -112,7 +112,8 @@ def parse_page(page_number):
     items = []
     count = 0
     for product in products:
-        if product.find('span', class_='out-of-stock'):
+        # Проверка на наличие класса "outofstock" или элемента, который указывает, что товар недоступен
+        if product.find('a', class_='button product_type_variable'):
             continue
         
         try:
