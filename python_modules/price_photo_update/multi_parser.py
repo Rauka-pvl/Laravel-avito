@@ -144,15 +144,16 @@ def parse_page(page_number):
 
 def main():
 
-    if not db_connection.is_connected():
-        logging.error("Ошибка: База данных недоступна. Проверяем соединение...")
-        db_connection.reconnect(attempts=3, delay=5)
-        if not db_connection.is_connected():
-            logging.error("Ошибка: Не удалось восстановить соединение с БД.")
-            return
+   
 
     try:
         with connect_to_db() as db_connection:
+            if not db_connection.is_connected():
+                logging.error("Ошибка: База данных недоступна. Проверяем соединение...")
+                db_connection.reconnect(attempts=3, delay=5)
+                if not db_connection.is_connected():
+                    logging.error("Ошибка: Не удалось восстановить соединение с БД.")
+                    return  
             update_config_status(db_connection, "parser_status", "in_progress")
             os.makedirs(OUTPUT_DIR, exist_ok=True)
             if os.path.exists(OUTPUT_PATH):
