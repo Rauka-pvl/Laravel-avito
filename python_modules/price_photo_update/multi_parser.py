@@ -13,6 +13,10 @@ from bs4 import BeautifulSoup
 import random
 import logging
 
+
+'''
+23
+'''
 # Настройки
 OUTPUT_DIR = "output"
 OUTPUT_FILENAME = "products.xlsx"
