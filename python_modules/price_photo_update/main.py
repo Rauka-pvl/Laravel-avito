@@ -170,45 +170,46 @@ def connect_to_db():
 # Обновление фотографий
 def update_photo(ad, db_connection):
     try:
-        ad_id = ad.find('Id').text.split('_')
-        if len(ad_id) < 2:
+        ad_id = ad.find('Id').text
+        ad_id_parts = ad_id.split('_')
+        if len(ad_id_parts) < 2:
             logging.warning(f"Некорректный формат Ad ID: {ad_id}")
             return
 
-        brand, articul = ad_id[0], ad_id[1]
+        brand, articul = ad_id_parts[0], ad_id_parts[1]
 
-        # Получаем список всех возможных вариантов брендов
+        # Получаем все возможные названия бренда
         valid_brands = get_matching_brands(brand, db_connection)
         logging.info(f"Варианты бренда {brand}: {valid_brands}")
 
-        # Генерация плейсхолдеров для IN
         placeholders = ', '.join(['%s'] * len(valid_brands))
-
-        # Формируем запрос с плейсхолдерами
         query = f"""
-            SELECT * 
-            FROM images 
-            WHERE LOWER(brand) IN ({placeholders}) AND articul LIKE %s
+            SELECT brand, articul
+            FROM images
+            WHERE LOWER(brand) IN ({placeholders}) AND LOWER(articul) LIKE %s
         """
 
-        # Выполняем запрос с параметрами
         with db_connection.cursor(dictionary=True) as cursor:
-            cursor.execute(query, (*[b.lower() for b in valid_brands], f"%{articul}%"))
+            cursor.execute(query, (*valid_brands, f"{articul.lower()}%"))
             rows = cursor.fetchall()
 
-        if rows:
-            images = ad.find('Images')
-            if images is None:
-                images = ET.SubElement(ad, 'Images')
+        if not rows:
+            logging.warning(f"Фото не найдено для Бренда: {brand}, Артикул: {articul}")
+            return
 
-            for img in list(images):
-                images.remove(img)
+        images = ad.find('Images')
+        if images is None:
+            images = ET.SubElement(ad, 'Images')
 
-            for row in rows:
-                path = f"https://233204.fornex.cloud/storage/uploads/{row['brand'].lower()}/{row['articul'].lower()}"
-                new_image = ET.SubElement(images, 'Image')
-                new_image.set('url', path)
-                logging.info(f"Добавлено изображение: {path}")
+        for img in list(images):
+            images.remove(img)
+
+        for row in rows:
+            img_url = f"https://233204.fornex.cloud/storage/uploads/{row['brand'].lower()}/{row['articul'].lower()}"
+            new_image = ET.SubElement(images, 'Image')
+            new_image.set('url', img_url)
+            logging.info(f"Добавлено изображение: {img_url}")
+
     except Exception as e:
         logging.error(f"Ошибка в update_photo: {e}")
 
@@ -217,40 +218,41 @@ def update_photo_yml(offer, db_connection):
         vendor = offer.find('vendor').text
         vendor_code = offer.find('vendorCode').text
 
-        # Получаем список возможных брендов
+        # Получаем все возможные названия бренда
         valid_brands = get_matching_brands(vendor, db_connection)
         logging.info(f"Варианты бренда {vendor}: {valid_brands}")
 
-        # Выполняем запрос к базе данных
+        # Формируем запрос с плейсхолдерами
         placeholders = ', '.join(['%s'] * len(valid_brands))
         query = f"""
-            SELECT * 
-            FROM images 
-            WHERE LOWER(brand) IN ({placeholders}) AND articul LIKE %s
+            SELECT brand, articul
+            FROM images
+            WHERE LOWER(brand) IN ({placeholders}) AND LOWER(articul) LIKE %s
         """
+
         with db_connection.cursor(dictionary=True) as cursor:
-            cursor.execute(query, (*[b.lower() for b in valid_brands], f"%{vendor_code}%"))
+            cursor.execute(query, (*valid_brands, f"{vendor_code.lower()}%"))
             rows = cursor.fetchall()
 
         if not rows:
             logging.warning(f"Фото не найдено для Бренда: {vendor}, Артикул: {vendor_code}")
             return False
 
-        # Генерируем строку ссылок через запятую
+        # Генерация списка URL-ов
         picture_urls = ",".join(
             f"https://233204.fornex.cloud/storage/uploads/{row['brand'].lower()}/{row['articul'].lower()}"
             for row in rows
         )
 
-        # Добавляем или обновляем тэг <picture>
+        # Обновление или создание тега <picture>
         picture_elem = offer.find('picture')
         if picture_elem is None:
             picture_elem = ET.SubElement(offer, 'picture')
+
         picture_elem.text = picture_urls
-
         logging.info(f"Добавлены фото для {vendor} {vendor_code}: {picture_urls}")
-        return True
 
+        return True
     except Exception as e:
         logging.error(f"Ошибка в update_photo_yml: {e}")
         return False
@@ -258,25 +260,25 @@ def update_photo_yml(offer, db_connection):
 def get_matching_brands(brand, db_connection):
     try:
         with db_connection.cursor(dictionary=True) as cursor:
-            # Запрашиваем все записи, где brand или sprav соответствует входному значению
             query = """
                 SELECT brand, sprav 
                 FROM brand_sprav
-                WHERE LOWER(brand) = LOWER(%s) OR LOWER(sprav) = LOWER(%s)
+                WHERE LOWER(brand) = LOWER(%s) OR LOWER(sprav) LIKE %s
             """
-            cursor.execute(query, (brand, brand))
+            cursor.execute(query, (brand, f"%{brand}%"))
             rows = cursor.fetchall()
         
-        # Извлекаем уникальные значения из столбцов brand и sprav
         matching_brands = set()
         for row in rows:
-            matching_brands.add(row['brand'].strip())
-            matching_brands.add(row['sprav'].strip())
-        
-        return list(matching_brands) if matching_brands else [brand]
+            matching_brands.add(row['brand'].strip().lower())
+            if row['sprav']:
+                matching_brands.update([b.strip().lower() for b in row['sprav'].split('|')])
+
+        return list(matching_brands) if matching_brands else [brand.lower()]
     except Exception as e:
-        logging.error(f"Ошибка при получении данных из словаря брендов: {e}")
-        return [brand]
+        logging.error(f"Ошибка при получении брендов из справочника: {e}")
+        return [brand.lower()]
+
 
 
 def process_yml_catalog(root, db_connection):
@@ -527,5 +529,4 @@ def main():
 # Запуск основной функции
 if __name__ == "__main__":
     main()
-    multi_parser.main()
 
