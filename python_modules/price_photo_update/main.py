@@ -55,6 +55,10 @@ def update_config_status(db_connection, name, value):
     Если записи с указанным name нет, она будет создана.
     """
     try:
+        if not db_connection.is_connected():
+            logging.error("Ошибка: соединение с базой данных отсутствует.")
+            return
+        
         with db_connection.cursor() as cursor:
             # Проверяем, существует ли запись
             query_check = "SELECT COUNT(*) FROM config WHERE name = %s"
