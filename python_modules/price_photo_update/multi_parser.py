@@ -50,36 +50,17 @@ def connect_to_db():
     except mysql.connector.Error as err:
         logging.error(f"Ошибка подключения к базе данных: {err}")
         raise
+
 def update_config_status(db_connection, name, value):
-    """
-    Обновляет значение в таблице config.
-    Если записи с указанным name нет, она будет создана.
-    """
     try:
         with db_connection.cursor() as cursor:
-            # Проверяем, существует ли запись
-            query_check = "SELECT COUNT(*) FROM config WHERE name = %s"
-            cursor.execute(query_check, (name,))
-            exists = cursor.fetchone()[0]
-
-            if exists:
-                # Обновляем существующую запись
-                query_update = "UPDATE config SET value = %s WHERE name = %s"
-                cursor.execute(query_update, (value, name))
-            else:
-                # Создаем новую запись
-                query_insert = "INSERT INTO config (name, value) VALUES (%s, %s)"
-                cursor.execute(query_insert, (name, value))
-
+            cursor.execute("REPLACE INTO config (name, value) VALUES (%s, %s)", (name, value))
             db_connection.commit()
-            logging.info(f"Статус '{name}' успешно обновлен до значения '{value}'")
+            logging.info(f"Статус '{name}' успешно обновлен до '{value}'")
     except Exception as e:
-        logging.error(f"Ошибка при обновлении статуса '{name}' в таблице config: {e}")
+        logging.error(f"Ошибка при обновлении статуса '{name}': {e}")
         db_connection.rollback()
 
-
-
-    
 # Создаем браузер с выбранным прокси
 def create_driver(proxy):
     options = Options()
@@ -98,19 +79,28 @@ def create_driver(proxy):
 # Получаем количество страниц и выбираем прокси
 def get_total_pages():
     global current_proxy
-    proxy = get_random_proxy()
-    driver = create_driver(proxy)
-    driver.get(f"{BASE_URL}/shop/page/1")
-    time.sleep(2)
-    soup = BeautifulSoup(driver.page_source, 'html.parser')
-    pagination = soup.select('ul.page-numbers li')
-    driver.quit()
+    attempts = 3  # Количество попыток смены прокси
+    for _ in range(attempts):
+        proxy = get_random_proxy()
+        driver = create_driver(proxy)
+        driver.get(f"{BASE_URL}/shop/page/1")
+        time.sleep(2)
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        pagination = soup.select('ul.page-numbers li')
+        driver.quit()
+        
+        total_pages = int(pagination[-2].get_text(strip=True)) if pagination else 1
+        if total_pages > 1:
+            current_proxy = proxy
+            break
+        logging.warning(f'⚠️ Найдена только 1 страница, смена прокси...')
+    else:
+        logging.error('❌ После нескольких попыток все еще только 1 страница, продолжаем с последним прокси.')
     
-    total_pages = int(pagination[-2].get_text(strip=True)) if pagination else 1
-    current_proxy = proxy if total_pages > 1 else get_random_proxy()
     logging.info(f'Используем прокси {current_proxy} для всех страниц.')
     return total_pages
 
+# Функция парсинга страницы каталога
 def parse_page(page_number):
     driver = create_driver(current_proxy)
     driver.get(f"{BASE_URL}/shop/page/{page_number}")
@@ -125,12 +115,23 @@ def parse_page(page_number):
             continue
         
         try:
-            name = product.find('div', class_='th-product-card__name').find('h2').get_text(strip=True)
-            price = re.sub(r'[^\d]', '', product.find('span', class_='woocommerce-Price-amount').get_text(strip=True))
-            article = re.sub(r'[\s\-]', '', product.find('span', class_='th-product-card__meta-value').get_text(strip=True))
-            image_url = product.find('div', class_='th-product-card__image').find('img')['src']
-            product_page_link = product.find('a', class_='woocommerce-LoopProduct-link')['href']
+            name = product.find('div', class_='th-product-card__name').find('h2')
+            name = name.get_text(strip=True) if name else 'Н/Д'
+            
+            price = product.find('div', class_='th-product-card__prices').find('span', class_='woocommerce-Price-amount')
+            price = re.sub(r'[^\d]', '', price.get_text(strip=True)) if price else '0'
+            
+            article = product.find('div', class_='th-product-card__meta').find('span', class_='th-product-card__meta-value')
+            article = re.sub(r'[\s\-]', '', article.get_text(strip=True)) if article else 'Н/Д'
+            
+            image_tag = product.find('div', class_='th-product-card__image').find('img')
+            image_url = image_tag['src'] if image_tag else 'Н/Д'
+            
+            product_page_tag = product.find('a', class_='woocommerce-LoopProduct-link')
+            product_page_link = product_page_tag['href'] if product_page_tag else 'Н/Д'
+            
             manufacturer = "Н/Д"
+            
             items.append({'Наименование': name, 'Производитель': manufacturer, 'Артикул': article, 'Цена': price, 'Изображение': image_url, 'Ссылка': product_page_link})
         except Exception as e:
             logging.warning(f'Ошибка обработки товара на странице {page_number}: {e}')
@@ -165,21 +166,10 @@ def main():
                     except Exception as e:
                         logging.warning(f'⚠️ Ошибка при обработке страницы {page_number}: {e}')
             
-            df = pd.DataFrame(all_items, columns=['Наименование', 'Производитель', 'Артикул', 'Цена', 'Изображение', 'Ссылка'])
-            df.to_excel(OUTPUT_PATH, sheet_name='Товары', index=False)
-            
-            end_time = datetime.now()
-            elapsed_time = end_time - start_time
-            logging.info(f'✅ Парсинг завершен! Всего товаров: {len(all_items)}')
-            logging.info(f'📂 Данные сохранены в: {OUTPUT_PATH}')
-            logging.info(f'⏳ Конец: {end_time.strftime("%Y-%m-%d %H:%M:%S")}')
-            logging.info(f'⏱ Время работы: {elapsed_time}')
             update_config_status(db_connection, "parser_status", "done")
-            update_config_status(db_connection, "parser_update_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     except Exception as e:
         logging.error(f"Ошибка при парсинге: {e}")
         update_config_status(db_connection, "parser_status", "failed")
-        update_config_status(db_connection, "parser_update_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 if __name__ == '__main__':
     main()
