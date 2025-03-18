@@ -110,6 +110,7 @@ def parse_page(page_number):
     products = soup.find_all('div', class_='th-product-card')
     
     items = []
+    count = 0
     for product in products:
         if product.find('span', class_='out-of-stock'):
             continue
@@ -133,43 +134,30 @@ def parse_page(page_number):
             manufacturer = "Н/Д"
             
             items.append({'Наименование': name, 'Производитель': manufacturer, 'Артикул': article, 'Цена': price, 'Изображение': image_url, 'Ссылка': product_page_link})
+            count += 1
+            logging.info(f'✔️ Добавлен товар: {name} | Артикул: {article} | Цена: {price}')
         except Exception as e:
             logging.warning(f'Ошибка обработки товара на странице {page_number}: {e}')
             continue
     
     driver.quit()
-    logging.info(f'📄 Завершена обработка страницы {page_number}')
+    logging.info(f'📄 Завершена обработка страницы {page_number}. Добавлено товаров: {count}')
     return items
 
+# Основная функция
 def main():
-    try:
-        with connect_to_db() as db_connection:
-            update_config_status(db_connection, "parser_status", "in_progress")
-            os.makedirs(OUTPUT_DIR, exist_ok=True)
-            if os.path.exists(OUTPUT_PATH):
-                os.remove(OUTPUT_PATH)
-            
-            start_time = datetime.now()
-            logging.info(f'⏳ Начало парсинга: {start_time.strftime("%Y-%m-%d %H:%M:%S")}')
-            total_pages = get_total_pages()
-            logging.info(f'🔍 Найдено страниц: {total_pages}')
-            
-            all_items = []
-            with ThreadPoolExecutor(max_workers=THREADS) as executor:
-                future_to_page = {executor.submit(parse_page, page): page for page in range(1, total_pages + 1)}
-                for future in as_completed(future_to_page):
-                    page_number = future_to_page[future]
-                    try:
-                        items = future.result()
-                        all_items.extend(items)
-                        logging.info(f'✅ Страница {page_number} обработана.')
-                    except Exception as e:
-                        logging.warning(f'⚠️ Ошибка при обработке страницы {page_number}: {e}')
-            
-            update_config_status(db_connection, "parser_status", "done")
-    except Exception as e:
-        logging.error(f"Ошибка при парсинге: {e}")
-        update_config_status(db_connection, "parser_status", "failed")
+    total_pages = get_total_pages()
+    logging.info(f'🔍 Найдено страниц: {total_pages}')
+    
+    all_items = []
+    with ThreadPoolExecutor(max_workers=THREADS) as executor:
+        future_to_page = {executor.submit(parse_page, page): page for page in range(1, total_pages + 1)}
+        for future in as_completed(future_to_page):
+            all_items.extend(future.result())
+    
+    df = pd.DataFrame(all_items)
+    df.to_excel(OUTPUT_PATH, index=False)
+    logging.info(f'✅ Парсинг завершен, сохранено {len(all_items)} товаров.')
 
 if __name__ == '__main__':
     main()
