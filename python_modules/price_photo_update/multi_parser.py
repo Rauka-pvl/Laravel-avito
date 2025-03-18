@@ -1,8 +1,8 @@
 import os
 import re
 import time
-import pandas as pd
 import mysql.connector
+import pandas as pd
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from selenium import webdriver
@@ -79,6 +79,7 @@ def update_config_status(db_connection, name, value):
 
 
 
+    
 # Создаем браузер с выбранным прокси
 def create_driver(proxy):
     options = Options()
