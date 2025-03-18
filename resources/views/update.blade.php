@@ -25,7 +25,7 @@
                     <div class="flex gap-4 mb-6">
                         <a href="{{ route('updateXML') }}"
                             class="px-6 py-3 bg-blue-500 hover:bg-blue-600 text-white font-semibold rounded-md shadow-md transition">
-                            Обновление Avito XML | ZZAP YML | Trast Цены
+                            Обновление Avito XML | ZZAP YML 
                         </a>
                         <a href="{{ route('updateTrast') }}"
                             class="px-6 py-3 bg-blue-500 hover:bg-blue-600 text-white font-semibold rounded-md shadow-md transition">

@@ -38,21 +38,19 @@ class UpdateController extends Controller
         return redirect()->back()->with(['success' => 'Запуск обновления цен и фотографий запущен']);
     }
     public function updateTrast()
-    {
-        $pythonScript = '/home/admin/web/233204.fornex.cloud/public_html/python_modules/price_photo_update/multi_parser.py';
+{
+    $pythonScript = '/home/admin/web/233204.fornex.cloud/public_html/python_modules/price_photo_update/multi_parser.py';
+    $logFile = '/home/admin/web/233204.fornex.cloud/logs/multi_parser.log';
 
-        // Формируем команду для запуска в фоне
-        $command = "nohup python3 $pythonScript > /dev/null 2>&1 &";
+    // Формируем команду для запуска в фоне с логированием
+    $command = "nohup python3 $pythonScript > $logFile 2>&1 &";
 
-        // Выполняем команду
-        exec($command);
+    // Выполняем команду
+    exec($command);
 
-        // $command = "nohup python3 /home/admin/web/233204.fornex.cloud/public_html/python_modules/price_photo_update/multi_parser.py > /home/admin/web/233204.fornex.cloud/logs/multi_parser.log 2>&1 &";
-        // exec($command);
+    return redirect()->back()->with(['success' => 'Запуск обновления Trast Цен запущен']);
+}
 
-        // PHP-код продолжает выполняться сразу после запуска Python-скрипта
-        return redirect()->back()->with(['success' => 'Запуск обновления Trast Цен запущен']);
-    }
 
     public function updateStatus()
     {
