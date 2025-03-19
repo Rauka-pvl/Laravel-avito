@@ -14,7 +14,7 @@ import random
 import logging
 
 # Настройки
-OUTPUT_DIR = "output"
+OUTPUT_DIR = "/home/admin/web/233204.fornex.cloud/public_html/storage/logs/update/"
 OUTPUT_FILENAME = "products.xlsx"
 OUTPUT_PATH = os.path.join(OUTPUT_DIR, OUTPUT_FILENAME)
 BASE_URL = "https://trast-zapchast.ru"
