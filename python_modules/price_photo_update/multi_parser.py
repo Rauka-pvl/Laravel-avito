@@ -14,7 +14,7 @@ import random
 import logging
 
 # Настройки
-OUTPUT_DIR = "/home/admin/web/233204.fornex.cloud/public_html/storage/logs/update/"
+OUTPUT_DIR = "output"
 OUTPUT_FILENAME = "products.xlsx"
 OUTPUT_PATH = os.path.join(OUTPUT_DIR, OUTPUT_FILENAME)
 BASE_URL = "https://trast-zapchast.ru"
@@ -147,18 +147,31 @@ def parse_page(page_number):
 
 # Основная функция
 def main():
-    total_pages = get_total_pages()
-    logging.info(f'🔍 Найдено страниц: {total_pages}')
-    
-    all_items = []
-    with ThreadPoolExecutor(max_workers=THREADS) as executor:
-        future_to_page = {executor.submit(parse_page, page): page for page in range(1, total_pages + 1)}
-        for future in as_completed(future_to_page):
-            all_items.extend(future.result())
-    
-    df = pd.DataFrame(all_items)
-    df.to_excel(OUTPUT_PATH, index=False)
-    logging.info(f'✅ Парсинг завершен, сохранено {len(all_items)} товаров.')
+    with connect_to_db() as db_connection:
+            try:
+            # Устанавливаем начальный статус
+                update_config_status(db_connection, "parser_status", "in_progress")
+                total_pages = get_total_pages()
+                logging.info(f'🔍 Найдено страниц: {total_pages}')
+                
+                all_items = []
+                with ThreadPoolExecutor(max_workers=THREADS) as executor:
+                    future_to_page = {executor.submit(parse_page, page): page for page in range(1, total_pages + 1)}
+                    for future in as_completed(future_to_page):
+                        all_items.extend(future.result())
+                
+                df = pd.DataFrame(all_items)
+                df.to_excel(OUTPUT_PATH, index=False)
+                logging.info(f'✅ Парсинг завершен, сохранено {len(all_items)} товаров.')
+                update_config_status(db_connection, "parser_status", "done")
+                update_config_status(db_connection, "parser_update_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            
+
+
+            except Exception as e:
+                logging.error(f"Ошибка при обработке: {e}")
+                update_config_status(db_connection, "parser_status", "failed")
+
 
 if __name__ == '__main__':
     main()
