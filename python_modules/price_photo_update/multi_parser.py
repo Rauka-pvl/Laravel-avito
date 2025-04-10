@@ -19,7 +19,7 @@ OUTPUT_DIR = "/home/admin/web/233204.fornex.cloud/public_html/public/"
 OUTPUT_FILENAME = "products.xlsx"
 OUTPUT_PATH = os.path.join(OUTPUT_DIR, OUTPUT_FILENAME)
 BASE_URL = "https://trast-zapchast.ru"
-THREADS = 4  # Количество потоков для парсинга каталога
+THREADS = 2  # Количество потоков для парсинга каталога
 
 # Логирование
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -206,7 +206,7 @@ def main(use_db=False):
 
         all_items = []
         with ThreadPoolExecutor(max_workers=THREADS) as executor:
-            futures = [executor.submit(parse_page, page) for page in range(1, total_pages + 1)]
+            futures = [executor.submit(parse_page, page, total_pages) for page in range(1, total_pages + 1)]
             for future in as_completed(futures):
                 all_items.extend(future.result())
 
