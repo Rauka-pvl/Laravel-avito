@@ -190,6 +190,7 @@ def get_manufacturer_from_product_page(link):
         return "Н/Д"
 
 
+
 # Основная функция
 def main(use_db=False):
     global current_proxy
