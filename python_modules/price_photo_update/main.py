@@ -105,6 +105,40 @@ def combine_xml_files(urls):
 
     return combined_root
 
+
+def cleanup_files():
+    try:
+        logging.info("Запуск очистки старых файлов...")
+
+        # Список файлов, которые нужно удалить
+        files_to_delete = [
+            os.path.join(XML_OUTPUT_PATH, "avito_xml.xml"),
+            os.path.join(XML_OUTPUT_PATH, "zzap_yml.xml"),
+        ]
+
+        for file_path in files_to_delete:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                logging.info(f"Удален файл: {file_path}")
+            else:
+                logging.info(f"Файл не найден (не требуется удалять): {file_path}")
+
+        # Удаляем временные логи старше, например, 7 дней
+        now = time.time()
+        for filename in os.listdir(LOGS_PATH):
+            file_path = os.path.join(LOGS_PATH, filename)
+            if os.path.isfile(file_path):
+                file_age = now - os.path.getmtime(file_path)
+                if file_age > 7 * 24 * 60 * 60:  # 7 дней
+                    os.remove(file_path)
+                    logging.info(f"Удален старый лог: {file_path}")
+
+        logging.info("Очистка завершена.")
+
+    except Exception as e:
+        logging.error(f"Ошибка при очистке файлов: {e}")
+
+
 def combine_yml_files(urls):
     combined_root = ET.Element("yml_catalog", {"date": datetime.now().isoformat()})
     shop = None  # Переменная для хранения информации о магазине
@@ -515,7 +549,8 @@ def main():
     
     # Настройка логирования
     log_file = setup_logging()
-    
+    # Очистка старых файлов перед началом
+    cleanup_files()
     try:
         # Здесь выполняется основная логика программы
         process_articles()

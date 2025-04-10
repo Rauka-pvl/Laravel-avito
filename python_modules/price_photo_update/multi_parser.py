@@ -7,6 +7,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
@@ -14,7 +15,7 @@ import random
 import logging
 
 # Настройки
-OUTPUT_DIR = "output"
+OUTPUT_DIR = "/home/admin/web/233204.fornex.cloud/public_html/public/"
 OUTPUT_FILENAME = "products.xlsx"
 OUTPUT_PATH = os.path.join(OUTPUT_DIR, OUTPUT_FILENAME)
 BASE_URL = "https://trast-zapchast.ru"
@@ -25,13 +26,41 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # Прокси-серверы
 PROXY_LIST = [
-    "vpn-uk1.trafflink.xyz:443",
-    "vpn-uk2.trafflink.xyz:443",
-    "vpn-uk3.trafflink.xyz:443",
-    "uk28.trafcfy.com:437",
-    "uk27.trafcfy.com:437",
-    "uk36.trafcfy.com:437",
+    "vpn-uk1.trafflink.xyz:443", "vpn-uk2.trafflink.xyz:443", "vpn-uk3.trafflink.xyz:443",
+    "vpn-uk4.trafflink.xyz:443", "vpn-uk5.trafflink.xyz:443", "vpn-uk6.trafflink.xyz:443",
+    "vpn-uk7.trafflink.xyz:443", "vpn-uk8.trafflink.xyz:443", "vpn-uk9.trafflink.xyz:443",
+    "uk28.trafcfy.com:437", "uk27.trafcfy.com:437", "uk36.trafcfy.com:437", "uk24.trafcfy.com:437",
+    "uk29.trafcfy.com:437", "uk37.trafcfy.com:437", "uk23.trafcfy.com:437", "uk26.trafcfy.com:437",
+    "uk34.trafcfy.com:437", "uk22.trafcfy.com:437", "uk25.trafcfy.com:437", "uk35.trafcfy.com:437",
+    "uk30.trafcfy.com:437", "uk31.trafcfy.com:437", "uk32.trafcfy.com:437", "uk33.trafcfy.com:437",
+    "vpn-de1.trafflink.xyz:443", "vpn-de2.trafflink.xyz:443", "vpn-de3.trafflink.xyz:443",
+    "vpn-de4.trafflink.xyz:443", "vpn-de5.trafflink.xyz:443", "vpn-de6.trafflink.xyz:443",
+    "vpn-de7.trafflink.xyz:443", "vpn-de8.trafflink.xyz:443", "vpn-de9.trafflink.xyz:443",
+    "nl65.trafcfy.com:437", "nl67.trafcfy.com:437", "nl64.trafcfy.com:437", "nl44.trafcfy.com:437",
+    "nl71.trafcfy.com:437", "nl88.trafcfy.com:437", "nl69.trafcfy.com:437", "nl53.trafcfy.com:437",
+    "nl52.trafcfy.com:437", "nl66.trafcfy.com:437", "nl42.trafcfy.com:437", "nl93.trafcfy.com:437",
+    "nl76.trafcfy.com:437", "nl45.trafcfy.com:437", "nl51.trafcfy.com:437", "nl89.trafcfy.com:437",
+    "nl86.trafcfy.com:437", "nl70.trafcfy.com:437", "nl92.trafcfy.com:437", "nl60.trafcfy.com:437",
+    "nl68.trafcfy.com:437", "nl73.trafcfy.com:437", "nl57.trafcfy.com:437", "nl84.trafcfy.com:437",
+    "nl95.trafcfy.com:437", "nl81.trafcfy.com:437", "nl58.trafcfy.com:437", "nl94.trafcfy.com:437",
+    "nl56.trafcfy.com:437", "nl80.trafcfy.com:437", "nl74.trafcfy.com:437", "nl91.trafcfy.com:437",
+    "nl82.trafcfy.com:437", "nl41.trafcfy.com:437", "nl59.trafcfy.com:437", "nl77.trafcfy.com:437",
+    "nl83.trafcfy.com:437", "nl72.trafcfy.com:437", "nl79.trafcfy.com:437", "nl75.trafcfy.com:437",
+    "nl55.trafcfy.com:437", "nl62.trafcfy.com:437", "nl87.trafcfy.com:437", "nl54.trafcfy.com:437",
+    "nl85.trafcfy.com:437", "nl61.trafcfy.com:437", "nl43.trafcfy.com:437", "nl90.trafcfy.com:437",
+    "nl78.trafcfy.com:437", "nl63.trafcfy.com:437",
+    "vpn-ca1.trafflink.xyz:443", "vpn-ca1.trafflink.xyz:143", "vpn-ca2.trafflink.xyz:443",
+    "vpn-ca2.trafflink.xyz:143", "vpn-ca3.trafflink.xyz:443", "vpn-ca3.trafflink.xyz:143",
+    "us30.trafcfy.com:437", "us23.trafcfy.com:437", "us29.trafcfy.com:437", "us25.trafcfy.com:437",
+    "us26.trafcfy.com:437", "us31.trafcfy.com:437", "us32.trafcfy.com:437", "us35.trafcfy.com:437",
+    "us21.trafcfy.com:437", "us24.trafcfy.com:437", "us28.trafcfy.com:437", "us34.trafcfy.com:437",
+    "vpn-nl1.trafflink.xyz:443", "vpn-nl1.trafflink.xyz:143", "vpn-nl2.trafflink.xyz:443",
+    "vpn-nl2.trafflink.xyz:143", "vpn-nl3.trafflink.xyz:443", "vpn-nl3.trafflink.xyz:143",
+    "vpn-nl4.trafflink.xyz:443", "vpn-nl4.trafflink.xyz:143", "vpn-nl5.trafflink.xyz:443",
+    "vpn-nl5.trafflink.xyz:143"
 ]
+
+
 
 current_proxy = None  # Глобальный прокси для многопоточного использования
 
@@ -62,116 +91,143 @@ def update_config_status(db_connection, name, value):
         db_connection.rollback()
 
 # Создаем браузер с выбранным прокси
-def create_driver(proxy):
+import logging
+
+def create_driver(proxy=None):
+    # Отключаем лишние логи webdriver_manager
+    logging.getLogger('WDM').setLevel(logging.ERROR)
+    
     options = Options()
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument(f"--proxy-server=https://{proxy}")
+    if proxy:
+        options.add_argument(f"--proxy-server=https://{proxy}")
     options.add_argument("--log-level=3")
+
     
+
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=options)
-    logging.info(f'Используется прокси: {proxy}')
     return driver
+
 
 # Получаем количество страниц и выбираем прокси
 def get_total_pages():
-    global current_proxy
-    attempts = 3  # Количество попыток смены прокси
-    for _ in range(attempts):
-        proxy = get_random_proxy()
-        driver = create_driver(proxy)
-        driver.get(f"{BASE_URL}/shop/page/1")
-        time.sleep(2)
-        soup = BeautifulSoup(driver.page_source, 'html.parser')
-        pagination = soup.select('ul.page-numbers li')
-        driver.quit()
-        
-        total_pages = int(pagination[-2].get_text(strip=True)) if pagination else 1
-        if total_pages > 1:
-            current_proxy = proxy
-            break
-        logging.warning(f'⚠️ Найдена только 1 страница, смена прокси...')
-    else:
-        logging.error('❌ После нескольких попыток все еще только 1 страница, продолжаем с последним прокси.')
-    
-    logging.info(f'Используем прокси {current_proxy} для всех страниц.')
-    return total_pages
+    for proxy in PROXY_LIST:
+        try:
+            driver = create_driver(proxy)
+            driver.get(f"{BASE_URL}/shop/page/1")
+            time.sleep(2)
+            soup = BeautifulSoup(driver.page_source, 'html.parser')
+            pagination = soup.select('ul.page-numbers li')
+            driver.quit()
+            
+            total_pages = int(pagination[-2].get_text(strip=True)) if pagination else 1
+            if total_pages > 1:
+                logging.info(f"Найдено страниц: {total_pages} (Прокси: {proxy})")
+                return total_pages
+        except Exception as e:
+            logging.warning(f"Прокси не работает ({proxy}): {e}")
+    logging.error("❌ Не удалось найти рабочий прокси для получения количества страниц.")
+    return 1
 
 # Функция парсинга страницы каталога
-def parse_page(page_number):
+def parse_page(page_number, total_pages):
     driver = create_driver(current_proxy)
-    driver.get(f"{BASE_URL}/shop/page/{page_number}")
-    time.sleep(2)
-    
-    soup = BeautifulSoup(driver.page_source, 'html.parser')
-    products = soup.find_all('div', class_='th-product-card')
-    
-    items = []
-    count = 0
-    for product in products:
-        # Проверка на наличие класса "outofstock" или элемента, который указывает, что товар недоступен
-        if product.find('a', class_='button product_type_variable'):
-            continue
+    try:
+        driver.get(f"{BASE_URL}/shop/page/{page_number}")
+        time.sleep(2)
+
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        products = soup.find_all('div', class_='th-product-card')
+
+        items = []
+        for product in products:
+            if product.find('a', class_='button product_type_variable'):
+                continue
+
+            try:
+                name = product.find('div', class_='th-product-card__name').find('h2')
+                name = name.get_text(strip=True) if name else 'Н/Д'
+
+                price_tag = product.select_one('div.th-product-card__prices span.woocommerce-Price-amount bdi')
+                price = re.sub(r'[^\d]', '', price_tag.get_text(strip=True)) if price_tag else '0'
+
+                article = product.find('div', class_='th-product-card__meta').find('span', 'th-product-card__meta-value')
+                article = re.sub(r'\s|\-', '', article.get_text(strip=True)) if article else 'Н/Д'
+
+                product_page_tag = product.find('a', class_='woocommerce-LoopProduct-link')
+                product_page_link = product_page_tag['href'] if product_page_tag else 'Н/Д'
+
+                manufacturer = get_manufacturer_from_product_page(product_page_link)
+
+                items.append({'Наименование': name, 'Производитель': manufacturer, 'Артикул': article, 'Цена': price})
+                logging.info(f"Добавлен товар: {name} | Артикул: {article} | Страница {page_number}/{total_pages}")
+            except Exception as e:
+                logging.warning(f"Ошибка обработки товара на странице {page_number}: {e}")
+                continue
+
+        logging.info(f"Страница {page_number}/{total_pages} обработана. Добавлено товаров: {len(items)}")
+        return items
+    finally:
+        driver.quit()
+
         
-        try:
-            name = product.find('div', class_='th-product-card__name').find('h2')
-            name = name.get_text(strip=True) if name else 'Н/Д'
-            
-            price = product.find('div', class_='th-product-card__prices').find('span', class_='woocommerce-Price-amount')
-            price = re.sub(r'[^\d]', '', price.get_text(strip=True)) if price else '0'
-            
-            article = product.find('div', class_='th-product-card__meta').find('span', class_='th-product-card__meta-value')
-            article = re.sub(r'[\s\-]', '', article.get_text(strip=True)) if article else 'Н/Д'
-            
-            image_tag = product.find('div', class_='th-product-card__image').find('img')
-            image_url = image_tag['src'] if image_tag else 'Н/Д'
-            
-            product_page_tag = product.find('a', class_='woocommerce-LoopProduct-link')
-            product_page_link = product_page_tag['href'] if product_page_tag else 'Н/Д'
-            
-            manufacturer = "Н/Д"
-            
-            items.append({'Наименование': name, 'Производитель': manufacturer, 'Артикул': article, 'Цена': price, 'Изображение': image_url, 'Ссылка': product_page_link})
-            count += 1
-            logging.info(f'✔️ Добавлен товар: {name} | Артикул: {article} | Цена: {price}')
-        except Exception as e:
-            logging.warning(f'Ошибка обработки товара на странице {page_number}: {e}')
-            continue
-    
-    driver.quit()
-    logging.info(f'📄 Завершена обработка страницы {page_number}. Добавлено товаров: {count}')
-    return items
+def get_manufacturer_from_product_page(link):
+    try:
+        driver = create_driver(current_proxy)
+        driver.get(link)
+        time.sleep(2)
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        manufacturer_tag = soup.select_one('div.wl-attr--item.pa_proizvoditel span.pa-right')
+        manufacturer = manufacturer_tag.get_text(strip=True) if manufacturer_tag else "Н/Д"
+        driver.quit()
+        return manufacturer
+    except Exception as e:
+        logging.warning(f"⚠️ Не удалось получить производителя для {link}: {e}")
+        return "Н/Д"
+
 
 # Основная функция
-def main():
-    with connect_to_db() as db_connection:
-            try:
-            # Устанавливаем начальный статус
-                update_config_status(db_connection, "parser_status", "in_progress")
-                total_pages = get_total_pages()
-                logging.info(f'🔍 Найдено страниц: {total_pages}')
-                
-                all_items = []
-                with ThreadPoolExecutor(max_workers=THREADS) as executor:
-                    future_to_page = {executor.submit(parse_page, page): page for page in range(1, total_pages + 1)}
-                    for future in as_completed(future_to_page):
-                        all_items.extend(future.result())
-                
-                df = pd.DataFrame(all_items)
-                df.to_excel(OUTPUT_PATH, index=False)
-                logging.info(f'✅ Парсинг завершен, сохранено {len(all_items)} товаров.')
-                update_config_status(db_connection, "parser_status", "done")
-                update_config_status(db_connection, "parser_update_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-            
+def main(use_db=False):
+    global current_proxy
+    current_proxy = None
+
+    db_connection = None
+    try:
+        if use_db:
+            db_connection = connect_to_db()
+            update_config_status(db_connection, "parser_status", "in_progress")
+
+        total_pages = get_total_pages()
+
+        all_items = []
+        with ThreadPoolExecutor(max_workers=THREADS) as executor:
+            futures = [executor.submit(parse_page, page) for page in range(1, total_pages + 1)]
+            for future in as_completed(futures):
+                all_items.extend(future.result())
+
+        df = pd.DataFrame(all_items)
+        df.to_excel(OUTPUT_PATH, index=False)
+        logging.info(f'✅ Сохранено {len(all_items)} товаров.')
+
+        if use_db:
+            update_config_status(db_connection, "parser_status", "done")
+            update_config_status(db_connection, "parser_update_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+    except Exception as e:
+        logging.error(f"Ошибка при обработке: {e}")
+        if use_db and db_connection:
+            update_config_status(db_connection, "parser_status", "failed")
+    finally:
+        if db_connection:
+            db_connection.close()
 
 
-            except Exception as e:
-                logging.error(f"Ошибка при обработке: {e}")
-                update_config_status(db_connection, "parser_status", "failed")
-
+if __name__ == '__main__':
+    main()
 
 if __name__ == '__main__':
     main()
