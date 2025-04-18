@@ -89,8 +89,15 @@ def update_config_status(db_connection, name, value):
         db_connection.rollback()
 
 def create_driver(proxy=None):
+    # Создание драйвера с устойчивыми настройками против декомпрессии и блокировок
     logging.getLogger('WDM').setLevel(logging.ERROR)
     options = Options()
+    # Отключаем нежелательные сжатия и включаем совместимость
+    options.add_argument("--disable-features=NetworkService")
+    options.add_argument("--disable-features=VizDisplayCompositor")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--ignore-certificate-errors")
+    options.add_argument("--disable-extensions")
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
@@ -98,6 +105,7 @@ def create_driver(proxy=None):
     if proxy:
         options.add_argument(f"--proxy-server=https://{proxy}")
     options.add_argument("--log-level=3")
+    options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     service = Service(ChromeDriverManager().install())
     return webdriver.Chrome(service=service, options=options)
 
@@ -107,7 +115,12 @@ def get_total_pages():
             driver = create_driver(proxy)
             driver.get(f"{BASE_URL}/shop/page/1")
             time.sleep(2)
-            soup = BeautifulSoup(driver.page_source, 'html.parser')
+            try:
+                soup = BeautifulSoup(driver.page_source, 'html.parser')
+            except Exception as e:
+                logging.error(f"❌ Ошибка при парсинге страницы {link}: {e}")
+                driver.quit()
+                return "Н/Д"
             pagination = soup.select('ul.page-numbers li')
             driver.quit()
             total_pages = int(pagination[-2].get_text(strip=True)) if pagination else 1
@@ -164,9 +177,20 @@ def parse_page(page_number, total_pages):
         driver.quit()
 
 def get_manufacturer_from_product_page(link):
+    # Получение производителя с повторной попыткой и защитой от декомпрессионных ошибок
     try:
         driver = create_driver(current_proxy)
-        driver.get(link)
+        try:
+            driver.get(link)
+        except Exception as e:
+            logging.warning(f"🔁 Повторная попытка из-за ошибки: {e}")
+            time.sleep(1)
+        try:
+            driver.get(link)
+        except Exception as ex:
+            logging.error(f"🚫 Не удалось загрузить {link} после повторной попытки: {ex}")
+            driver.quit()
+            return "Н/Д"
         time.sleep(2)
         soup = BeautifulSoup(driver.page_source, 'html.parser')
         manufacturer_tag = soup.select_one('div.wl-attr--item.pa_proizvoditel span.pa-right')
@@ -190,7 +214,7 @@ def check_output_writable():
         return False
 
 def main(use_db=False):
-      # Удаляем файл, если он существует, чтобы избежать ошибки прав доступа
+    # Удаляем файл, если он существует, чтобы избежать ошибки прав доступа
     try:
         if os.path.exists(OUTPUT_PATH):
             os.remove(OUTPUT_PATH)
@@ -209,7 +233,6 @@ def main(use_db=False):
         if use_db:
             db_connection = connect_to_db()
             update_config_status(db_connection, "parser_status", "in_progress")
-            update_config_status(db_connection, "parser_update_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
         total_pages = get_total_pages()
         with ThreadPoolExecutor(max_workers=THREADS) as executor:
