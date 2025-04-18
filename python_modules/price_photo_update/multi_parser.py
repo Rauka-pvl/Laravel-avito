@@ -3,6 +3,7 @@ import re
 import time
 import mysql.connector
 import pandas as pd
+from openpyxl import load_workbook
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from selenium import webdriver
@@ -88,6 +89,17 @@ def get_total_pages():
     logging.error("❌ Не удалось найти рабочий прокси для получения количества страниц.")
     return 1
 
+def append_to_excel(item, path):
+    df = pd.DataFrame([item])
+    if not os.path.exists(path):
+        df.to_excel(path, index=False)
+    else:
+        with pd.ExcelWriter(path, engine='openpyxl', mode='a', if_sheet_exists='overlay') as writer:
+            book = writer.book
+            sheet = book.active
+            start_row = sheet.max_row
+            df.to_excel(writer, index=False, header=False, startrow=start_row)
+
 def parse_page(page_number, total_pages):
     driver = create_driver(current_proxy)
     items = []
@@ -111,8 +123,7 @@ def parse_page(page_number, total_pages):
                 manufacturer = get_manufacturer_from_product_page(product_page_link)
                 item = {'Наименование': name, 'Производитель': manufacturer, 'Артикул': article, 'Цена': price}
                 items.append(item)
-                df = pd.DataFrame([item])
-                df.to_excel(OUTPUT_PATH, index=False, header=not os.path.exists(OUTPUT_PATH), mode='a')
+                append_to_excel(item, OUTPUT_PATH)
                 logging.info(f"Добавлен товар: {name} | Артикул: {article} | Страница {page_number}/{total_pages}")
             except Exception as e:
                 logging.warning(f"Ошибка обработки товара на странице {page_number}: {e}")
@@ -148,7 +159,7 @@ def check_output_writable():
         logging.error(f"❌ Невозможно записать файл в директорию {OUTPUT_DIR}: {e}")
         return False
 
-def main(use_db=True):
+def main(use_db=False):
     global current_proxy
     current_proxy = None
     if not check_output_writable():
@@ -160,7 +171,6 @@ def main(use_db=True):
         if use_db:
             db_connection = connect_to_db()
             update_config_status(db_connection, "parser_status", "in_progress")
-            update_config_status(db_connection, "parser_update_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
         total_pages = get_total_pages()
         with ThreadPoolExecutor(max_workers=THREADS) as executor:
