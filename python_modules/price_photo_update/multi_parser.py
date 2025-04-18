@@ -27,8 +27,38 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # Прокси
 PROXY_LIST = [
-    "vpn-uk1.trafflink.xyz:443", "vpn-uk2.trafflink.xyz:443"
-    # ... список обрезан для краткости ...
+     "vpn-uk1.trafflink.xyz:443", "vpn-uk2.trafflink.xyz:443", "vpn-uk3.trafflink.xyz:443",
+     "vpn-uk4.trafflink.xyz:443", "vpn-uk5.trafflink.xyz:443", "vpn-uk6.trafflink.xyz:443",
+     "vpn-uk7.trafflink.xyz:443", "vpn-uk8.trafflink.xyz:443", "vpn-uk9.trafflink.xyz:443",
+     "uk28.trafcfy.com:437", "uk27.trafcfy.com:437", "uk36.trafcfy.com:437", "uk24.trafcfy.com:437",
+     "uk29.trafcfy.com:437", "uk37.trafcfy.com:437", "uk23.trafcfy.com:437", "uk26.trafcfy.com:437",
+     "uk34.trafcfy.com:437", "uk22.trafcfy.com:437", "uk25.trafcfy.com:437", "uk35.trafcfy.com:437",
+     "uk30.trafcfy.com:437", "uk31.trafcfy.com:437", "uk32.trafcfy.com:437", "uk33.trafcfy.com:437",
+     "vpn-de1.trafflink.xyz:443", "vpn-de2.trafflink.xyz:443", "vpn-de3.trafflink.xyz:443",
+     "vpn-de4.trafflink.xyz:443", "vpn-de5.trafflink.xyz:443", "vpn-de6.trafflink.xyz:443",
+     "vpn-de7.trafflink.xyz:443", "vpn-de8.trafflink.xyz:443", "vpn-de9.trafflink.xyz:443",
+     "nl65.trafcfy.com:437", "nl67.trafcfy.com:437", "nl64.trafcfy.com:437", "nl44.trafcfy.com:437",
+     "nl71.trafcfy.com:437", "nl88.trafcfy.com:437", "nl69.trafcfy.com:437", "nl53.trafcfy.com:437",
+     "nl52.trafcfy.com:437", "nl66.trafcfy.com:437", "nl42.trafcfy.com:437", "nl93.trafcfy.com:437",
+     "nl76.trafcfy.com:437", "nl45.trafcfy.com:437", "nl51.trafcfy.com:437", "nl89.trafcfy.com:437",
+     "nl86.trafcfy.com:437", "nl70.trafcfy.com:437", "nl92.trafcfy.com:437", "nl60.trafcfy.com:437",
+     "nl68.trafcfy.com:437", "nl73.trafcfy.com:437", "nl57.trafcfy.com:437", "nl84.trafcfy.com:437",
+     "nl95.trafcfy.com:437", "nl81.trafcfy.com:437", "nl58.trafcfy.com:437", "nl94.trafcfy.com:437",
+     "nl56.trafcfy.com:437", "nl80.trafcfy.com:437", "nl74.trafcfy.com:437", "nl91.trafcfy.com:437",
+     "nl82.trafcfy.com:437", "nl41.trafcfy.com:437", "nl59.trafcfy.com:437", "nl77.trafcfy.com:437",
+     "nl83.trafcfy.com:437", "nl72.trafcfy.com:437", "nl79.trafcfy.com:437", "nl75.trafcfy.com:437",
+     "nl55.trafcfy.com:437", "nl62.trafcfy.com:437", "nl87.trafcfy.com:437", "nl54.trafcfy.com:437",
+     "nl85.trafcfy.com:437", "nl61.trafcfy.com:437", "nl43.trafcfy.com:437", "nl90.trafcfy.com:437",
+     "nl78.trafcfy.com:437", "nl63.trafcfy.com:437",
+     "vpn-ca1.trafflink.xyz:443", "vpn-ca1.trafflink.xyz:143", "vpn-ca2.trafflink.xyz:443",
+     "vpn-ca2.trafflink.xyz:143", "vpn-ca3.trafflink.xyz:443", "vpn-ca3.trafflink.xyz:143",
+     "us30.trafcfy.com:437", "us23.trafcfy.com:437", "us29.trafcfy.com:437", "us25.trafcfy.com:437",
+     "us26.trafcfy.com:437", "us31.trafcfy.com:437", "us32.trafcfy.com:437", "us35.trafcfy.com:437",
+     "us21.trafcfy.com:437", "us24.trafcfy.com:437", "us28.trafcfy.com:437", "us34.trafcfy.com:437",
+     "vpn-nl1.trafflink.xyz:443", "vpn-nl1.trafflink.xyz:143", "vpn-nl2.trafflink.xyz:443",
+     "vpn-nl2.trafflink.xyz:143", "vpn-nl3.trafflink.xyz:443", "vpn-nl3.trafflink.xyz:143",
+     "vpn-nl4.trafflink.xyz:443", "vpn-nl4.trafflink.xyz:143", "vpn-nl5.trafflink.xyz:443",
+     "vpn-nl5.trafflink.xyz:143"
 ]
 
 current_proxy = None
@@ -160,6 +190,14 @@ def check_output_writable():
         return False
 
 def main(use_db=False):
+      # Удаляем файл, если он существует, чтобы избежать ошибки прав доступа
+    try:
+        if os.path.exists(OUTPUT_PATH):
+            os.remove(OUTPUT_PATH)
+            logging.info(f"Файл {OUTPUT_PATH} удалён перед началом записи.")
+    except Exception as e:
+        logging.error(f"❌ Не удалось удалить {OUTPUT_PATH}: {e}")
+        return
     global current_proxy
     current_proxy = None
     if not check_output_writable():
@@ -171,6 +209,7 @@ def main(use_db=False):
         if use_db:
             db_connection = connect_to_db()
             update_config_status(db_connection, "parser_status", "in_progress")
+            update_config_status(db_connection, "parser_update_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
         total_pages = get_total_pages()
         with ThreadPoolExecutor(max_workers=THREADS) as executor:
