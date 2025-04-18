@@ -90,12 +90,12 @@ def get_total_pages():
 
 def parse_page(page_number, total_pages):
     driver = create_driver(current_proxy)
+    items = []
     try:
         driver.get(f"{BASE_URL}/shop/page/{page_number}")
         time.sleep(2)
         soup = BeautifulSoup(driver.page_source, 'html.parser')
         products = soup.find_all('div', class_='th-product-card')
-        items = []
         for product in products:
             if product.find('a', class_='button product_type_variable'):
                 continue
@@ -109,7 +109,10 @@ def parse_page(page_number, total_pages):
                 product_page_tag = product.find('a', class_='woocommerce-LoopProduct-link')
                 product_page_link = product_page_tag['href'] if product_page_tag else 'Н/Д'
                 manufacturer = get_manufacturer_from_product_page(product_page_link)
-                items.append({'Наименование': name, 'Производитель': manufacturer, 'Артикул': article, 'Цена': price})
+                item = {'Наименование': name, 'Производитель': manufacturer, 'Артикул': article, 'Цена': price}
+                items.append(item)
+                df = pd.DataFrame([item])
+                df.to_excel(OUTPUT_PATH, index=False, header=not os.path.exists(OUTPUT_PATH), mode='a')
                 logging.info(f"Добавлен товар: {name} | Артикул: {article} | Страница {page_number}/{total_pages}")
             except Exception as e:
                 logging.warning(f"Ошибка обработки товара на странице {page_number}: {e}")
@@ -145,17 +148,7 @@ def check_output_writable():
         logging.error(f"❌ Невозможно записать файл в директорию {OUTPUT_DIR}: {e}")
         return False
 
-def notify_local_service():
-    try:
-        response = requests.post("http://localhost:51593", json={}, timeout=10)
-        response.raise_for_status()
-        logging.info("✅ Ответ от локального сервиса получен успешно")
-    except requests.exceptions.Timeout:
-        logging.error("⏱ Превышено время ожидания ответа от локального сервиса")
-    except requests.exceptions.RequestException as e:
-        logging.error(f"🚫 Ошибка при обращении к локальному сервису: {e}")
-
-def main(use_db=False):
+def main(use_db=True):
     global current_proxy
     current_proxy = None
     if not check_output_writable():
@@ -167,18 +160,13 @@ def main(use_db=False):
         if use_db:
             db_connection = connect_to_db()
             update_config_status(db_connection, "parser_status", "in_progress")
+            update_config_status(db_connection, "parser_update_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
         total_pages = get_total_pages()
-        all_items = []
         with ThreadPoolExecutor(max_workers=THREADS) as executor:
             futures = [executor.submit(parse_page, page, total_pages) for page in range(1, total_pages + 1)]
             for future in as_completed(futures):
-                all_items.extend(future.result())
-
-        df = pd.DataFrame(all_items)
-        df.to_excel(OUTPUT_PATH, index=False)
-        logging.info(f'✅ Сохранено {len(all_items)} товаров в {OUTPUT_PATH}.')
-        notify_local_service()
+                future.result()
 
         if use_db:
             update_config_status(db_connection, "parser_status", "done")
