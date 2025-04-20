@@ -16,7 +16,7 @@ import random
 from time import sleep
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-LOGS_PATH = "."
+LOGS_PATH = "/home/admin/web/233204.fornex.cloud/public_html/storage/logs/update/"
 
 def setup_logging():
     os.makedirs(LOGS_PATH, exist_ok=True)
@@ -292,7 +292,7 @@ def update_config_status(db_connection, name, value):
 if __name__ == "__main__":
     start = time.time()
     setup_logging()
-    filename = "products.xlsx"
+    filename = "/home/admin/web/233204.fornex.cloud/public_html/public/products.xlsx"
     create_new_excel(filename)
     db = connect_to_db()
     if db:
