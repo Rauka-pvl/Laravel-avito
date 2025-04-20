@@ -301,8 +301,8 @@ if __name__ == "__main__":
     driver = create_chrome_driver(driver_path)
 
     try:
-        # pages = get_pages_count(driver, "https://trast-zapchast.ru/shop/")
-        pages = 5
+        pages = get_pages_count(driver, "https://trast-zapchast.ru/shop/")
+        # pages = 5
         all_links = []
         for page_num in range(1, pages + 1):
             page_url = f"https://trast-zapchast.ru/shop/page/{page_num}/"
