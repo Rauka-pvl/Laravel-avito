@@ -361,48 +361,39 @@ def append_products_to_excel(filename: str, products: list[dict]):
     except Exception as e:
         logger.error(f"Ошибка при записи в файл {filename}: {e}")
 
+def connect_to_db(retries=3, delay=3):
+    attempt = 0
+    while attempt < retries:
+        try:
+            conn = mysql.connector.connect(
+                host="127.0.0.1",
+                user="uploader",
+                password="uploader",
+                database="avito"
+            )
+            if conn.is_connected():
+                logger.info("Успешное подключение к базе данных")
+                return conn
+        except mysql.connector.Error as err:
+            logger.warning(f"Попытка {attempt+1}: ошибка подключения к БД: {err}")
+        sleep(delay)
+        attempt += 1
+    logger.warning("❗ База данных недоступна. Работа продолжается без записи статуса.")
+    return None
+
 def update_config_status(db_connection, name, value):
-    """
-    Обновляет значение в таблице config.
-    Если записи с указанным name нет, она будет создана.
-    """
     try:
-        if not db_connection.is_connected():
-            logging.error("Ошибка: соединение с базой данных отсутствует.")
-            return
-        
         with db_connection.cursor() as cursor:
-            # Проверяем, существует ли запись
-            query_check = "SELECT COUNT(*) FROM config WHERE name = %s"
-            cursor.execute(query_check, (name,))
+            cursor.execute("SELECT COUNT(*) FROM config WHERE name = %s", (name,))
             exists = cursor.fetchone()[0]
-
             if exists:
-                # Обновляем существующую запись
-                query_update = "UPDATE config SET value = %s WHERE name = %s"
-                cursor.execute(query_update, (value, name))
+                cursor.execute("UPDATE config SET value = %s WHERE name = %s", (value, name))
             else:
-                # Создаем новую запись
-                query_insert = "INSERT INTO config (name, value) VALUES (%s, %s)"
-                cursor.execute(query_insert, (name, value))
-
+                cursor.execute("INSERT INTO config (name, value) VALUES (%s, %s)", (name, value))
             db_connection.commit()
-            logging.info(f"Статус '{name}' успешно обновлен до значения '{value}'")
     except Exception as e:
-        logging.error(f"Ошибка при обновлении статуса '{name}' в таблице config: {e}")
         db_connection.rollback()
-
-def connect_to_db():
-    try:
-        return mysql.connector.connect(
-            host="127.0.0.1",
-            user="uploader",
-            password="uploader",
-            database="avito"
-        )
-    except mysql.connector.Error as err:
-        logging.error(f"Ошибка подключения к базе данных: {err}")
-        raise
+        logger.error(f"Ошибка при обновлении конфигурации: {e}")
 
 if __name__ == "__main__":
     start = time.time()
@@ -412,13 +403,9 @@ if __name__ == "__main__":
         create_new_excel(filename)
 
         links = []
-        try:
-            db = connect_to_db()
+        db = connect_to_db()
+        if db:
             update_config_status(db, 'parser_status', 'in_progress')
-            update_config_status(db, 'parser_update_time', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-        except Error:
-            logger.error("Ошибка при подключении к БД")
-
         for page_num in range(1, get_pages_count()):
             try:
                 page_url = f"https://trast-zapchast.ru/shop/page/{page_num}/"
@@ -441,12 +428,9 @@ if __name__ == "__main__":
         update_config_status(db, 'parser_status', 'failed')
         update_config_status(db, 'parser_update_time', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
-    try:
-        db = connect_to_db()
+    if db:
         update_config_status(db, 'parser_status', 'done')
         update_config_status(db, 'parser_update_time', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    except Error:
-        logger.error("Ошибка при подключении к БД")
 
     end = time.time()
     duration = end - start
