@@ -378,7 +378,7 @@ def connect_to_db():
 if __name__ == "__main__":
     start = time.time()
     try:
-        filename = "products.xlsx"
+        filename = "/home/admin/web/233204.fornex.cloud/public_html/public/products.xlsx"
         create_new_excel(filename)
 
         links = []
