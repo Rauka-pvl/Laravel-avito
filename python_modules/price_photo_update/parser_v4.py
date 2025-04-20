@@ -18,10 +18,40 @@ import random
 import requests
 from time import sleep
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s'
-)
+LOGS_PATH = "/home/admin/web/233204.fornex.cloud/public_html/storage/logs/update/"
+def setup_logging():
+    # Уникальное имя файла для каждого запуска
+    os.makedirs(LOGS_PATH, exist_ok=True)  # Создаем папку для логов, если ее нет
+    log_filename = os.path.join(LOGS_PATH, f"parser_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+
+    # Настройка логирования
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)  # Устанавливаем уровень логирования
+
+    # Удаляем старые обработчики (если они есть)
+    if logger.hasHandlers():
+        logger.handlers.clear()
+
+    # Консольный обработчик
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+
+    # Обработчик записи в файл
+    file_handler = logging.FileHandler(log_filename, encoding="utf-8")
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+
+    # Добавляем обработчики
+    logger.addHandler(console_handler)
+    logger.addHandler(file_handler)
+
+    # Логируем успешное создание лог-файла
+    logging.info(f"Логирование настроено. Файл лога: {log_filename}")
+
+    return log_filename  # Возвращаем имя файла лога
+
+
 logger = logging.getLogger(__name__)
 
 USER_AGENTS = [
@@ -121,7 +151,6 @@ def fetch_with_fallback_proxy(url: str, timeout: int = 10):
 
 def get_random_headers():
     return {"User-Agent": random.choice(USER_AGENTS)}
-
 
 def get_pages_count(url: str = "https://trast-zapchast.ru/shop/") -> int:
     from selenium import webdriver
@@ -377,6 +406,7 @@ def connect_to_db():
 
 if __name__ == "__main__":
     start = time.time()
+    setup_logging()
     try:
         filename = "/home/admin/web/233204.fornex.cloud/public_html/public/products.xlsx"
         create_new_excel(filename)
