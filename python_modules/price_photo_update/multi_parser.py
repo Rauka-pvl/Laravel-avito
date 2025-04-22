@@ -428,7 +428,7 @@ if __name__ == "__main__":
         db = connect_to_db()
         update_config_status(db, 'parser_status', 'failed')
         update_config_status(db, 'parser_update_time', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-
+    db = connect_to_db()
     if db:
         update_config_status(db, 'parser_status', 'done')
         update_config_status(db, 'parser_update_time', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
