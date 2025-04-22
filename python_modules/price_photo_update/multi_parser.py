@@ -406,6 +406,7 @@ if __name__ == "__main__":
         db = connect_to_db()
         if db:
             update_config_status(db, 'parser_status', 'in_progress')
+            update_config_status(db, 'parser_update_time', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         for page_num in range(1, get_pages_count()):
             try:
                 page_url = f"https://trast-zapchast.ru/shop/page/{page_num}/"
