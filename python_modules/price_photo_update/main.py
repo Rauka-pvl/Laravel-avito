@@ -278,7 +278,7 @@ def update_photo_yml(offer, db_connection):
 
         # Генерация списка URL-ов
         picture_urls = ",".join(
-            f"https://233204.fornex.cloud/storage/uploads/{row['brand'].lower()}/{row['articul'].lower()}"
+            f"https://233204.fornex.cloud/storage/uploads/{row['brand'].lower()}/{row['articul']}"
             for row in rows
         )
 
