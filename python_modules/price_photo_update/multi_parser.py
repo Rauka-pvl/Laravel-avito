@@ -422,15 +422,13 @@ if __name__ == "__main__":
                 append_products_to_excel(filename, [product])
             except Exception as e:
                 logger.error(f"Ошибка при обработке товара {link}: {e}")
+        update_config_status(db, 'parser_status', 'done')
+        update_config_status(db, 'parser_update_time', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
     except Exception as e:
         logger.critical(f"Фатальная ошибка выполнения: {e}")
         db = connect_to_db()
         update_config_status(db, 'parser_status', 'failed')
-        update_config_status(db, 'parser_update_time', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    db = connect_to_db()
-    if db:
-        update_config_status(db, 'parser_status', 'done')
         update_config_status(db, 'parser_update_time', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
     end = time.time()
