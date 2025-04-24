@@ -377,7 +377,7 @@ def update_price(ad, brand, articul, db_connection):
         for data in price_data:
             # logging.info(f"Проверяем данные: {data}")
             if (
-                str(data.get('distributorId')) == "1664240" and
+                (str(data.get('distributorId')) == "1664240" or str(data.get('distributorId')) == "1696189") and 
                 data.get('brand').lower() in [b.lower() for b in valid_brands] and
                 data.get('numberFix').lower() == articul.lower()
             ):
@@ -421,7 +421,7 @@ def update_price_yml(offer, vendor, vendor_code, db_connection):
         # Поиск нужной цены
         for data in price_data:
             if (
-                str(data.get('distributorId')) == "1664240" and
+                (str(data.get('distributorId')) == "1664240" or str(data.get('distributorId')) == "1696189") and
                 data.get('brand').lower() in [b.lower() for b in valid_brands] and
                 data.get('numberFix').lower() == vendor_code.lower()
             ):
