@@ -10,6 +10,7 @@ use Exception;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use PDO;
+use Illuminate\Support\Facades\Log;
 
 use function PHPUnit\Framework\returnSelf;
 
@@ -247,6 +248,13 @@ class ImagesController extends Controller
         } catch (Exception $e) {
             // Откат транзакции в случае ошибки
             DB::rollBack();
+
+            Log::error('Ошибка в storeM: ' . $e->getMessage(), [
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
             return response()->json(['error' => "Error processing files: " . $e->getMessage()], 500);
         }
     }
