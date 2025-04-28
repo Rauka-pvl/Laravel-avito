@@ -165,12 +165,25 @@
                         body: formData
                     })
                     .then(response => {
-                        if (!response.ok) {
-                            return response.json().then(err => {
-                                throw new Error(JSON.stringify(err.errors));
-                            });
-                        }
-                        return response.json();
+                        return response.text().then(text => {
+                            if (!response.ok) {
+                                // Пробуем распарсить как JSON ошибку
+                                try {
+                                    const err = JSON.parse(text);
+                                    throw new Error(JSON.stringify(err.errors));
+                                } catch (e) {
+                                    // Если это не JSON (например HTML) — выводим весь текст
+                                    throw new Error(text);
+                                }
+                            }
+
+                            // Успешный ответ — пробуем распарсить как JSON
+                            try {
+                                return JSON.parse(text);
+                            } catch (e) {
+                                throw new Error('Ответ не является валидным JSON: ' + text);
+                            }
+                        });
                     })
                     .then(data => {
                         showAlert('Файлы успешно добавлены!', 'green');
