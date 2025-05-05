@@ -72,7 +72,7 @@ Route::post('/multifinderbrands.php', [ImagesController::class, 'getOnArticul'])
 
 Route::get('/file-manager/{path?}', function ($path = null) {
     $relativePath = $path ? trim($path, '/') : '';
-    $fullPath = storage_path('app/' . $relativePath);
+    $fullPath = storage_path($relativePath);
 
     if (!File::exists($fullPath) || !File::isDirectory($fullPath)) {
         abort(404, 'Папка не найдена');
