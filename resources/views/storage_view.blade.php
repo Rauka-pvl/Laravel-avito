@@ -44,6 +44,8 @@
         @foreach($files as $file)
             @php
                 $cPath = explode('app/public/', $currentPath);
+                echo $currentPath;
+                var_dump($cPath);
                 if(count($cPath) > 1) {
                     $currentPath = $cPath[1];
                 } else {
