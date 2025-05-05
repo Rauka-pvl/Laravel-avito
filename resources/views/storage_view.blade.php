@@ -43,10 +43,12 @@
     <ul class="list-group">
         @foreach($files as $file)
             @php
-                $relativeFile = trim($currentPath . '/' . $file, '/');
-                $storagePath = Str::startsWith($relativeFile, 'public/')
-                    ? Str::replaceFirst('public/', '', $relativeFile)
-                    : $relativeFile;
+                $cPath = explode('app/public/', $currentPath);
+                if(count($cPath) > 1) {
+                    $currentPath = $cPath[1];
+                } else {
+                    $currentPath = $cPath[0];
+                }
             @endphp
             <li class="list-group-item d-flex justify-content-between align-items-center">
                 <span>{{ $file }}</span>
