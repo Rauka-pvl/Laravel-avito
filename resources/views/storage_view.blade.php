@@ -7,30 +7,45 @@
 </head>
 <body>
 <div class="container mt-4">
-    <h3>Файловый менеджер</h3>
+    <h3>📁 Файловый менеджер: /storage/app/{{ $currentPath }}</h3>
 
-    <p><strong>Текущая папка:</strong> /storage/{{ $relativePath }}</p>
+    @php
+        $segments = explode('/', $currentPath);
+        $breadcrumb = '';
+    @endphp
 
-    @if($relativePath)
-        <a href="{{ route('storage.view', ['path' => dirname($relativePath)]) }}" class="btn btn-secondary mb-3">
-            🔙 Назад
-        </a>
-    @endif
-
-    <ul class="list-group">
-        @foreach($items as $item)
-            @php
-                $fullPath = $basePath . '/' . $item;
-                $isDir = is_dir($fullPath);
-                $encodedPath = ltrim($relativePath . '/' . $item, '/');
-            @endphp
-
-            <li class="list-group-item d-flex justify-content-between align-items-center">
-                @if($isDir)
-                    📁 <a href="{{ route('storage.view', ['path' => $encodedPath]) }}">{{ $item }}</a>
-                @else
-                    📄 <a href="{{ asset('storage/' . $encodedPath) }}" target="_blank">{{ $item }}</a>
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{{ route('file.manager') }}">storage</a></li>
+            @foreach($segments as $index => $segment)
+                @if($segment)
+                    @php
+                        $breadcrumb .= ($index ? '/' : '') . $segment;
+                    @endphp
+                    <li class="breadcrumb-item">
+                        <a href="{{ route('file.manager', ['path' => $breadcrumb]) }}">{{ $segment }}</a>
+                    </li>
                 @endif
+            @endforeach
+        </ol>
+    </nav>
+
+    <ul class="list-group mb-4">
+        @foreach($directories as $dir)
+            <li class="list-group-item">
+                📁 <a href="{{ route('file.manager', ['path' => trim($currentPath . '/' . $dir, '/')]) }}">{{ $dir }}</a>
+            </li>
+        @endforeach
+    </ul>
+
+    <h5>📄 Файлы</h5>
+    <ul class="list-group">
+        @foreach($files as $file)
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                <span>{{ $file }}</span>
+                <a class="btn btn-sm btn-primary" href="{{ asset('storage/' . trim($currentPath . '/' . $file, '/')) }}" target="_blank">
+                    Открыть
+                </a>
             </li>
         @endforeach
     </ul>

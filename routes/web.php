@@ -70,25 +70,24 @@ Route::get('/products.xlsx', function () {
 
 Route::post('/multifinderbrands.php', [ImagesController::class, 'getOnArticul'])->name('getOnArticul');
 
-Route::get('/storage-view/{path?}', function ($path = '') {
-    $relativePath = trim($path, '/');
-    $basePath = public_path('storage/' . $relativePath);
+Route::get('/file-manager/{path?}', function ($path = null) {
+    $relativePath = $path ? trim($path, '/') : '';
+    $fullPath = storage_path('app/' . $relativePath);
 
-    if (!File::exists($basePath) || !File::isDirectory($basePath)) {
+    if (!File::exists($fullPath) || !File::isDirectory($fullPath)) {
         abort(404, 'Папка не найдена');
     }
 
-    $items = File::files($basePath);
-    $dirs = File::directories($basePath);
-
-    $contents = array_merge(array_map('basename', $dirs), array_map('basename', $items));
+    $directories = File::directories($fullPath);
+    $files = File::files($fullPath);
 
     return view('storage_view', [
-        'items' => $contents,
-        'basePath' => $basePath,
-        'relativePath' => $relativePath,
+        'currentPath' => $relativePath,
+        'directories' => collect($directories)->map(fn($dir) => basename($dir)),
+        'files' => collect($files)->map(fn($file) => basename($file)),
     ]);
-})->name('storage.view');
+})->where('path', '.*')->name('file.manager');
+
 Route::get('/phpInfo', function () {
     phpinfo();
 });
