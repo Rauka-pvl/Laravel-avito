@@ -8,6 +8,7 @@ use App\Jobs\UpdateXmlJob;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
@@ -68,9 +69,26 @@ Route::get('/products.xlsx', function () {
 })->name('xlsx');
 
 Route::post('/multifinderbrands.php', [ImagesController::class, 'getOnArticul'])->name('getOnArticul');
-Route::get('/storage_view', function () {
-    return view('storage_view');
-});
+
+Route::get('/storage-view/{path?}', function ($path = '') {
+    $relativePath = trim($path, '/');
+    $basePath = public_path('storage/' . $relativePath);
+
+    if (!File::exists($basePath) || !File::isDirectory($basePath)) {
+        abort(404, 'Папка не найдена');
+    }
+
+    $items = File::files($basePath);
+    $dirs = File::directories($basePath);
+
+    $contents = array_merge(array_map('basename', $dirs), array_map('basename', $items));
+
+    return view('storage_view', [
+        'items' => $contents,
+        'basePath' => $basePath,
+        'relativePath' => $relativePath,
+    ]);
+})->name('storage.view');
 Route::get('/phpInfo', function () {
     phpinfo();
 });

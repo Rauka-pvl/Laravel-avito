@@ -3,33 +3,35 @@
 <head>
     <meta charset="UTF-8">
     <title>Файловый менеджер</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 </head>
 <body>
-<div class="container mt-5">
-    <h2>Содержимое storage</h2>
+<div class="container mt-4">
+    <h3>Файловый менеджер</h3>
 
-    @php
-        $dir = public_path('storage');
-        $items = scandir($dir);
-    @endphp
+    <p><strong>Текущая папка:</strong> /storage/{{ $relativePath }}</p>
 
-    <ul class="list-group mt-3">
+    @if($relativePath)
+        <a href="{{ route('storage.view', ['path' => dirname($relativePath)]) }}" class="btn btn-secondary mb-3">
+            🔙 Назад
+        </a>
+    @endif
+
+    <ul class="list-group">
         @foreach($items as $item)
-            @if($item !== '.' && $item !== '..')
-                @php
-                    $path = asset('storage/' . $item);
-                    $fullPath = $dir . '/' . $item;
-                @endphp
+            @php
+                $fullPath = $basePath . '/' . $item;
+                $isDir = is_dir($fullPath);
+                $encodedPath = ltrim($relativePath . '/' . $item, '/');
+            @endphp
 
-                <li class="list-group-item d-flex justify-content-between align-items-center">
-                    @if(is_dir($fullPath))
-                        📁 {{ $item }}
-                    @else
-                        📄 <a href="{{ $path }}" target="_blank">{{ $item }}</a>
-                    @endif
-                </li>
-            @endif
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                @if($isDir)
+                    📁 <a href="{{ route('storage.view', ['path' => $encodedPath]) }}">{{ $item }}</a>
+                @else
+                    📄 <a href="{{ asset('storage/' . $encodedPath) }}" target="_blank">{{ $item }}</a>
+                @endif
+            </li>
         @endforeach
     </ul>
 </div>
