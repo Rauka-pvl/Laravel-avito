@@ -68,7 +68,9 @@ Route::get('/products.xlsx', function () {
 })->name('xlsx');
 
 Route::post('/multifinderbrands.php', [ImagesController::class, 'getOnArticul'])->name('getOnArticul');
-
+Route::get('/storage_view', function () {
+    return view('storage_view');
+});
 Route::get('/phpInfo', function () {
     phpinfo();
 });
