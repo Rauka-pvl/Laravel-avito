@@ -41,6 +41,12 @@
     <h5>📄 Файлы</h5>
     <ul class="list-group">
         @foreach($files as $file)
+            @php
+                $relativeFile = trim($currentPath . '/' . $file, '/');
+                $storagePath = Str::startsWith($relativeFile, 'public/')
+                    ? Str::replaceFirst('public/', '', $relativeFile)
+                    : $relativeFile;
+            @endphp
             <li class="list-group-item d-flex justify-content-between align-items-center">
                 <span>{{ $file }}</span>
                 <a class="btn btn-sm btn-primary" href="{{ asset('storage/' . trim($currentPath . '/' . $file, '/')) }}" target="_blank">
