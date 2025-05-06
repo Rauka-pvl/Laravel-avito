@@ -43,14 +43,7 @@
     <ul class="list-group">
         @foreach($files as $file)
             @php
-                $cPath = explode('app/public/', $currentPath);
-                dd($currentPath);
-                // dd($cPath);
-                if(count($cPath) > 1) {
-                    $currentPath = $cPath[1];
-                } else {
-                    $currentPath = $cPath[0];
-                }
+                $currentPath = str_replace('app/public/', '', $currentPath);
             @endphp
             <li class="list-group-item d-flex justify-content-between align-items-center">
                 <span>{{ $file }}</span>
