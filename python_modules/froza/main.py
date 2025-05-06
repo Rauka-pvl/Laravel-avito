@@ -32,11 +32,24 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler(log_filename, encoding="utf-8"),
-        logging.StreamHandler()
+        logging.FileHandler(log_filename, encoding="utf-8"),  # Файл в UTF-8
+        logging.StreamHandler(sys.stdout)  # Явно stdout
     ]
+    
 )
+with open(log_filename, "w", encoding="utf-8-sig") as f:
+    f.write("")  # Просто создаст файл с BOM
+logging.FileHandler(log_filename, encoding="utf-8-sig")
+
+
+# Попытка задать консоли нужную кодировку (Python 3.7+)
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except AttributeError:
+    pass
+
 logger = logging.getLogger(__name__)
+
 
 # === XML-парсинг ответа Froza ===
 def parse_xml_response(content):
@@ -190,6 +203,6 @@ def save_to_xlsx(data: list, filename: str):
 
 # === Запуск ===
 if __name__ == "__main__":
-    xlsx_filename = os.path.join(os.path.dirname(COMBINED_XML), f"forza.xlsx")
+    xlsx_filename = os.path.join(os.path.dirname(COMBINED_XML), f"forza_{timestamp}.xlsx")
     ads_data = scan_ads_file(COMBINED_XML)
     save_to_xlsx(ads_data, filename=xlsx_filename)

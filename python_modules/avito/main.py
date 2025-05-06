@@ -4,6 +4,7 @@ from config import CACHE_DIR, LOG_DIR, LOG_FILE, COMBINED_XML
 from downloader import download_all
 from merger import merge_xml
 from photo_updater import update_all_photos
+import sys
 
 def setup_logging():
     os.makedirs(LOG_DIR, exist_ok=True)
@@ -13,7 +14,19 @@ def setup_logging():
         format="%(asctime)s [%(levelname)s] %(message)s",
         encoding="utf-8"
     )
-    logging.getLogger().addHandler(logging.StreamHandler())
+    
+    # Потоковый хендлер для консоли с поддержкой UTF-8
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    
+    # Только если в stdout поддерживается UTF-8
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')  # Python 3.7+
+    except AttributeError:
+        pass  # В старых версиях Python это не работает
+    
+    logging.getLogger().addHandler(console_handler)
 
 def clear_cache():
     if os.path.exists(CACHE_DIR):

@@ -22,9 +22,10 @@ LOG_DIR = os.path.join(OUTPUT_ROOT, "logs-avito")
 HASH_FILE = os.path.join(CACHE_DIR, ".hashes.json")
 COMBINED_XML = os.path.join(OUTPUT_ROOT, "avito.xml")
 ARCHIVE_DIR = os.path.join(BASE_DIR, "archive")
+FROZA_DID = os.path.join(BASE_DIR, "logs-froza")
 
 # Гарантируем наличие всех папок
-for path in [CACHE_DIR, LOG_DIR, os.path.dirname(COMBINED_XML), ARCHIVE_DIR]:
+for path in [CACHE_DIR, LOG_DIR, os.path.dirname(COMBINED_XML), ARCHIVE_DIR, FROZA_DID]:
     os.makedirs(path, exist_ok=True)
 
 
