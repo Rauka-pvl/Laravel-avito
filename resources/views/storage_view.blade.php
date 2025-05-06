@@ -62,7 +62,7 @@
                     Открыть
                 </a>
                 <button class="btn btn-sm btn-outline-secondary ms-2"
-                        onclick="copyToClipboard('{{ storage_path(trim($currentPath . '/' . $dir, '/')) }}')">
+                        onclick="copyToClipboard('{{ storage_path(trim($currentPath . '/' . $file, '/')) }}')">
                     📋
                 </button>
             </li>
