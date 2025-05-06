@@ -1,6 +1,7 @@
 # xml_updater/config.py
 import os
 import hashlib
+from datetime import datetime
 
 # Корень проекта
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -9,10 +10,13 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CACHE_DIR = os.path.join(BASE_DIR, "xml_data")
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 HASH_FILE = os.path.join(CACHE_DIR, ".hashes.json")
-COMBINED_XML = os.path.abspath(os.path.join(BASE_DIR, "..","..", "storage", 'app',"output", "avito.xml"))
+COMBINED_XML = os.path.abspath(os.path.join(BASE_DIR, "..","..", "storage", 'app',"public", "output", "avito.xml"))
 os.makedirs(os.path.dirname(COMBINED_XML), exist_ok=True)
 ARCHIVE_DIR = os.path.join(BASE_DIR, "archive")
-LOG_FILE = os.path.join(LOG_DIR, "update.log")
+# Временная метка
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+LOG_FILE = os.path.join(LOG_DIR, "..","..", "storage", 'app',"public", "output", "logs-avito",f"avito_update_{timestamp}.log")
+os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 
 # Ссылки
 XML_URLS = [
