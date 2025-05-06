@@ -45,7 +45,7 @@
             @php
                 $cPath = explode('app/public/', $currentPath);
                 dd($currentPath);
-                dd($cPath);
+                // dd($cPath);
                 if(count($cPath) > 1) {
                     $currentPath = $cPath[1];
                 } else {
