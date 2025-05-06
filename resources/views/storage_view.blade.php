@@ -5,10 +5,17 @@
     <meta charset="UTF-8">
     <title>Файловый менеджер</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script>
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                alert('Путь скопирован:\n' + text);
+            });
+        }
+    </script>
 </head>
 <body>
 <div class="container mt-4">
-    <h3>📁 Файловый менеджер: /storage/app/{{ $currentPath }}</h3>
+    <h3>📁 Файловый менеджер: /storage/{{ $currentPath }}</h3>
 
     @php
         $segments = explode('/', $currentPath);
@@ -35,6 +42,10 @@
         @foreach($directories as $dir)
             <li class="list-group-item">
                 📁 <a href="{{ route('file.manager', ['path' => trim($currentPath . '/' . $dir, '/')]) }}">{{ $dir }}</a>
+                <button class="btn btn-sm btn-outline-secondary ms-2"
+                        onclick="copyToClipboard('{{ storage_path(trim($currentPath . '/' . $dir, '/')) }}')">
+                    📋
+                </button>
             </li>
         @endforeach
     </ul>
@@ -43,20 +54,17 @@
     <ul class="list-group">
         @foreach($files as $file)
             @php
-                $cPath = explode('app/public/', $currentPath);
-                echo $currentPath;
-                var_dump($cPath);
-                if(count($cPath) > 1) {
-                    $currentPath = $cPath[1];
-                } else {
-                    $currentPath = $cPath[0];
-                }
+                $cPath = str_replace('app/public', '', $currentPath);
             @endphp
             <li class="list-group-item d-flex justify-content-between align-items-center">
                 <span>{{ $file }}</span>
-                <a class="btn btn-sm btn-primary" href="{{ asset('storage/' . trim($currentPath . '/' . $file, '/')) }}" target="_blank">
+                <a class="btn btn-sm btn-primary" href="{{ asset('storage/' . trim($cPath . '/' . $file, '/')) }}" target="_blank">
                     Открыть
                 </a>
+                <button class="btn btn-sm btn-outline-secondary ms-2"
+                        onclick="copyToClipboard('{{ storage_path(trim($currentPath . '/' . $file, '/')) }}')">
+                    📋
+                </button>
             </li>
         @endforeach
     </ul>

@@ -54,6 +54,24 @@ Route::middleware('auth')->group(function () {
 
     Route::get('/update', [UpdateController::class, 'index'])->name('update');
     Route::get('/update/status', [UpdateController::class, 'updateStatus'])->name('updateStatus');
+
+    Route::get('/file-manager/{path?}', function ($path = null) {
+        $relativePath = $path ? trim($path, '/') : '';
+        $fullPath = storage_path($relativePath);
+
+        if (!File::exists($fullPath) || !File::isDirectory($fullPath)) {
+            abort(404, 'Папка не найдена');
+        }
+
+        $directories = File::directories($fullPath);
+        $files = File::files($fullPath);
+
+        return view('storage_view', [
+            'currentPath' => $relativePath,
+            'directories' => collect($directories)->map(fn($dir) => basename($dir)),
+            'files' => collect($files)->map(fn($file) => basename($file)),
+        ]);
+    })->where('path', '.*')->name('file.manager');
 });
 
 Route::get('/updateXML', [UpdateController::class, 'update'])->name('updateXML');
@@ -69,24 +87,6 @@ Route::get('/products.xlsx', function () {
 })->name('xlsx');
 
 Route::post('/multifinderbrands.php', [ImagesController::class, 'getOnArticul'])->name('getOnArticul');
-
-Route::get('/file-manager/{path?}', function ($path = null) {
-    $relativePath = $path ? trim($path, '/') : '';
-    $fullPath = storage_path($relativePath);
-
-    if (!File::exists($fullPath) || !File::isDirectory($fullPath)) {
-        abort(404, 'Папка не найдена');
-    }
-
-    $directories = File::directories($fullPath);
-    $files = File::files($fullPath);
-
-    return view('storage_view', [
-        'currentPath' => $relativePath,
-        'directories' => collect($directories)->map(fn($dir) => basename($dir)),
-        'files' => collect($files)->map(fn($file) => basename($file)),
-    ]);
-})->where('path', '.*')->name('file.manager');
 
 Route::get('/phpInfo', function () {
     phpinfo();
