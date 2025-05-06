@@ -203,6 +203,6 @@ def save_to_xlsx(data: list, filename: str):
 
 # === Запуск ===
 if __name__ == "__main__":
-    xlsx_filename = os.path.join(os.path.dirname(COMBINED_XML), f"forza_{timestamp}.xlsx")
+    xlsx_filename = os.path.join(os.path.dirname(COMBINED_XML), f"forza.xlsx")
     ads_data = scan_ads_file(COMBINED_XML)
     save_to_xlsx(ads_data, filename=xlsx_filename)
