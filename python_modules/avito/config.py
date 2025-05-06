@@ -6,13 +6,28 @@ from datetime import datetime
 # Корень проекта
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+import os
+import hashlib
+from datetime import datetime
+
+# Корень проекта (где config.py)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Папка, где всё будет сохраняться (../storage/app/public/output)
+OUTPUT_ROOT = os.path.abspath(os.path.join(BASE_DIR, "..", "..", "storage", "app", "public", "output"))
+
 # Пути
-CACHE_DIR = os.path.join(BASE_DIR, "xml_data")
-LOG_DIR = os.path.join(BASE_DIR, "..","..", "storage", 'app',"public", "output", "logs-avito")
+CACHE_DIR = os.path.join(OUTPUT_ROOT, "xml_data")
+LOG_DIR = os.path.join(OUTPUT_ROOT, "logs-avito")
 HASH_FILE = os.path.join(CACHE_DIR, ".hashes.json")
-COMBINED_XML = os.path.abspath(os.path.join(BASE_DIR, "..","..", "storage", 'app',"public", "output", "avito.xml"))
-os.makedirs(os.path.dirname(COMBINED_XML), exist_ok=True)
+COMBINED_XML = os.path.join(OUTPUT_ROOT, "avito.xml")
 ARCHIVE_DIR = os.path.join(BASE_DIR, "archive")
+
+# Гарантируем наличие всех папок
+for path in [CACHE_DIR, LOG_DIR, os.path.dirname(COMBINED_XML), ARCHIVE_DIR]:
+    os.makedirs(path, exist_ok=True)
+
+
 # Временная метка
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 LOG_FILE = os.path.join(LOG_DIR ,f"avito_update_{timestamp}.log")
