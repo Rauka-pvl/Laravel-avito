@@ -1,59 +1,50 @@
-import requests
-from lxml import etree
-from io import BytesIO
-import logging
+import os
 import csv
+import requests
+import logging
+from datetime import datetime
+from io import BytesIO
+from lxml import etree
+from openpyxl import Workbook
+from openpyxl.utils import get_column_letter
 
-# === Авторизация ===
+
+# === Импорт конфигурации из avito ===
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "avito")))
+from config import COMBINED_XML, LOG_DIR
+
+# === Авторизация Froza ===
 LOGIN = "SIVF"
 PASSWORD = "Jmb08OVg7b"
 
-# === Логирование ===
-import os
-from datetime import datetime
-
-# === Папка для логов ===
-LOG_DIR = "logs"
+# === Настройка логирования ===
 os.makedirs(LOG_DIR, exist_ok=True)
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+log_filename = os.path.join(LOG_DIR, '..', "logs-froza",f"froza_{timestamp}.log")
 
-# === Имя лог-файла ===
-log_filename = os.path.join(
-    LOG_DIR,
-    f"froza_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.log"
-)
-
-# === Настройка логирования в консоль + файл ===
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
+    format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler(log_filename, encoding='utf-8'),
+        logging.FileHandler(log_filename, encoding="utf-8"),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
 
-
-# === XML-парсинг ответа от Froza ===
+# === XML-парсинг ответа Froza ===
 def parse_xml_response(content):
     try:
         parser = etree.XMLParser(recover=True, encoding='utf-8')
         tree = etree.parse(BytesIO(content), parser)
         root = tree.getroot()
-
-        if root is None or not list(root):
-            return []
-
-        result = []
-        for elem in root:
-            item = {}
-            for child in elem:
-                item[child.tag] = child.text
-            result.append(item)
-
-        return result
+        return [
+            {child.tag: child.text for child in elem}
+            for elem in root
+        ] if root is not None else []
     except Exception as e:
-        logger.error(f"❌ Ошибка парсинга XML: {e}")
+        logger.error(f"Ошибка парсинга XML: {e}")
         return []
 
 # === Получение прайса от Froza ===
@@ -74,10 +65,9 @@ def get_price_list(code: str, brand: str = "") -> list:
             logger.error(f"Ошибка запроса: {e}")
     return []
 
-# === Поиск самой дешевой (с приоритетом <=5 дней) ===
+# === Выбор предложения с приоритетом <= 5 дней ===
 def select_offer(data: list, oem: str = "", brand: str = "") -> tuple:
-    fast = []
-    slow = []
+    fast, slow = [], []
 
     for item in data:
         try:
@@ -93,34 +83,32 @@ def select_offer(data: list, oem: str = "", brand: str = "") -> tuple:
     if fast:
         fast.sort(key=lambda x: x[0])
         chosen = fast[0][1]
-        logger.info(f"✅ Найдена быстрая позиция: {chosen['price']} ₽, доставка {chosen['delivery_time']}–{chosen['delivery_time_guar']} дн. ({brand})")
+        logger.info(f"Быстрое предложение: {chosen['price']} ₽, доставка {chosen['delivery_time']}–{chosen['delivery_time_guar']} дн.")
         return chosen, ""
     elif slow:
         slow.sort(key=lambda x: x[0])
         chosen = slow[0][1]
-        logger.warning(f"⚠️ Только медленная доставка: {chosen['price']} ₽, {chosen['delivery_time']}–{chosen['delivery_time_guar']} дн. ({brand})")
+        logger.warning(f"Медленная доставка: {chosen['price']} ₽, {chosen['delivery_time']}–{chosen['delivery_time_guar']} дн.")
         return chosen, "Доставка > 5 дней"
     else:
-        logger.warning(f"❗ Не найдено предложений для {oem} ({brand})")
+        logger.warning(f"Нет предложений для {oem} ({brand})")
         return None, "Нет предложений"
 
-# === Сканирование XML-файла объявлений ===
+# === Обработка XML-файла объявлений ===
 def scan_ads_file(filepath: str) -> list:
     tree = etree.parse(filepath)
     ads = tree.xpath("//Ad")
     total = len(ads)
-    logger.info(f"🔍 Найдено объявлений: {total}")
-    
-    results = []
-    processed = 0
-    skipped = 0
+    logger.info(f"Найдено объявлений: {total}")
+
+    results, processed, skipped = [], 0, 0
 
     for idx, ad in enumerate(ads, start=1):
         oem = ad.findtext("OEM")
         brand = ad.findtext("Brand")
 
         if oem and brand:
-            logger.info(f"▶ ({idx}/{total}) Поиск по OEM={oem}, Brand={brand}")
+            logger.info(f"({idx}/{total}) Поиск: OEM={oem}, Brand={brand}")
             prices = get_price_list(oem, brand)
             offer, comment = select_offer(prices, oem=oem, brand=brand)
             if offer:
@@ -143,15 +131,14 @@ def scan_ads_file(filepath: str) -> list:
                 })
             processed += 1
         else:
-            logger.warning(f"⛔️ Пропущено объявление ({idx}/{total}): отсутствует OEM или Brand")
+            logger.warning(f"Пропущено объявление ({idx}/{total}): нет OEM или Brand")
             skipped += 1
 
-    logger.info(f"✅ Обработано: {processed}, ⛔ Пропущено: {skipped}")
+    logger.info(f"Обработано: {processed}, Пропущено: {skipped}")
     return results
 
-
 # === Сохранение в CSV ===
-def save_to_csv(data: list, filename: str = "result.csv"):
+def save_to_csv(data: list, filename: str):
     if not data:
         logger.warning("Нет данных для сохранения.")
         return
@@ -160,9 +147,44 @@ def save_to_csv(data: list, filename: str = "result.csv"):
         writer = csv.DictWriter(f, fieldnames=headers, delimiter=";")
         writer.writeheader()
         writer.writerows(data)
-    logger.info(f"✅ Результат сохранён в файл: {filename}")
+    logger.info(f"Результат сохранён в файл: {filename}")
+
+
+
+# === Сохранение в XLSX ===
+def save_to_xlsx(data: list, filename: str):
+    if not data:
+        logger.warning("Нет данных для сохранения.")
+        return
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Froza"
+
+    headers = ["Производитель", "Артикул", "Описание", "Цена", "Время доставки", "Комментарий"]
+    ws.append(headers)
+
+    for row in data:
+        ws.append([
+            row.get("Производитель", ""),
+            row.get("Артикул", ""),
+            row.get("Описание", ""),
+            row.get("Цена", ""),
+            row.get("Время доставки", ""),
+            row.get("Комментарий", "")
+        ])
+
+    # Автоширина колонок
+    for i, col in enumerate(ws.columns, start=1):
+        max_length = max((len(str(cell.value)) for cell in col if cell.value), default=10)
+        ws.column_dimensions[get_column_letter(i)].width = min(max_length + 2, 50)
+
+    wb.save(filename)
+    logger.info(f"Результат сохранён в файл: {filename}")
+
 
 # === Запуск ===
 if __name__ == "__main__":
-    ads_data = scan_ads_file("avito_xml.xml")  # ← путь к XML-файлу
-    save_to_csv(ads_data)
+    xlsx_filename = os.path.join(os.path.dirname(COMBINED_XML), f"forza_{timestamp}.xlsx")
+    ads_data = scan_ads_file(COMBINED_XML)
+    save_to_xlsx(ads_data, filename=xlsx_filename)
