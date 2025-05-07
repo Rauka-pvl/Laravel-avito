@@ -21,7 +21,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "a
 from config import COMBINED_XML, LOG_DIR, BASE_DIR
 
 # === Пути ===
-LOG_DIR = os.path.join(BASE_DIR, "..", ".." ,"storage", "app", "public", "log-trast")
+LOG_DIR = os.path.join(BASE_DIR, "..", ".." ,"storage", "app", "public", "output","log-trast")
 OUTPUT_FILE = os.path.join(LOG_DIR, "..", "trast.xlsx")
 BACKUP_FILE = os.path.join(LOG_DIR, "..", "trast_backup.xlsx")
 os.makedirs(LOG_DIR, exist_ok=True)
