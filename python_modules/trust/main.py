@@ -40,6 +40,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def get_product_links_with_driver(driver, page_url):
+    driver.get(page_url)
+    time.sleep(2)
+    soup = BeautifulSoup(driver.page_source, "html.parser")
+    cards = soup.select("li.product:not(.outofstock)")
+    return [a["href"] for card in cards if (a := card.find("a", class_="woocommerce-LoopProduct-link"))]
+
+def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
+    driver.get(url)
+    time.sleep(2)
+    soup = BeautifulSoup(driver.page_source, "html.parser")
+    pages = soup.select("div.th-products-view__pagination ul.page-numbers a")
+    numbers = [int(a.text.strip()) for a in pages if a.text.strip().isdigit()]
+    return max(numbers, default=1)
+
+
 # === Бэкап Excel ===
 def create_backup():
     if os.path.exists(OUTPUT_FILE):
@@ -206,12 +222,24 @@ if __name__ == "__main__":
             update_config_status(db, 'parser_update_time', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
         links = []
-        for page_num in range(1, get_pages_count() + 1):
-            page_url = f"https://trast-zapchast.ru/shop/page/{page_num}/"
-            links += get_product_links(page_url)
+        driver = create_driver()
+        try:
+            total_pages = get_pages_count_with_driver(driver)
 
-        for link in links:
+            for page_num in range(1, total_pages + 1):
+                page_url = f"https://trast-zapchast.ru/shop/page/{page_num}/"
+                logger.info(f"Загружаем страницу {page_num}/{total_pages}: {page_url}")
+                page_links = get_product_links_with_driver(driver, page_url)
+                logger.info(f"Найдено {len(page_links)} карточек на странице {page_num}")
+                links.extend(page_links)
+        finally:
+            driver.quit()
+
+        logger.info(f"Всего получено ссылок: {len(links)}")
+
+        for i, link in enumerate(links, 1):
             try:
+                logger.info(f"({i}/{len(links)}) Обработка товара: {link}")
                 product = parse_product_page_single_price(link)
                 if product:
                     append_to_excel(OUTPUT_FILE, [product])

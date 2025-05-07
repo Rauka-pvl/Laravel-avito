@@ -23,10 +23,15 @@ from datetime import datetime
 LOGIN = "SIVF"
 PASSWORD = "Jmb08OVg7b"
 
+
+
 # === Настройка логирования ===
 os.makedirs(LOG_DIR, exist_ok=True)
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 log_filename = os.path.join(LOG_DIR, '..', "logs-froza",f"froza_{timestamp}.log")
+
+OUTPUT_FILE = os.path.join(LOG_DIR, "..", "froza.xlsx")
+BACKUP_FILE = os.path.join(LOG_DIR, "..", "froza_backup.xlsx")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -200,6 +205,10 @@ def save_to_xlsx(data: list, filename: str):
     wb.save(filename)
     logger.info(f"Результат сохранён в файл: {filename}")
 
+def create_backup():
+    if os.path.exists(OUTPUT_FILE):
+        shutil.copy2(OUTPUT_FILE, BACKUP_FILE)
+        logger.info(f"Бэкап создан: {BACKUP_FILE}")
 
 # === Запуск ===
 if __name__ == "__main__":
