@@ -5,6 +5,7 @@ from downloader import download_all
 from merger import merge_xml
 from photo_updater import update_all_photos
 import sys
+import shutil
 
 def setup_logging():
     os.makedirs(LOG_DIR, exist_ok=True)
@@ -39,8 +40,16 @@ def clear_cache():
                 os.remove(os.path.join(CACHE_DIR, f))
         logging.info("Удалены старые XML-файлы из кэша.")
 
+OUTPUT_FILE = os.path.join(LOG_DIR, "..", "avito.xml")
+BACKUP_FILE = os.path.join(LOG_DIR, "..", "avito_backup.xml")
+
+def create_backup():
+    if os.path.exists(OUTPUT_FILE):
+        shutil.copy2(OUTPUT_FILE, BACKUP_FILE)
+        logging.info(f"Бэкап создан: {BACKUP_FILE}")
+
 def main():
-    
+    create_backup
     setup_logging()
     logging.info("=== Обновление началось ===")
 
