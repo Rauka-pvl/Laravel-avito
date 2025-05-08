@@ -31,7 +31,7 @@ def setup_logging():
 
     with open(LOG_FILE, "w", encoding="utf-8-sig") as f:
         f.write("")  # Просто создаст файл с BOM
-    logging.FileHandler(LOG_FILE, encoding="utf-8-sig")
+
 
 def clear_cache():
     if os.path.exists(CACHE_DIR):
