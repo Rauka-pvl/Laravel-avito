@@ -23,7 +23,25 @@ from datetime import datetime
 LOGIN = "SIVF"
 PASSWORD = "Jmb08OVg7b"
 
-
+def setup_logging():
+    os.makedirs(LOG_DIR, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = os.path.join(LOG_DIR, '..', "logs-froza", f"froza_{timestamp}.log")
+    
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[
+            logging.FileHandler(log_path, encoding="utf-8"),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except AttributeError:
+        pass
+    global logger
+    logger = logging.getLogger(__name__)
 
 # === Настройка логирования ===
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -210,9 +228,9 @@ def create_backup():
         shutil.copy2(OUTPUT_FILE, BACKUP_FILE)
         logger.info(f"Бэкап создан: {BACKUP_FILE}")
 
-# === Запуск ===
 if __name__ == "__main__":
-    create_backup()
-    xlsx_filename = os.path.join(os.path.dirname(COMBINED_XML), f"forza.xlsx")
+    setup_logging()        # <== теперь логгер активен
+    create_backup()        # <== и лог теперь попадёт в файл
+    xlsx_filename = os.path.join(os.path.dirname(COMBINED_XML), "forza.xlsx")
     ads_data = scan_ads_file(COMBINED_XML)
     save_to_xlsx(ads_data, filename=xlsx_filename)
