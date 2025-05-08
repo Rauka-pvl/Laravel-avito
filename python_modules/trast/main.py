@@ -21,7 +21,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "a
 from config import COMBINED_XML, LOG_DIR, BASE_DIR
 
 # === Пути ===
-LOG_DIR = os.path.join(BASE_DIR, "..", ".." ,"storage", "app", "public", "output","log-trast")
+LOG_DIR = os.path.join(BASE_DIR, "..", ".." ,"storage", "app", "public", "output","logs-trast")
 OUTPUT_FILE = os.path.join(LOG_DIR, "..", "trast.xlsx")
 BACKUP_FILE = os.path.join(LOG_DIR, "..", "trast_backup.xlsx")
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -251,13 +251,14 @@ if __name__ == "__main__":
                 time.sleep(random.uniform(0.5, 1.5))
             except Exception as e:
                 logger.error(f"Ошибка при обработке ссылки {link}: {e}")
-
+        db = connect_to_db()
         if db:
             update_config_status(db, 'parser_status', 'done')
             update_config_status(db, 'parser_update_time', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
     except Exception as e:
         logger.critical(f"Фатальная ошибка: {e}")
+        db = connect_to_db()
         if db:
             update_config_status(db, 'parser_status', 'failed')
             update_config_status(db, 'parser_update_time', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
