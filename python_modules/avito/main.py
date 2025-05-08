@@ -28,6 +28,10 @@ def setup_logging():
     
     logging.getLogger().addHandler(console_handler)
 
+    with open(LOG_FILE, "w", encoding="utf-8-sig") as f:
+        f.write("")  # Просто создаст файл с BOM
+    logging.FileHandler(LOG_FILE, encoding="utf-8-sig")
+
 def clear_cache():
     if os.path.exists(CACHE_DIR):
         for f in os.listdir(CACHE_DIR):
@@ -36,6 +40,7 @@ def clear_cache():
         logging.info("Удалены старые XML-файлы из кэша.")
 
 def main():
+    
     setup_logging()
     logging.info("=== Обновление началось ===")
 

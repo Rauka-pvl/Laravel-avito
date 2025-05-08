@@ -1,0 +1,6 @@
+requests
+beautifulsoup4
+openpyxl
+mysql-connector-python
+selenium
+webdriver-manager
