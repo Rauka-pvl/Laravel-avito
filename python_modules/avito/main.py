@@ -49,7 +49,7 @@ def create_backup():
         logging.info(f"Бэкап создан: {BACKUP_FILE}")
 
 def main():
-    create_backup
+    create_backup()
     setup_logging()
     logging.info("=== Обновление началось ===")
 
