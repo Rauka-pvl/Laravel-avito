@@ -49,10 +49,10 @@ def create_backup():
         logging.info(f"Бэкап создан: {BACKUP_FILE}")
 
 def main():
-    create_backup()
-    setup_logging()
+    setup_logging()  # Настроить логгер перед всем
     logging.info("=== Обновление началось ===")
 
+    create_backup()
     clear_cache()
 
     updated_files = download_all()
