@@ -172,7 +172,7 @@ def create_backup():
 if __name__ == "__main__":
     logger = setup_logging()
     create_backup()
-    xlsx_filename = os.path.join(os.path.dirname(COMBINED_XML), "forza.xlsx")
+    xlsx_filename = os.path.join(os.path.dirname(COMBINED_XML), "froza.xlsx")
     ads_data = scan_ads_file(COMBINED_XML)
     save_to_xlsx(ads_data, filename=xlsx_filename)
 
