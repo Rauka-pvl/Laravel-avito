@@ -17,7 +17,7 @@
                         <a href="https://233204.fornex.cloud/phpmyadmin/index.php" target="_blank"
                             class="px-6 py-3 bg-blue-500 hover:bg-blue-600 text-white font-semibold rounded-md shadow-md transition">
                             PHPMyAdmin
-                        </a>
+                        </a> <br>
                         <a href="{{ route('file.manager') }}" target="_blank"
                             class="px-6 py-3 bg-blue-500 hover:bg-blue-600 text-white font-semibold rounded-md shadow-md transition">
                             File Manager
