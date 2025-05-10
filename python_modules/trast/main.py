@@ -200,9 +200,20 @@ def create_new_excel(path):
     ws.title = "Products"
     ws.append(["Производитель", "Артикул", "Описание", "Цена", "Аналоги"])
     wb.save(path)
+    logger.info(f"Создан новый Excel-файл: {path}")
+
 
 def append_to_excel(path, product_list):
-    wb = load_workbook(path)
+    if not os.path.exists(path):
+        logger.error(f"Файл Excel не найден: {path}")
+        return
+
+    try:
+        wb = load_workbook(path)
+    except Exception as e:
+        logger.critical(f"Ошибка открытия Excel-файла: {e}")
+        return
+
     ws = wb.active
     for p in product_list:
         ws.append([
@@ -213,6 +224,7 @@ def append_to_excel(path, product_list):
             p.get("analogs", "")
         ])
     wb.save(path)
+
 
 # === Запуск ===
 if __name__ == "__main__":
