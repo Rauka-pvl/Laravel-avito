@@ -14,7 +14,7 @@
                 </div>
                 <div class="p-6 text-gray-900 dark:text-gray-100">
                     @if (auth()->user()->name == 'admin')
-                        <div>
+                        <div style="margin-bottom: 2em;">
                             <a href="https://233204.fornex.cloud/phpmyadmin/index.php" target="_blank"
                                 class="px-6 py-3 bg-blue-500 hover:bg-blue-600 text-white font-semibold rounded-md shadow-md transition">
                                 PHPMyAdmin
