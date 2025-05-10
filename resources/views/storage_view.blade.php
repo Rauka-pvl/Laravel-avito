@@ -55,6 +55,7 @@
         @foreach($files as $file)
             @php
                 $cPath = str_replace('app/public', '', $currentPath);
+                $linkHttps = 'https://233204.fornex.cloud/';
             @endphp
             <li class="list-group-item d-flex justify-content-between align-items-center">
                 <span>{{ $file }}</span>
@@ -62,7 +63,7 @@
                     Открыть
                 </a>
                 <button class="btn btn-sm btn-outline-secondary ms-2"
-                        onclick="copyToClipboard('{{ storage_path(trim($currentPath . '/' . $file, '/')) }}')">
+                        onclick="copyToClipboard('{{ trim($linkHttps . $currentPath . '/' . $file, '/') }}')">
                     📋
                 </button>
             </li>
