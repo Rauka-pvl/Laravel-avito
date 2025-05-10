@@ -63,7 +63,7 @@
                     Открыть
                 </a>
                 <button class="btn btn-sm btn-outline-secondary ms-2"
-                        onclick="copyToClipboard('{{ trim($linkHttps . $currentPath . '/' . $file, '/') }}')">
+                        onclick="copyToClipboard('{{ trim($linkHttps . $cPath . '/' . $file, '/') }}')">
                     📋
                 </button>
             </li>
