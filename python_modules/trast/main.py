@@ -5,6 +5,8 @@ import random
 import logging
 import requests
 import shutil
+import threading
+import queue
 from time import sleep
 from datetime import datetime
 from bs4 import BeautifulSoup
@@ -14,9 +16,9 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
+import sys
 
 # === Импорт конфигурации из avito ===
-import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "avito")))
 from config import COMBINED_XML, LOG_DIR, BASE_DIR
 
@@ -38,12 +40,33 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
-with open(log_filename, "w", encoding="utf-8-sig") as f:
-    f.write("")  # Просто создаст файл с BOM
-logging.FileHandler(log_filename, encoding="utf-8-sig")
+
 logger = logging.getLogger(__name__)
 
-# === Парсинг и Excel-функции ===
+# === Проверка Excel перед парсингом ===
+def test_excel_write():
+    logger.info("Тестовая запись в Excel...")
+    try:
+        test_data = [{
+            "manufacturer": "Тест",
+            "article": "123456",
+            "description": "Проверка Excel",
+            "price": {"price": "999"},
+            "analogs": "аналог1"
+        }]
+        append_to_excel(OUTPUT_FILE, test_data)
+
+        wb = load_workbook(OUTPUT_FILE)
+        ws = wb.active
+        if ws.max_row > 1:
+            ws.delete_rows(ws.max_row)
+            wb.save(OUTPUT_FILE)
+        logger.info("Тестовая запись и удаление успешно завершены")
+    except Exception as e:
+        logger.critical(f"Ошибка тестовой записи в Excel: {e}")
+        exit(1)
+
+# === Основной функционал (сокращённый, многопоточный) ===
 def get_product_links_with_driver(driver, page_url):
     driver.get(page_url)
     time.sleep(2)
@@ -107,20 +130,17 @@ def create_driver():
     options.add_argument("--disable-gpu")
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/123.0.0.0 Safari/537.36"
-}
-
 def safe_get(url, retries=3, delay=2):
+    HEADERS = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/123.0.0.0 Safari/537.36"
+    }
     for i in range(retries):
         try:
             response = requests.get(url, headers=HEADERS, timeout=10)
             if response.status_code == 200:
                 return response
-            else:
-                logger.warning(f"Статус {response.status_code} от {url}")
         except Exception as e:
-            logger.warning(f"Попытка {i+1}: ошибка {e}")
+            logger.warning(f"Попытка {i+1} неудачна: {e}")
         time.sleep(delay)
     return None
 
@@ -169,25 +189,13 @@ def create_new_excel(path):
     ws.title = "Products"
     ws.append(["Производитель", "Артикул", "Описание", "Цена", "Аналоги"])
     wb.save(path)
-    logger.info(f"Создан новый Excel-файл: {path}")
 
 def append_to_excel(path, product_list):
-    if not os.path.exists(path):
-        logger.warning(f"Файл Excel не найден: {path}, создаём заново")
-        create_new_excel(path)
-
     try:
         wb = load_workbook(path)
-    except Exception as e:
-        logger.critical(f"Ошибка открытия Excel-файла: {e}")
-        logger.info("Пробуем пересоздать файл Excel...")
+    except:
         create_new_excel(path)
-        try:
-            wb = load_workbook(path)
-        except Exception as e2:
-            logger.critical(f"Фатальная ошибка повторного открытия Excel: {e2}")
-            return
-
+        wb = load_workbook(path)
     ws = wb.active
     for p in product_list:
         ws.append([
@@ -199,31 +207,40 @@ def append_to_excel(path, product_list):
         ])
     wb.save(path)
 
-# === Проверка Excel перед парсингом ===
-def test_excel_write():
-    logger.info("Тестовая запись в Excel...")
+# === Многопоточный запуск ===
+def producer(queue):
+    thread_name = threading.current_thread().name
+    logger.info(f"[{thread_name}] Запуск потока producer")
+    driver = create_driver()
     try:
-        test_data = [{
-            "manufacturer": "Тест",
-            "article": "123456",
-            "description": "Проверка Excel",
-            "price": {"price": "999"},
-            "analogs": "аналог1"
-        }]
-        append_to_excel(OUTPUT_FILE, test_data)
+        total_pages = get_pages_count_with_driver(driver)
+        for page_num in range(1, total_pages + 1):
+            page_url = f"https://trast-zapchast.ru/shop/page/{page_num}/"
+            logger.info(f"[{threading.current_thread().name}] Парсер ссылок: страница {page_num}/{total_pages}")
+            for link in get_product_links_with_driver(driver, page_url):
+                queue.put(link)
+    finally:
+        driver.quit()
+    queue.put(None)
 
-        # Удаляем тестовую строку после записи
-        wb = load_workbook(OUTPUT_FILE)
-        ws = wb.active
-        if ws.max_row > 1:
-            ws.delete_rows(ws.max_row)
-            wb.save(OUTPUT_FILE)
-        logger.info("Тестовая запись и удаление успешно завершены")
-    except Exception as e:
-        logger.critical(f"Ошибка тестовой записи в Excel: {e}")
-        exit(1)
+def consumer(queue):
+    thread_name = threading.current_thread().name
+    logger.info(f"[{thread_name}] Запуск потока consumer")
+    while True:
+        link = queue.get()
+        if link is None:
+            break
+        logger.info(f"[{threading.current_thread().name}] Парсер карточек: {link}")
+        try:
+            product = parse_product_page_single_price(link)
+            if product:
+                append_to_excel(OUTPUT_FILE, [product])
+                logger.info(f"[{threading.current_thread().name}] Добавлено в Excel: {product.get('article', '')} | {product.get('manufacturer', '')} | {product.get('price', {}).get('price', '')}")
+            time.sleep(random.uniform(0.5, 1.5))
+        except Exception as e:
+            logger.error(f"[{threading.current_thread().name}] Ошибка при обработке: {e}")
 
-# === Запуск ===
+# === Главный запуск ===
 if __name__ == "__main__":
     start = time.time()
     create_backup()
@@ -231,51 +248,22 @@ if __name__ == "__main__":
     test_excel_write()
     db = connect_to_db()
 
-    try:
-        if db:
-            update_config_status(db, 'parser_status', 'in_progress')
-            update_config_status(db, 'parser_update_time', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    if db:
+        update_config_status(db, 'parser_status', 'in_progress')
+        update_config_status(db, 'parser_update_time', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
-        links = []
-        driver = create_driver()
-        try:
-            total_pages = get_pages_count_with_driver(driver)
+    q = queue.Queue()
+    t1 = threading.Thread(target=producer, args=(q,))
+    t2 = threading.Thread(target=consumer, args=(q,))
 
-            for page_num in range(1, total_pages + 1):
-                page_url = f"https://trast-zapchast.ru/shop/page/{page_num}/"
-                logger.info(f"Загружаем страницу {page_num}/{total_pages}: {page_url}")
-                page_links = get_product_links_with_driver(driver, page_url)
-                logger.info(f"Найдено {len(page_links)} карточек на странице {page_num}")
-                links.extend(page_links)
-        finally:
-            driver.quit()
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
 
-        logger.info(f"Всего получено ссылок: {len(links)}")
+    if db:
+        update_config_status(db, 'parser_status', 'done')
+        update_config_status(db, 'parser_update_time', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        db.close()
 
-        for i, link in enumerate(links, 1):
-            try:
-                logger.info(f"({i}/{len(links)}) Обработка товара: {link}")
-                product = parse_product_page_single_price(link)
-                if product:
-                    append_to_excel(OUTPUT_FILE, [product])
-                time.sleep(random.uniform(0.5, 1.5))
-            except Exception as e:
-                logger.error(f"Ошибка при обработке ссылки {link}: {e}")
-
-        db = connect_to_db()
-        if db:
-            update_config_status(db, 'parser_status', 'done')
-            update_config_status(db, 'parser_update_time', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-
-    except Exception as e:
-        logger.critical(f"Фатальная ошибка: {e}")
-        db = connect_to_db()
-        if db:
-            update_config_status(db, 'parser_status', 'failed')
-            update_config_status(db, 'parser_update_time', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-
-    finally:
-        if db:
-            db.close()
-
-    logger.info(f"Парсинг завершён за {round(time.time() - start, 2)} сек.")
+    logger.info(f"Готово за {round(time.time() - start, 2)} сек.")
