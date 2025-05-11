@@ -40,7 +40,9 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
-
+with open(log_filename, "w", encoding="utf-8-sig") as f:
+    f.write("")  # Просто создаст файл с BOM
+logging.FileHandler(log_filename, encoding="utf-8-sig")
 logger = logging.getLogger(__name__)
 
 # === Проверка Excel перед парсингом ===
