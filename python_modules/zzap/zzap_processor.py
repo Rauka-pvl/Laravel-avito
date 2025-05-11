@@ -8,7 +8,7 @@ import mysql.connector
 import xml.etree.ElementTree as ET
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "avito")))
-from config import COMBINED_XML
+from config import COMBINED_ZZAP
 
 def connect_to_db():
     try:
@@ -131,7 +131,7 @@ def update_picture_yml(offer, db):
 def process_combined_yml():
     try:
         db = connect_to_db()
-        tree = ET.parse(COMBINED_XML)
+        tree = ET.parse(COMBINED_ZZAP)
         root = tree.getroot()
 
         offers = root.findall(".//offer")
@@ -156,7 +156,7 @@ def process_combined_yml():
                 updated += 1
             processed += 1
 
-        tree.write(COMBINED_XML, encoding="utf-8", xml_declaration=True)
+        tree.write(COMBINED_ZZAP, encoding="utf-8", xml_declaration=True)
         logging.info(f"Обработка завершена. Обработано: {processed}, Обновлено: {updated}, Пропущено: {total - processed}")
         db.close()
 

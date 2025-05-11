@@ -21,6 +21,7 @@ CACHE_DIR = os.path.join(OUTPUT_ROOT, "xml_data")
 LOG_DIR = os.path.join(OUTPUT_ROOT, "logs-avito")
 HASH_FILE = os.path.join(CACHE_DIR, ".hashes.json")
 COMBINED_XML = os.path.join(OUTPUT_ROOT, "avito.xml")
+COMBINED_ZZAP = os.path.join(OUTPUT_ROOT, "zzap.xml")
 ARCHIVE_DIR = os.path.join(BASE_DIR, "archive")
 FROZA_DID = os.path.join(BASE_DIR, "logs-froza")
 
