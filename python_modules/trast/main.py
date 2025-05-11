@@ -21,7 +21,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "a
 from config import COMBINED_XML, LOG_DIR, BASE_DIR
 
 # === Пути ===
-LOG_DIR = os.path.join(BASE_DIR, "..", ".." ,"storage", "app", "public", "output","logs-trast")
+LOG_DIR = os.path.join(BASE_DIR, "..", "..", "storage", "app", "public", "output", "logs-trast")
 OUTPUT_FILE = os.path.join(LOG_DIR, "..", "trast.xlsx")
 BACKUP_FILE = os.path.join(LOG_DIR, "..", "trast_backup.xlsx")
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -39,12 +39,9 @@ logging.basicConfig(
     ]
 )
 
-with open(log_filename, "w", encoding="utf-8-sig") as f:
-    f.write("")  # Просто создаст файл с BOM
-logging.FileHandler(log_filename, encoding="utf-8-sig")
-
 logger = logging.getLogger(__name__)
 
+# === Парсинг и Excel-функции ===
 def get_product_links_with_driver(driver, page_url):
     driver.get(page_url)
     time.sleep(2)
@@ -60,14 +57,13 @@ def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
     numbers = [int(a.text.strip()) for a in pages if a.text.strip().isdigit()]
     return max(numbers, default=1)
 
-
-# === Бэкап Excel ===
 def create_backup():
     if os.path.exists(OUTPUT_FILE):
         shutil.copy2(OUTPUT_FILE, BACKUP_FILE)
         logger.info(f"Бэкап создан: {BACKUP_FILE}")
+    else:
+        logger.info("Файл для бэкапа не найден, пропуск.")
 
-# === Подключение к БД ===
 def connect_to_db(retries=3, delay=3):
     for attempt in range(retries):
         try:
@@ -102,7 +98,6 @@ def update_config_status(db, name, value):
         db.rollback()
         logger.error(f"Ошибка при обновлении конфигурации: {e}")
 
-# === Selenium Driver ===
 def create_driver():
     options = Options()
     options.add_argument("--headless")
@@ -110,32 +105,6 @@ def create_driver():
     options.add_argument("--disable-gpu")
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
-# === Получение количества страниц ===
-def get_pages_count(url="https://trast-zapchast.ru/shop/"):
-    driver = create_driver()
-    try:
-        driver.get(url)
-        time.sleep(3)
-        soup = BeautifulSoup(driver.page_source, "html.parser")
-        pages = soup.select("div.th-products-view__pagination ul.page-numbers a")
-        numbers = [int(a.text.strip()) for a in pages if a.text.strip().isdigit()]
-        return max(numbers, default=1)
-    finally:
-        driver.quit()
-
-# === Получение ссылок на карточки ===
-def get_product_links(page_url):
-    driver = create_driver()
-    try:
-        driver.get(page_url)
-        time.sleep(3)
-        soup = BeautifulSoup(driver.page_source, "html.parser")
-        cards = soup.select("li.product:not(.outofstock)")
-        return [a["href"] for card in cards if (a := card.find("a", class_="woocommerce-LoopProduct-link"))]
-    finally:
-        driver.quit()
-
-# === Безопасный GET с ретраями ===
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/123.0.0.0 Safari/537.36"
 }
@@ -153,7 +122,6 @@ def safe_get(url, retries=3, delay=2):
         time.sleep(delay)
     return None
 
-# === Парсинг карточки товара ===
 def parse_product_page_single_price(url):
     response = safe_get(url)
     if not response:
@@ -191,7 +159,6 @@ def parse_product_page_single_price(url):
         data["price"] = {"price": re.sub(r"[^\d]", "", price.text.strip())}
     return data
 
-# === Работа с Excel ===
 def create_new_excel(path):
     if os.path.exists(path):
         os.remove(path)
@@ -202,17 +169,22 @@ def create_new_excel(path):
     wb.save(path)
     logger.info(f"Создан новый Excel-файл: {path}")
 
-
 def append_to_excel(path, product_list):
     if not os.path.exists(path):
-        logger.error(f"Файл Excel не найден: {path}")
-        return
+        logger.warning(f"Файл Excel не найден: {path}, создаём заново")
+        create_new_excel(path)
 
     try:
         wb = load_workbook(path)
     except Exception as e:
         logger.critical(f"Ошибка открытия Excel-файла: {e}")
-        return
+        logger.info("Пробуем пересоздать файл Excel...")
+        create_new_excel(path)
+        try:
+            wb = load_workbook(path)
+        except Exception as e2:
+            logger.critical(f"Фатальная ошибка повторного открытия Excel: {e2}")
+            return
 
     ws = wb.active
     for p in product_list:
@@ -225,12 +197,36 @@ def append_to_excel(path, product_list):
         ])
     wb.save(path)
 
+# === Проверка Excel перед парсингом ===
+def test_excel_write():
+    logger.info("Тестовая запись в Excel...")
+    try:
+        test_data = [{
+            "manufacturer": "Тест",
+            "article": "123456",
+            "description": "Проверка Excel",
+            "price": {"price": "999"},
+            "analogs": "аналог1"
+        }]
+        append_to_excel(OUTPUT_FILE, test_data)
+
+        # Удаляем тестовую строку после записи
+        wb = load_workbook(OUTPUT_FILE)
+        ws = wb.active
+        if ws.max_row > 1:
+            ws.delete_rows(ws.max_row)
+            wb.save(OUTPUT_FILE)
+        logger.info("Тестовая запись и удаление успешно завершены")
+    except Exception as e:
+        logger.critical(f"Ошибка тестовой записи в Excel: {e}")
+        exit(1)
 
 # === Запуск ===
 if __name__ == "__main__":
     start = time.time()
     create_backup()
     create_new_excel(OUTPUT_FILE)
+    test_excel_write()
     db = connect_to_db()
 
     try:
@@ -263,6 +259,7 @@ if __name__ == "__main__":
                 time.sleep(random.uniform(0.5, 1.5))
             except Exception as e:
                 logger.error(f"Ошибка при обработке ссылки {link}: {e}")
+
         db = connect_to_db()
         if db:
             update_config_status(db, 'parser_status', 'done')
