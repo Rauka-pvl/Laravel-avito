@@ -1,8 +1,8 @@
 # zzap/main.py
 import logging
-from zzap.zzap_downloader import download_all
-from zzap.zzap_merger import merge_yml_files, save_merged_xml
-from zzap.zzap_processor import process_combined_yml
+from zzap_downloader import download_all
+from zzap_merger import merge_yml_files, save_merged_xml
+from zzap_processor import process_combined_yml
 
 from datetime import datetime
 import sys
