@@ -4,11 +4,46 @@ import os
 import sys
 import requests
 import certifi
+import mysql.connector
 import xml.etree.ElementTree as ET
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "avito")))
 from config import COMBINED_XML
-from avito_db import connect_to_db, get_matching_brands
+
+def connect_to_db():
+    try:
+        return mysql.connector.connect(
+            host="127.0.0.1",
+            user="uploader",
+            password="uploader",
+            database="avito"
+        )
+    except mysql.connector.Error as err:
+        logging.error(f"Ошибка подключения к базе данных: {err}")
+        raise
+
+def get_matching_brands(brand: str, db):
+    try:
+        with db.cursor(dictionary=True) as cursor:
+            query = """
+                SELECT brand, sprav 
+                FROM brand_sprav
+                WHERE LOWER(brand) = LOWER(%s) OR LOWER(sprav) LIKE %s
+            """
+            cursor.execute(query, (brand, f"%{brand}%"))
+            rows = cursor.fetchall()
+
+        matching_brands = set()
+        for row in rows:
+            matching_brands.add(row['brand'].strip().lower())
+            if row['sprav']:
+                matching_brands.update([b.strip().lower() for b in row['sprav'].split('|')])
+
+        return list(matching_brands) if matching_brands else [brand.lower()]
+    except Exception as e:
+        logging.error(f"Ошибка при получении брендов из справочника: {e}")
+        return [brand.lower()]
+
 
 def update_price_yml(offer, brand, article, db):
     try:
