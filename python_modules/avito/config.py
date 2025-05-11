@@ -40,6 +40,12 @@ XML_URLS = [
     "https://prdownload.nodacdn.net/dfiles/7da749ad-284074-7b2184d7/articles.xml",
 ]
 
+YML_URLS = [
+    "https://www.buszap.ru/get_price?p=219a76583bbd4991ade213a8b15b5808&FranchiseeId=9117065",
+    "https://www.buszap.ru/get_price?p=3dbb37d4f12242068faf72c2cf839c82&FranchiseeId=9117065"
+]
+
+
 def url_to_filename(url: str) -> str:
     """Создаёт уникальное имя файла на основе URL."""
     name = hashlib.md5(url.encode()).hexdigest()[:12]
