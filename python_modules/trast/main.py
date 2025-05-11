@@ -256,12 +256,15 @@ if __name__ == "__main__":
 
     q = queue.Queue()
     t1 = threading.Thread(target=producer, args=(q,))
-    t2 = threading.Thread(target=consumer, args=(q,))
+    t2 = threading.Thread(target=consumer, args=(q,), name="Consumer-1")
+    t3 = threading.Thread(target=consumer, args=(q,), name="Consumer-2")
 
     t1.start()
     t2.start()
+    t3.start()
     t1.join()
     t2.join()
+    t3.join()
 
     if db:
         update_config_status(db, 'parser_status', 'done')
