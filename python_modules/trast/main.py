@@ -266,6 +266,7 @@ if __name__ == "__main__":
     t2.join()
     t3.join()
 
+    db = connect_to_db()
     if db:
         update_config_status(db, 'parser_status', 'done')
         update_config_status(db, 'parser_update_time', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
