@@ -3,6 +3,7 @@ import logging
 from zzap_downloader import download_all
 from zzap_merger import merge_yml_files, save_merged_xml
 from zzap_processor import process_combined_yml
+from zzap_storage import backup_combined_yml, COMBINED_ZZAP
 
 from datetime import datetime
 import sys
@@ -32,6 +33,15 @@ logger = logging.getLogger("zzap")
 
 def main():
     logger.info("=== Старт обновления zzap ===")
+
+    # Бэкап объединённого YML
+    if backup_combined_yml():
+        logger.info(f"Создан бэкап файла: {COMBINED_ZZAP}")
+    else:
+        if not os.path.exists(COMBINED_ZZAP):
+            logger.info("Объединённый YML-файл отсутствует. Создаём пустой.")
+            with open(COMBINED_ZZAP, "w", encoding="utf-8") as f:
+                f.write('<?xml version="1.0" encoding="utf-8"?><yml_catalog date="{}"><shop><offers></offers></shop></yml_catalog>'.format(datetime.now().isoformat()))
 
     updated_files = download_all()
     if not updated_files:
