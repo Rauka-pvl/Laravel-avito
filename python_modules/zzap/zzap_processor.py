@@ -70,8 +70,18 @@ def update_price_yml(offer, brand, article, db):
             ):
                 new_price = data.get("price")
                 if new_price:
-                    offer.find("price").text = str(new_price)
-                    logging.info(f"Цена обновлена: {brand} {article} -> {new_price}")
+                    price_elem = offer.find("price")
+                    old_price = price_elem.text if price_elem is not None else None
+
+                    if price_elem is None:
+                        price_elem = ET.SubElement(offer, "price")
+
+                    price_elem.text = str(new_price)
+
+                    logging.info(
+                        f"Цена обновлена: {brand} {article} | "
+                        f"Старая цена: {old_price} -> Новая цена: {new_price}"
+                    )
                     return True
 
         logging.warning(f"Не удалось обновить цену: {brand} {article}")
@@ -119,26 +129,36 @@ def update_picture_yml(offer, db):
         return False
 
 def process_combined_yml():
-    updated = 0
     try:
         db = connect_to_db()
         tree = ET.parse(COMBINED_XML)
         root = tree.getroot()
 
-        for offer in root.findall(".//offer"):
+        offers = root.findall(".//offer")
+        total = len(offers)
+        updated = 0
+        processed = 0
+
+        logging.info(f"Всего найдено предложений: {total}")
+
+        for idx, offer in enumerate(offers, 1):
             brand = offer.findtext("vendor")
             article = offer.findtext("vendorCode")
             if not brand or not article:
+                logging.warning(f"[{idx}/{total}] Пропущено: нет vendor или vendorCode")
                 continue
 
+            logging.info(f"[{idx}/{total}] Обработка: Бренд = {brand}, Артикул = {article}")
             price_ok = update_price_yml(offer, brand, article, db)
             pic_ok = update_picture_yml(offer, db)
 
             if price_ok or pic_ok:
                 updated += 1
+            processed += 1
 
         tree.write(COMBINED_XML, encoding="utf-8", xml_declaration=True)
-        logging.info(f"Обновлено предложений: {updated}")
+        logging.info(f"Обработка завершена. Обработано: {processed}, Обновлено: {updated}, Пропущено: {total - processed}")
         db.close()
+
     except Exception as e:
         logging.error(f"Ошибка при обработке YML: {e}")
