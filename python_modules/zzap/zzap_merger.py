@@ -4,7 +4,7 @@ import sys
 from lxml import etree
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "avito")))
-from config import COMBINED_XML
+from config import COMBINED_ZZAP
 
 def merge_yml_files(file_paths):
     combined_root = etree.Element("yml_catalog", date="now")
@@ -36,6 +36,6 @@ def merge_yml_files(file_paths):
     return etree.ElementTree(combined_root)
 
 def save_merged_xml(tree: etree.ElementTree):
-    os.makedirs(os.path.dirname(COMBINED_XML), exist_ok=True)
-    tree.write(COMBINED_XML, encoding="utf-8", xml_declaration=True, pretty_print=True)
-    print(f"[OK] Итоговый YML сохранён в {COMBINED_XML}")
+    os.makedirs(os.path.dirname(COMBINED_ZZAP), exist_ok=True)
+    tree.write(COMBINED_ZZAP, encoding="utf-8", xml_declaration=True, pretty_print=True)
+    print(f"[OK] Итоговый YML сохранён в {COMBINED_ZZAP}")
