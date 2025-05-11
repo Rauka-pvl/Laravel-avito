@@ -6,29 +6,32 @@ import requests
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "avito")))
 from config import YML_URLS, CACHE_DIR, url_to_filename
-from storage import get_file_hash, save_file_hash
+from zzap_storage import save_file_hash  # Обновили импорт на zzap_storage
 
-def download_if_changed(url):
+def download_and_save(url):
     os.makedirs(CACHE_DIR, exist_ok=True)
     filename = os.path.join(CACHE_DIR, url_to_filename(url))
+
     response = requests.get(url)
     response.raise_for_status()
     content = response.content
 
-    new_hash = hashlib.md5(content).hexdigest()
-    old_hash = get_file_hash(filename)
+    # Сохраняем файл заново (всегда)
+    with open(filename, "wb") as f:
+        f.write(content)
 
-    if new_hash != old_hash:
-        with open(filename, "wb") as f:
-            f.write(content)
-        save_file_hash(filename, new_hash)
-        return filename
-    return None
+    # Сохраняем хэш — просто для истории
+    file_hash = hashlib.md5(content).hexdigest()
+    save_file_hash(filename, file_hash)
+
+    return filename
 
 def download_all():
-    updated_files = []
+    downloaded_files = []
     for url in YML_URLS:
-        file = download_if_changed(url)
-        if file:
-            updated_files.append(file)
-    return updated_files
+        try:
+            file = download_and_save(url)
+            downloaded_files.append(file)
+        except Exception as e:
+            print(f"Ошибка при загрузке {url}: {e}")
+    return downloaded_files
