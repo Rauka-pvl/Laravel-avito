@@ -207,27 +207,32 @@ def append_to_csv(path, product_list):
     except Exception as e:
         logger.error(f"Ошибка записи в CSV: {e}")
 
+excel_lock = threading.Lock()  # Добавьте в начало скрипта
+
 def append_to_excel(path, product_list):
     global total_products
-    try:
-        wb = load_workbook(path)
-    except:
-        create_new_excel(path)
-        wb = load_workbook(path)
-    ws = wb.active
-    for p in product_list:
-        ws.append([
-            p.get("manufacturer", ""),
-            p.get("article", ""),
-            p.get("description", ""),
-            p.get("price", {}).get("price", ""),
-            p.get("analogs", "")
-        ])
-    wb.save(path)
-    
-    with counter_lock:
-        global total_products
-        total_products += len(product_list)
+    with excel_lock:  # Защищаем операцию блокировкой
+        if not os.path.exists(path):
+            create_new_excel(path)
+        
+        try:
+            wb = load_workbook(path)
+            ws = wb.active
+            for p in product_list:
+                ws.append([
+                    p.get("manufacturer", ""),
+                    p.get("article", ""),
+                    p.get("description", ""),
+                    p.get("price", {}).get("price", ""),
+                    p.get("analogs", "")
+                ])
+            wb.save(path)
+            
+            with counter_lock:
+                total_products += len(product_list)
+        except Exception as e:
+            logger.error(f"Ошибка записи в Excel: {e}")
+    logger.info(f"Запись в Excel: {len(product_list)} записей, текущий размер файла: {os.path.getsize(OUTPUT_FILE)} байт")
 
 def producer(queue):
     thread_name = threading.current_thread().name
@@ -322,3 +327,4 @@ if __name__ == "__main__":
         db.close()
 
     logger.info(f"Готово за {round(time.time() - start, 2)} сек.")
+    
