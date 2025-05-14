@@ -7,6 +7,7 @@ import requests
 import shutil
 import threading
 import queue
+import csv
 from time import sleep
 from datetime import datetime
 from bs4 import BeautifulSoup
@@ -18,17 +19,16 @@ from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 import sys
 
-# === Импорт конфигурации из avito ===
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "avito")))
 from config import COMBINED_XML, LOG_DIR, BASE_DIR
 
-# === Пути ===
 LOG_DIR = os.path.join(BASE_DIR, "..", "..", "storage", "app", "public", "output", "logs-trast")
 OUTPUT_FILE = os.path.join(LOG_DIR, "..", "trast.xlsx")
 BACKUP_FILE = os.path.join(LOG_DIR, "..", "trast_backup.xlsx")
+CSV_FILE = os.path.join(LOG_DIR, "..", "trast.csv")
+BACKUP_CSV = os.path.join(LOG_DIR, "..", "trast_backup.csv")
 os.makedirs(LOG_DIR, exist_ok=True)
 
-# === Логирование ===
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 log_filename = os.path.join(LOG_DIR, f"trast_{timestamp}.log")
 
@@ -36,16 +36,16 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(log_filename, encoding="utf-8"),
+        logging.FileHandler(log_filename, encoding="utf-8-sig"),
         logging.StreamHandler()
     ]
 )
-with open(log_filename, "w", encoding="utf-8-sig") as f:
-    f.write("")  # Просто создаст файл с BOM
-logging.FileHandler(log_filename, encoding="utf-8-sig")
 logger = logging.getLogger(__name__)
 
-# === Проверка Excel перед парсингом ===
+total_products = 0
+counter_lock = threading.Lock()
+csv_lock = threading.Lock()
+
 def test_excel_write():
     logger.info("Тестовая запись в Excel...")
     try:
@@ -68,7 +68,6 @@ def test_excel_write():
         logger.critical(f"Ошибка тестовой записи в Excel: {e}")
         exit(1)
 
-# === Основной функционал (сокращённый, многопоточный) ===
 def get_product_links_with_driver(driver, page_url):
     driver.get(page_url)
     time.sleep(2)
@@ -84,13 +83,6 @@ def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
     numbers = [int(a.text.strip()) for a in pages if a.text.strip().isdigit()]
     return max(numbers, default=1)
 
-def create_backup():
-    if os.path.exists(OUTPUT_FILE):
-        shutil.copy2(OUTPUT_FILE, BACKUP_FILE)
-        logger.info(f"Бэкап создан: {BACKUP_FILE}")
-    else:
-        logger.info("Файл для бэкапа не найден, пропуск.")
-
 def connect_to_db(retries=3, delay=3):
     for attempt in range(retries):
         try:
@@ -105,7 +97,7 @@ def connect_to_db(retries=3, delay=3):
                 return conn
         except mysql.connector.Error as err:
             logger.warning(f"Попытка {attempt+1}: ошибка подключения к БД: {err}")
-        sleep(delay)
+            sleep(delay)
     logger.warning("База данных недоступна.")
     return None
 
@@ -143,7 +135,7 @@ def safe_get(url, retries=3, delay=2):
                 return response
         except Exception as e:
             logger.warning(f"Попытка {i+1} неудачна: {e}")
-        time.sleep(delay)
+            time.sleep(delay)
     return None
 
 def parse_product_page_single_price(url):
@@ -192,7 +184,31 @@ def create_new_excel(path):
     ws.append(["Производитель", "Артикул", "Описание", "Цена", "Аналоги"])
     wb.save(path)
 
+def create_new_csv(path):
+    if os.path.exists(path):
+        os.remove(path)
+    with open(path, 'w', newline='', encoding='utf-8-sig') as f:
+        writer = csv.writer(f, delimiter=';')
+        writer.writerow(["Производитель", "Артикул", "Описание", "Цена", "Аналоги"])
+
+def append_to_csv(path, product_list):
+    try:
+        with csv_lock:
+            with open(path, 'a', newline='', encoding='utf-8-sig') as f:
+                writer = csv.writer(f, delimiter=';')
+                for p in product_list:
+                    writer.writerow([
+                        p.get("manufacturer", ""),
+                        p.get("article", ""),
+                        p.get("description", ""),
+                        p.get("price", {}).get("price", ""),
+                        p.get("analogs", "")
+                    ])
+    except Exception as e:
+        logger.error(f"Ошибка записи в CSV: {e}")
+
 def append_to_excel(path, product_list):
+    global total_products
     try:
         wb = load_workbook(path)
     except:
@@ -208,8 +224,11 @@ def append_to_excel(path, product_list):
             p.get("analogs", "")
         ])
     wb.save(path)
+    
+    with counter_lock:
+        global total_products
+        total_products += len(product_list)
 
-# === Многопоточный запуск ===
 def producer(queue):
     thread_name = threading.current_thread().name
     logger.info(f"[{thread_name}] Запуск потока producer")
@@ -237,16 +256,28 @@ def consumer(queue):
             product = parse_product_page_single_price(link)
             if product:
                 append_to_excel(OUTPUT_FILE, [product])
-                logger.info(f"[{threading.current_thread().name}] Добавлено в Excel: {product.get('article', '')} | {product.get('manufacturer', '')} | {product.get('price', {}).get('price', '')}")
+                append_to_csv(CSV_FILE, [product])
+                logger.info(f"[{threading.current_thread().name}] Добавлено в файлы: {product.get('article', '')} | {product.get('manufacturer', '')} | {product.get('price', {}).get('price', '')}")
             time.sleep(random.uniform(0.5, 1.5))
         except Exception as e:
             logger.error(f"[{threading.current_thread().name}] Ошибка при обработке: {e}")
 
-# === Главный запуск ===
+def create_backup():
+    try:
+        if os.path.exists(OUTPUT_FILE):
+            shutil.copy2(OUTPUT_FILE, BACKUP_FILE)
+            logger.info(f"Бэкап Excel создан: {BACKUP_FILE}")
+        if os.path.exists(CSV_FILE):
+            shutil.copy2(CSV_FILE, BACKUP_CSV)
+            logger.info(f"Бэкап CSV создан: {BACKUP_CSV}")
+    except Exception as e:
+        logger.error(f"Ошибка при создании бэкапа: {e}")
+
 if __name__ == "__main__":
     start = time.time()
-    create_backup()
+    
     create_new_excel(OUTPUT_FILE)
+    create_new_csv(CSV_FILE)
     test_excel_write()
     db = connect_to_db()
 
@@ -267,8 +298,26 @@ if __name__ == "__main__":
     t3.join()
 
     db = connect_to_db()
+    status = 'done'
+    if total_products >= 100:
+        logger.info(f"Успешно собрано {total_products} позиций")
+        try:
+            create_backup()
+        except Exception as e:
+            logger.error(f"Ошибка при создании бэкапа: {e}")
+            status = 'error'
+    else:
+        logger.critical(f"Собрано недостаточно данных: {total_products} позиций")
+        status = 'insufficient_data'
+        if os.path.exists(BACKUP_FILE):
+            shutil.copy2(BACKUP_FILE, OUTPUT_FILE)
+            logger.info("Восстановлен Excel из бэкапа")
+        if os.path.exists(BACKUP_CSV):
+            shutil.copy2(BACKUP_CSV, CSV_FILE)
+            logger.info("Восстановлен CSV из бэкапа")
+
     if db:
-        update_config_status(db, 'parser_status', 'done')
+        update_config_status(db, 'parser_status', status)
         update_config_status(db, 'parser_update_time', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         db.close()
 
