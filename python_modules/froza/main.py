@@ -13,6 +13,8 @@ from openpyxl.utils import get_column_letter
 # === Импорт конфигурации ===
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "avito")))
 from config import COMBINED_XML, LOG_DIR
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from notification.main import TelegramNotifier
 
 # === Авторизация Froza ===
 LOGIN = "SIVF"
@@ -167,12 +169,27 @@ def create_backup():
         logger.info(f"Бэкап создан: {BACKUP_FILE}")
     else:
         logger.info("Файл для бэкапа не найден, пропущено.")
+        
 
-# === Точка входа ===
 if __name__ == "__main__":
-    logger = setup_logging()
-    create_backup()
-    xlsx_filename = os.path.join(os.path.dirname(COMBINED_XML), "froza.xlsx")
-    ads_data = scan_ads_file(COMBINED_XML)
-    save_to_xlsx(ads_data, filename=xlsx_filename)
+    TelegramNotifier.notify("🚀 Старт обработки Froza")
+    st_time = datetime.now()
 
+    try:
+        logger = setup_logging()
+        create_backup()
+
+        xlsx_filename = os.path.join(os.path.dirname(COMBINED_XML), "froza.xlsx")
+        ads_data = scan_ads_file(COMBINED_XML)  # <-- тут может быть ошибка
+        save_to_xlsx(ads_data, filename=xlsx_filename)
+
+        end_time = datetime.now()
+        duration = end_time - st_time
+
+        TelegramNotifier.notify(
+            f"✅ Обработка завершена.\n⏱ Длительность: {duration.total_seconds():.2f} сек."
+        )
+
+    except Exception as e:
+        logging.exception("❌ Ошибка при обработке:")
+        TelegramNotifier.notify(f"❌ Ошибка при обработке:\n<code>{str(e)}</code>")
