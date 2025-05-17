@@ -1,41 +1,46 @@
 # zzap/zzap_merger.py
 import os
-import sys
-from lxml import etree
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "avito")))
+import logging
+import xml.etree.ElementTree as ET
+from zzap_storage import url_to_filename
 from config import COMBINED_ZZAP
 
-def merge_yml_files(file_paths):
-    combined_root = etree.Element("yml_catalog", date="now")
-    shop_elem = None
-    combined_offers = None
+def merge_yml_files(files: list[str]) -> ET.ElementTree:
+    combined_root = ET.Element("yml_catalog", {"date": "2025-05-11T00:00:00"})
+    shop = None
+    total_offers = 0
 
-    for path in file_paths:
+    for filepath in files:
         try:
-            tree = etree.parse(path)
+            tree = ET.parse(filepath)
             root = tree.getroot()
-            shop = root.find("shop")
-            offers = shop.find("offers") if shop is not None else None
 
-            if shop is not None and shop_elem is None:
-                shop_elem = etree.Element("shop")
-                for child in shop:
-                    if child.tag != "offers":
-                        shop_elem.append(child)
-                combined_offers = etree.SubElement(shop_elem, "offers")
+            if shop is None:
+                shop = root.find("shop")
+                if shop is not None:
+                    combined_shop = ET.SubElement(combined_root, "shop")
+                    for child in list(shop):
+                        if child.tag != "offers":
+                            combined_shop.append(child)
+                    offers_container = ET.SubElement(combined_shop, "offers")
+                else:
+                    logging.warning(f"Файл {filepath} не содержит тега <shop>")
+                    continue
+            else:
+                offers_container = combined_root.find(".//offers")
 
-            if offers is not None and combined_offers is not None:
-                for offer in offers.findall("offer"):
-                    combined_offers.append(offer)
+            offers = root.findall(".//offer")
+            for offer in offers:
+                offers_container.append(offer)
+            logging.info(f"Добавлено {len(offers)} тэгов <offer> из файла: {filepath}")
+            total_offers += len(offers)
+
         except Exception as e:
-            print(f"[Ошибка] Не удалось обработать {path}: {e}")
+            logging.error(f"Ошибка при обработке файла {filepath}: {e}")
 
-    if shop_elem is not None:
-        combined_root.append(shop_elem)
-    return etree.ElementTree(combined_root)
+    logging.info(f"Общее количество тэгов <offer> после объединения: {total_offers}")
+    return ET.ElementTree(combined_root)
 
-def save_merged_xml(tree: etree.ElementTree):
-    os.makedirs(os.path.dirname(COMBINED_ZZAP), exist_ok=True)
-    tree.write(COMBINED_ZZAP, encoding="utf-8", xml_declaration=True, pretty_print=True)
-    print(f"[OK] Итоговый YML сохранён в {COMBINED_ZZAP}")
+def save_merged_xml(tree: ET.ElementTree):
+    tree.write(COMBINED_ZZAP, encoding="utf-8", xml_declaration=True)
+    logging.info(f"Сохранён объединённый YML в файл: {COMBINED_ZZAP}")

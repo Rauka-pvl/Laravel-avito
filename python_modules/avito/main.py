@@ -6,6 +6,8 @@ from merger import merge_xml
 from photo_updater import update_all_photos
 import sys
 import shutil
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from notification.main import TelegramNotifier
 
 def setup_logging():
     os.makedirs(LOG_DIR, exist_ok=True)

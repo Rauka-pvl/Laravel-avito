@@ -4,6 +4,8 @@ from zzap_downloader import download_all
 from zzap_merger import merge_yml_files, save_merged_xml
 from zzap_processor import process_combined_yml
 from zzap_storage import backup_combined_yml, COMBINED_ZZAP
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from notification.main import TelegramNotifier
 
 from datetime import datetime
 import sys

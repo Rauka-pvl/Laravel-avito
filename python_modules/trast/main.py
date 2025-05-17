@@ -17,6 +17,8 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from notification.main import TelegramNotifier
 
 # === Импорт конфигурации из avito ===
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "avito")))
@@ -244,6 +246,7 @@ def consumer(queue):
 
 # === Главный запуск ===
 if __name__ == "__main__":
+    TelegramNotifier.notify("✅ Готово! Уведомление успешно отправлено.")
     start = time.time()
     create_backup()
     create_new_excel(OUTPUT_FILE)
