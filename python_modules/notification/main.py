@@ -1,13 +1,13 @@
 import requests
+import os
+from dotenv import load_dotenv
+
+# === Загрузка .env ===
+load_dotenv()
 
 class TelegramNotifier:
-    # === Внутренняя конфигурация ===
-    # 551473803
-    __BOT_TOKEN = "7699382439:AAEvlKvdDfy2nwbp8cWI_CtpLdB5qbtZCMY"
-    __USER_IDS = [
-        225913675,
-        551473803
-        ]
+    __BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+    __USER_IDS = list(map(int, os.getenv("TELEGRAM_USER_IDS", "").split(",")))
 
     @classmethod
     def notify(cls, text: str):
