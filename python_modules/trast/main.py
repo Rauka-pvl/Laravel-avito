@@ -148,15 +148,16 @@ def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
 def get_products_from_page_soup(soup):
     results = []
     cards = soup.select("div.product.product-plate")
+    
     for card in cards:
         stock_badge = card.select_one("div.product-badge.product-stock.instock")
-        if not stock_badge or "В наличии" not in stock_badge.text:
+        if not stock_badge or "В наличии" not in stock_badge.text.strip():
             continue
 
         title_el = card.select_one("a.product-title")
         article_el = card.select_one("div.product-attributes .item:nth-child(1) .value")
         manufacturer_el = card.select_one("div.product-attributes .item:nth-child(2) .value")
-        price_el = card.select_one("div.product-price .amount bdi")
+        price_el = card.select_one("div.product-price .amount")
 
         if not (title_el and article_el and manufacturer_el and price_el):
             continue
@@ -164,17 +165,21 @@ def get_products_from_page_soup(soup):
         title = title_el.text.strip()
         article = article_el.text.strip()
         manufacturer = manufacturer_el.text.strip()
-        price = price_el.text.strip().replace("\xa0", " ")
 
-        results.append({
+        raw_price = price_el.text.strip().replace("\xa0", " ")
+        clean_price = re.sub(r"[^\d\s]", "", raw_price).strip()
+
+        product = {
             "manufacturer": manufacturer,
             "article": article,
             "description": title,
-            "price": {"price": price}
-        })
+            "price": {"price": clean_price}
+        }
+
+        results.append(product)
+        logger.info(f"[Product Added] {product}")
 
     return results
-
 def producer():
     thread_name = threading.current_thread().name
     logger.info(f"[{thread_name}] Starting producer thread")
