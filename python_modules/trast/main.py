@@ -181,8 +181,8 @@ def producer():
     TelegramNotifier.notify("🚀 Starting Froza parsing")
     driver = create_driver()
     try:
-        # total_pages = get_pages_count_with_driver(driver)
-        total_pages = 5
+        total_pages = get_pages_count_with_driver(driver)
+        # total_pages = 5
         for page_num in range(1, total_pages + 1):
             page_url = f"https://trast-zapchast.ru/shop/?_paged={page_num}/"
             logger.info(f"[{thread_name}] Parsing page {page_num}/{total_pages}")
