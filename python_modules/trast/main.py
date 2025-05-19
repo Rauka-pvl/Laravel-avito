@@ -5,9 +5,6 @@ import random
 import logging
 import requests
 import shutil
-import threading
-import queue
-import csv
 from time import sleep
 from datetime import datetime
 from bs4 import BeautifulSoup
@@ -18,6 +15,8 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 import sys
+import csv
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from notification.main import TelegramNotifier
 
@@ -45,45 +44,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 total_products = 0
-counter_lock = threading.Lock()
-csv_lock = threading.Lock()
-
-def test_excel_write():
-    logger.info("Тестовая запись в Excel...")
-    try:
-        test_data = [{
-            "manufacturer": "Тест",
-            "article": "123456",
-            "description": "Проверка Excel",
-            "price": {"price": "999"},
-            "analogs": "аналог1"
-        }]
-        append_to_excel(OUTPUT_FILE, test_data)
-
-        wb = load_workbook(OUTPUT_FILE)
-        ws = wb.active
-        if ws.max_row > 1:
-            ws.delete_rows(ws.max_row)
-            wb.save(OUTPUT_FILE)
-        logger.info("Тестовая запись и удаление успешно завершены")
-    except Exception as e:
-        logger.critical(f"Ошибка тестовой записи в Excel: {e}")
-        exit(1)
-
-def get_product_links_with_driver(driver, page_url):
-    driver.get(page_url)
-    time.sleep(2)
-    soup = BeautifulSoup(driver.page_source, "html.parser")
-    cards = soup.select("li.product:not(.outofstock)")
-    return [a["href"] for card in cards if (a := card.find("a", class_="woocommerce-LoopProduct-link"))]
-
-def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
-    driver.get(url)
-    time.sleep(2)
-    soup = BeautifulSoup(driver.page_source, "html.parser")
-    pages = soup.select("div.th-products-view__pagination ul.page-numbers a")
-    numbers = [int(a.text.strip()) for a in pages if a.text.strip().isdigit()]
-    return max(numbers, default=1)
 
 def connect_to_db(retries=3, delay=3):
     for attempt in range(retries):
@@ -95,12 +55,12 @@ def connect_to_db(retries=3, delay=3):
                 database="avito"
             )
             if conn.is_connected():
-                logger.info("Успешное подключение к базе данных")
+                logger.info("Successfully connected to the database")
                 return conn
         except mysql.connector.Error as err:
-            logger.warning(f"Попытка {attempt+1}: ошибка подключения к БД: {err}")
+            logger.warning(f"Attempt {attempt+1}: DB connection error: {err}")
             sleep(delay)
-    logger.warning("База данных недоступна.")
+    logger.warning("Database is not available.")
     return None
 
 def update_config_status(db, name, value):
@@ -117,7 +77,57 @@ def update_config_status(db, name, value):
             db.commit()
     except Exception as e:
         db.rollback()
-        logger.error(f"Ошибка при обновлении конфигурации: {e}")
+        logger.error(f"Error updating config: {e}")
+
+def create_new_excel(path):
+    if os.path.exists(path):
+        os.remove(path)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Products"
+    ws.append(["Manufacturer", "Article", "Description", "Price"])
+    wb.save(path)
+
+def create_new_csv(path):
+    if os.path.exists(path):
+        os.remove(path)
+    with open(path, 'w', newline='', encoding='utf-8-sig') as f:
+        writer = csv.writer(f, delimiter=';')
+        writer.writerow(["Manufacturer", "Article", "Description", "Price"])
+
+def append_to_excel(path, product_list):
+    global total_products
+    if not os.path.exists(path):
+        create_new_excel(path)
+    try:
+        wb = load_workbook(path)
+        ws = wb.active
+        for p in product_list:
+            ws.append([
+                p.get("manufacturer", ""),
+                p.get("article", ""),
+                p.get("description", ""),
+                p.get("price", {}).get("price", "")
+            ])
+        wb.save(path)
+        total_products += len(product_list)
+    except Exception as e:
+        logger.error(f"Error writing to Excel: {e}")
+    logger.info(f"Excel updated with {len(product_list)} records, file size: {os.path.getsize(OUTPUT_FILE)} bytes")
+
+def append_to_csv(path, product_list):
+    try:
+        with open(path, 'a', newline='', encoding='utf-8-sig') as f:
+            writer = csv.writer(f, delimiter=';')
+            for p in product_list:
+                writer.writerow([
+                    p.get("manufacturer", ""),
+                    p.get("article", ""),
+                    p.get("description", ""),
+                    p.get("price", {}).get("price", "")
+                ])
+    except Exception as e:
+        logger.error(f"Error writing to CSV: {e}")
 
 def create_driver():
     options = Options()
@@ -126,208 +136,120 @@ def create_driver():
     options.add_argument("--disable-gpu")
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
-def safe_get(url, retries=3, delay=2):
-    HEADERS = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/123.0.0.0 Safari/537.36"
-    }
-    for i in range(retries):
-        try:
-            response = requests.get(url, headers=HEADERS, timeout=10)
-            if response.status_code == 200:
-                return response
-        except Exception as e:
-            logger.warning(f"Попытка {i+1} неудачна: {e}")
-            time.sleep(delay)
-    return None
+def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
+    driver.get(url)
+    time.sleep(2)
+    soup = BeautifulSoup(driver.page_source, "html.parser")
+    last_page_el = soup.select_one(".facetwp-pager .facetwp-page.last")
+    if last_page_el and last_page_el.has_attr("data-page"):
+        return int(last_page_el["data-page"])
+    return 1
 
-def parse_product_page_single_price(url):
-    response = safe_get(url)
-    if not response:
-        return {}
-
-    soup = BeautifulSoup(response.content, "html.parser")
-    data = {
-        "manufacturer": None,
-        "article": None,
-        "description": None,
-        "price": None,
-        "analogs": None,
-    }
-
-    title = soup.select_one("h1.product_title.entry-title")
-    if title:
-        data["description"] = title.text.strip()
-
-    attrs = soup.select("div.wl-attr--list .wl-attr--item")
-    for attr in attrs:
-        text = attr.get_text(strip=True)
-        val = attr.select_one(".pa-right")
-        if not val:
+def get_products_from_page_soup(soup):
+    results = []
+    cards = soup.select("div.product.product-plate")
+    for card in cards:
+        stock_badge = card.select_one("div.product-badge.product-stock.instock")
+        if not stock_badge or "В наличии" not in stock_badge.text:
             continue
-        value = val.text.strip()
-        if "Производитель" in text:
-            data["manufacturer"] = value
-        elif "Артикул" in text:
-            data["article"] = value
-        elif "Аналоги" in text:
-            data["analogs"] = value
 
-    price = soup.select_one("div.wl-variable--item .wl-variable--price")
-    if price:
-        data["price"] = {"price": re.sub(r"[^\d]", "", price.text.strip())}
-    return data
+        title_el = card.select_one("a.product-title")
+        article_el = card.select_one("div.product-attributes .item:nth-child(1) .value")
+        manufacturer_el = card.select_one("div.product-attributes .item:nth-child(2) .value")
+        price_el = card.select_one("div.product-price .amount bdi")
 
-def create_new_excel(path):
-    if os.path.exists(path):
-        os.remove(path)
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Products"
-    ws.append(["Производитель", "Артикул", "Описание", "Цена", "Аналоги"])
-    wb.save(path)
+        if not (title_el and article_el and manufacturer_el and price_el):
+            continue
 
-def create_new_csv(path):
-    if os.path.exists(path):
-        os.remove(path)
-    with open(path, 'w', newline='', encoding='utf-8-sig') as f:
-        writer = csv.writer(f, delimiter=';')
-        writer.writerow(["Производитель", "Артикул", "Описание", "Цена", "Аналоги"])
+        title = title_el.text.strip()
+        article = article_el.text.strip()
+        manufacturer = manufacturer_el.text.strip()
+        price = price_el.text.strip().replace("\xa0", " ")
 
-def append_to_csv(path, product_list):
-    try:
-        with csv_lock:
-            with open(path, 'a', newline='', encoding='utf-8-sig') as f:
-                writer = csv.writer(f, delimiter=';')
-                for p in product_list:
-                    writer.writerow([
-                        p.get("manufacturer", ""),
-                        p.get("article", ""),
-                        p.get("description", ""),
-                        p.get("price", {}).get("price", ""),
-                        p.get("analogs", "")
-                    ])
-    except Exception as e:
-        logger.error(f"Ошибка записи в CSV: {e}")
+        results.append({
+            "manufacturer": manufacturer,
+            "article": article,
+            "description": title,
+            "price": {"price": price}
+        })
 
-excel_lock = threading.Lock()  # Добавьте в начало скрипта
+    return results
 
-def append_to_excel(path, product_list):
-    global total_products
-    with excel_lock:  # Защищаем операцию блокировкой
-        if not os.path.exists(path):
-            create_new_excel(path)
-        
-        try:
-            wb = load_workbook(path)
-            ws = wb.active
-            for p in product_list:
-                ws.append([
-                    p.get("manufacturer", ""),
-                    p.get("article", ""),
-                    p.get("description", ""),
-                    p.get("price", {}).get("price", ""),
-                    p.get("analogs", "")
-                ])
-            wb.save(path)
-            
-            with counter_lock:
-                total_products += len(product_list)
-        except Exception as e:
-            logger.error(f"Ошибка записи в Excel: {e}")
-    logger.info(f"Запись в Excel: {len(product_list)} записей, текущий размер файла: {os.path.getsize(OUTPUT_FILE)} байт")
-
-def producer(queue):
+def producer():
     thread_name = threading.current_thread().name
-    logger.info(f"[{thread_name}] Запуск потока producer")
+    logger.info(f"[{thread_name}] Starting producer thread")
+    TelegramNotifier.notify("🚀 Starting Froza parsing")
     driver = create_driver()
     try:
-        total_pages = get_pages_count_with_driver(driver)
+        # total_pages = get_pages_count_with_driver(driver)
+        total_pages = 5
         for page_num in range(1, total_pages + 1):
-            page_url = f"https://trast-zapchast.ru/shop/page/{page_num}/"
-            logger.info(f"[{threading.current_thread().name}] Парсер ссылок: страница {page_num}/{total_pages}")
-            for link in get_product_links_with_driver(driver, page_url):
-                queue.put(link)
+            page_url = f"https://trast-zapchast.ru/shop/?_paged={page_num}/"
+            logger.info(f"[{thread_name}] Parsing page {page_num}/{total_pages}")
+            driver.get(page_url)
+            time.sleep(2)
+            soup = BeautifulSoup(driver.page_source, "html.parser")
+            products = get_products_from_page_soup(soup)
+            if products:
+                append_to_excel(OUTPUT_FILE, products)
+                append_to_csv(CSV_FILE, products)
+                logger.info(f"[{thread_name}] Page {page_num}: added {len(products)} products")
+            else:
+                logger.warning(f"[{thread_name}] Page {page_num}: no products found")
+            time.sleep(random.uniform(1, 2))
     finally:
         driver.quit()
-    queue.put(None)
-
-def consumer(queue):
-    thread_name = threading.current_thread().name
-    logger.info(f"[{thread_name}] Запуск потока consumer")
-    while True:
-        link = queue.get()
-        if link is None:
-            break
-        logger.info(f"[{threading.current_thread().name}] Парсер карточек: {link}")
-        try:
-            product = parse_product_page_single_price(link)
-            if product:
-                append_to_excel(OUTPUT_FILE, [product])
-                append_to_csv(CSV_FILE, [product])
-                logger.info(f"[{threading.current_thread().name}] Добавлено в файлы: {product.get('article', '')} | {product.get('manufacturer', '')} | {product.get('price', {}).get('price', '')}")
-            time.sleep(random.uniform(0.5, 1.5))
-        except Exception as e:
-            logger.error(f"[{threading.current_thread().name}] Ошибка при обработке: {e}")
 
 def create_backup():
     try:
         if os.path.exists(OUTPUT_FILE):
             shutil.copy2(OUTPUT_FILE, BACKUP_FILE)
-            logger.info(f"Бэкап Excel создан: {BACKUP_FILE}")
+            logger.info(f"Excel backup created: {BACKUP_FILE}")
         if os.path.exists(CSV_FILE):
             shutil.copy2(CSV_FILE, BACKUP_CSV)
-            logger.info(f"Бэкап CSV создан: {BACKUP_CSV}")
+            logger.info(f"CSV backup created: {BACKUP_CSV}")
     except Exception as e:
-        logger.error(f"Ошибка при создании бэкапа: {e}")
+        logger.error(f"Error creating backup: {e}")
 
 if __name__ == "__main__":
-    TelegramNotifier.notify("✅ Готово! Уведомление успешно отправлено.")
+    TelegramNotifier.notify("🚀 Starting Trast script")
     start = time.time()
-    
+
     create_new_excel(OUTPUT_FILE)
     create_new_csv(CSV_FILE)
-    test_excel_write()
-    db = connect_to_db()
 
+    db = connect_to_db()
     if db:
         update_config_status(db, 'parser_status', 'in_progress')
         update_config_status(db, 'parser_update_time', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
-    q = queue.Queue()
-    t1 = threading.Thread(target=producer, args=(q,))
-    t2 = threading.Thread(target=consumer, args=(q,), name="Consumer-1")
-    t3 = threading.Thread(target=consumer, args=(q,), name="Consumer-2")
-
+    import threading
+    t1 = threading.Thread(target=producer, name="Producer")
     t1.start()
-    t2.start()
-    t3.start()
     t1.join()
-    t2.join()
-    t3.join()
 
-    db = connect_to_db()
     status = 'done'
     if total_products >= 100:
-        logger.info(f"Успешно собрано {total_products} позиций")
+        logger.info(f"Successfully collected {total_products} items")
         try:
             create_backup()
         except Exception as e:
-            logger.error(f"Ошибка при создании бэкапа: {e}")
+            logger.error(f"Backup creation error: {e}")
             status = 'error'
     else:
-        logger.critical(f"Собрано недостаточно данных: {total_products} позиций")
+        logger.critical(f"Not enough data collected: {total_products} items")
         status = 'insufficient_data'
         if os.path.exists(BACKUP_FILE):
             shutil.copy2(BACKUP_FILE, OUTPUT_FILE)
-            logger.info("Восстановлен Excel из бэкапа")
+            logger.info("Excel restored from backup")
         if os.path.exists(BACKUP_CSV):
             shutil.copy2(BACKUP_CSV, CSV_FILE)
-            logger.info("Восстановлен CSV из бэкапа")
+            logger.info("CSV restored from backup")
 
     if db:
         update_config_status(db, 'parser_status', status)
         update_config_status(db, 'parser_update_time', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         db.close()
 
-    logger.info(f"Готово за {round(time.time() - start, 2)} сек.")
-    
+    logger.info(f"Completed in {round(time.time() - start, 2)} seconds.")
+    TelegramNotifier.notify(f"✅ Trast parsing completed. Total: {total_products} items")
