@@ -178,7 +178,7 @@ def get_products_from_page_soup(soup):
 def producer():
     thread_name = threading.current_thread().name
     logger.info(f"[{thread_name}] Starting producer thread")
-    TelegramNotifier.notify("🚀 Starting Froza parsing")
+    
     driver = create_driver()
     try:
         total_pages = get_pages_count_with_driver(driver)
