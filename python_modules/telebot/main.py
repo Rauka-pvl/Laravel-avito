@@ -52,14 +52,15 @@ def init_db():
         conn.commit()
 
 
-def is_script_running(script_path: str) -> bool:
+def is_script_running(script_key: str) -> bool:
     for proc in psutil.process_iter(['cmdline']):
         try:
-            if proc.info['cmdline'] and script_path in " ".join(proc.info['cmdline']):
+            if proc.info['cmdline'] and f"/{script_key}/main.py" in " ".join(proc.info['cmdline']):
                 return True
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
     return False
+
 
 
 def get_script_runtime(script_path: str) -> float:
