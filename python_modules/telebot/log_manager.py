@@ -35,9 +35,11 @@ def get_latest_log_tail(script_key: str, lines: int = 10) -> str:
     latest_file = log_files[0]
     try:
         with open(latest_file, 'r', encoding='utf-8', errors='ignore') as f:
-            return "\n".join(f.readlines()[-lines:])
+            content = "\n".join(f.readlines()[-lines:])
+        return f"{content}\n\n📁 Файл: {os.path.basename(latest_file)}"
     except Exception as e:
         return f"Ошибка чтения лога: {str(e)}"
+
 
 
 def cleanup_old_logs():
