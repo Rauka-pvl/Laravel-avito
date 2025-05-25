@@ -4,3 +4,6 @@ openpyxl
 mysql-connector-python
 selenium
 webdriver-manager
+aiogram==3.4.1
+python-dotenv
+psutil
