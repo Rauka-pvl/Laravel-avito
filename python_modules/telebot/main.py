@@ -52,15 +52,14 @@ def init_db():
         conn.commit()
 
 
-def is_script_running(script_key: str) -> bool:
+def is_script_running(script_path: str) -> bool:
     for proc in psutil.process_iter(['cmdline']):
         try:
-            if proc.info['cmdline'] and f"/{script_key}/main.py" in " ".join(proc.info['cmdline']):
+            if proc.info['cmdline'] and script_path in " ".join(proc.info['cmdline']):
                 return True
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
     return False
-
 
 
 def get_script_runtime(script_path: str) -> float:
@@ -88,18 +87,43 @@ def update_status(name, success, duration):
         conn.commit()
 
 
-def get_status():
+def is_script_running_and_duration(name: str):
+    script_path = SCRIPTS.get(name)
+    running = False
+    for proc in psutil.process_iter(['pid', 'cmdline']):
+        try:
+            cmdline = " ".join(proc.info['cmdline'])
+            if script_path and script_path in cmdline:
+                running = True
+                break
+        except (psutil.NoSuchProcess, psutil.AccessDenied, KeyError):
+            continue
+
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
-        c.execute("SELECT * FROM script_status")
-        rows = c.fetchall()
+        c.execute("SELECT last_run, duration FROM script_status WHERE name = ?", (name,))
+        row = c.fetchone()
 
+    if row:
+        last_run_str, last_duration = row
+        if running:
+            try:
+                last_run_dt = datetime.fromisoformat(last_run_str)
+                duration = (datetime.now() - last_run_dt).total_seconds()
+                return True, duration, last_run_str
+            except Exception:
+                return True, 0.0, last_run_str
+        else:
+            return False, last_duration, last_run_str
+    return False, 0.0, None
+
+
+def get_status():
     enriched = []
-    for name, last_run, success, duration in rows:
-        script_path = SCRIPTS.get(name)
-        running = is_script_running(script_path) if script_path else False
-        live_duration = get_script_runtime(script_path) if running else duration
-        enriched.append((name, last_run, success, live_duration, running))
+    for name in SCRIPTS:
+        running, duration, last_run = is_script_running_and_duration(name)
+        success = not running  # если не работает — считаем завершённым успешно (или можно усложнить)
+        enriched.append((name, last_run, success, duration, running))
     return enriched
 
 # === Клавиатура ===
@@ -179,12 +203,18 @@ async def run_script(message: types.Message):
     await message.reply(f"⏳ Запуск скрипта: {script_name}")
     start_time = time.time()
     try:
-        subprocess.Popen(["nohup", "python3", script_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen(
+            ["nohup", "python3", script_path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            preexec_fn=os.setpgrp
+        )
         duration = time.time() - start_time
         update_status(script_name, True, duration)
         await message.reply(f"✅ Скрипт {script_name} запущен", reply_markup=get_script_keyboard(script_name))
     except Exception as e:
         update_status(script_name, False, 0)
+        await message.reply(f"❌ Ошибка запуска {script_name}: {str(e)}", reply_markup=get_script_keyboard(script_name))
         await message.reply(f"❌ Ошибка запуска {script_name}: {str(e)}", reply_markup=get_script_keyboard(script_name))
 
 
@@ -193,7 +223,7 @@ async def show_log_tail(message: types.Message):
     script_name = message.text.replace("📄 Лог: ", "")
     tail = get_latest_log_tail(script_name)
     reply = f"""📄 Последние строки лога {script_name}:
-    {tail}""" if tail else "Лог отсутствует."
+{tail}""" if tail else "Лог отсутствует."
     await message.reply(reply, reply_markup=get_script_keyboard(script_name))
 
 
