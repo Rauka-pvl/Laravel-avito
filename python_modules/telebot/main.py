@@ -13,6 +13,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
 import psutil
 from log_manager import get_latest_log_tail, cleanup_old_logs
+import html
 
 # === Настройки ===
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -146,6 +147,15 @@ def get_status():
                         duration = 0.0
                     success = False
                 else:
+                    try:
+                        last_run_dt = datetime.fromisoformat(last_run_str)
+                        now = datetime.now()
+                        approx_duration = (now - last_run_dt).total_seconds()
+                        if approx_duration > last_duration and approx_duration < 86400:
+                            last_duration = approx_duration
+                            update_status(name, True, last_duration)
+                    except Exception:
+                        pass
                     duration = last_duration
                     success = True
             else:
@@ -157,6 +167,28 @@ def get_status():
         except Exception:
             enriched.append((name, None, False, 0.0, False))
     return enriched
+
+
+@router.message(F.text == "📊 Статус")
+async def show_status(message: types.Message):
+    rows = get_status()
+    if not rows:
+        return await message.reply("Нет данных о статусах скриптов", reply_markup=get_main_keyboard())
+
+    lines = []
+    for name, last_run, success, duration, running in rows:
+        status = "🟢 Работает" if running else ("✅ Завершён" if success else "❌ Ошибка")
+        duration_text = f"{duration:.2f} сек." if duration else "–"
+        last_run_fmt = datetime.fromisoformat(last_run).strftime("%Y-%m-%d %H:%M:%S") if last_run else "–"
+        tail = get_latest_log_tail(name) if not success else ""
+        if tail:
+            tail = html.escape(tail)
+        block = f"{name}\nПоследний запуск: {last_run_fmt}\nСтатус: {status}\nВремя выполнения: {duration_text}"
+        if tail:
+            block += f"\n\n📄 Последние строки лога:\n{tail}"
+        lines.append(block)
+
+    await message.reply("\n\n".join(lines), reply_markup=get_main_keyboard(), parse_mode=None)
 
 # === Клавиатура ===
 def get_main_keyboard():
@@ -192,25 +224,6 @@ async def show_scripts(message: types.Message):
     keyboard.append([KeyboardButton(text="🔙 Назад")])
     await message.reply("Выберите скрипт:", reply_markup=ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True))
 
-
-@router.message(F.text == "📊 Статус")
-async def show_status(message: types.Message):
-    rows = get_status()
-    if not rows:
-        return await message.reply("Нет данных о статусах скриптов", reply_markup=get_main_keyboard())
-
-    lines = []
-    for name, last_run, success, duration, running in rows:
-        status = "🟢 Работает" if running else ("✅ Завершён" if success else "❌ Ошибка")
-        duration_text = f"{duration:.2f} сек." if duration else "–"
-        last_run_fmt = datetime.fromisoformat(last_run).strftime("%Y-%m-%d %H:%M:%S") if last_run else "–"
-        tail = get_latest_log_tail(name) if not success else ""
-        block = f"{name}\nПоследний запуск: {last_run_fmt}\nСтатус: {status}\nВремя выполнения: {duration_text}"
-        if not success and tail:
-            block += f"\n\n📄 Последние строки лога:\n{tail}"
-        lines.append(block)
-
-    await message.reply("\n\n".join(lines), reply_markup=get_main_keyboard())
 
 
 @router.message(F.text == "⏰ Расписание")
