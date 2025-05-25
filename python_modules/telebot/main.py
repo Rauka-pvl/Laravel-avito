@@ -227,10 +227,19 @@ async def show_menu(message: types.Message):
 
 @router.message(F.text == "📂 Службы")
 async def show_scripts(message: types.Message):
-    keyboard = [
-        [KeyboardButton(text=name)] for name in sorted(SCRIPTS.keys())
-    ]
+    script_names = sorted(SCRIPTS.keys())
+    keyboard = []
+
+    # Формируем по 2 кнопки в строке
+    for i in range(0, len(script_names), 2):
+        row = [KeyboardButton(text=script_names[i])]
+        if i + 1 < len(script_names):
+            row.append(KeyboardButton(text=script_names[i + 1].upper()))
+        keyboard.append(row)
+
+    # Добавляем кнопку "Назад"
     keyboard.append([KeyboardButton(text="🔙 Назад")])
+
     await message.reply("Выберите скрипт:", reply_markup=ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True))
 
 
