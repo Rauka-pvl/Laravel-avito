@@ -6,13 +6,13 @@ import time
 import logging
 from datetime import datetime
 from aiogram import Bot, Dispatcher, Router, F, types
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from dotenv import load_dotenv
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
 import psutil
+from log_manager import get_latest_log_tail
 
 # === Настройки ===
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -24,11 +24,11 @@ DB_PATH = os.path.join(BASE_DIR, "scripts_status.db")
 # === Сканирование скриптов ===
 SCRIPTS = {}
 for item in os.listdir(BASE_DIR):
+    if item in ["notification", "price_photo_update", "telebot"]:
+        continue
     full_path = os.path.join(BASE_DIR, item, "main.py")
     if os.path.isfile(full_path):
-        emoji = "✅"
-        display_name = f"{emoji} {item}"
-        SCRIPTS[display_name] = full_path
+        SCRIPTS[item] = full_path
 
 # === Telegram setup ===
 logging.basicConfig(level=logging.INFO)
@@ -101,31 +101,22 @@ def get_status():
         enriched.append((name, last_run, success, live_duration, running))
     return enriched
 
-# === Клавиатуры ===
-def get_inline_keyboard():
-    builder = InlineKeyboardBuilder()
-    for name in SCRIPTS:
-        builder.button(text=name, callback_data=name)
-    builder.adjust(1)
-    return builder.as_markup()
-
-
+# === Клавиатура ===
 def get_reply_keyboard():
-    keyboard = [[
-        KeyboardButton(text="📋 Меню"),
-        KeyboardButton(text="📊 Статус")
-    ]]
+    keyboard = [[KeyboardButton(text="📊 Статус")]]
+    for name in SCRIPTS:
+        keyboard.append([KeyboardButton(text=name)])
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 # === Хендлеры ===
-@router.message(F.text.in_(["/start", "📋 Меню"]))
+@router.message(F.text == "/start")
 async def show_menu(message: types.Message):
     if str(message.from_user.id) not in ADMIN_IDS:
-        return await message.reply("⛔️ Доступ запрещен", reply_markup=get_reply_keyboard())
-    await message.reply("Выберите действие:", reply_markup=get_inline_keyboard())
+        return await message.reply("⛔️ Доступ запрещен")
+    await message.reply("Выберите действие:", reply_markup=get_reply_keyboard())
 
 
-@router.message(F.text.in_(["/status", "📊 Статус"]))
+@router.message(F.text == "📊 Статус")
 async def show_status(message: types.Message):
     rows = get_status()
     if not rows:
@@ -133,30 +124,45 @@ async def show_status(message: types.Message):
 
     lines = []
     for name, last_run, success, duration, running in rows:
+        short_name = name.replace("✅ ", "") if name.startswith("✅ ") else name
         status = "🟢 Работает" if running else ("✅ Завершён" if success else "❌ Ошибка")
         duration_text = f"{duration:.2f} сек." if duration else "–"
         last_run_fmt = datetime.fromisoformat(last_run).strftime("%Y-%m-%d %H:%M:%S") if last_run else "–"
-        lines.append(f"{name}\nПоследний запуск: {last_run_fmt}\nСтатус: {status}\nВремя выполнения: {duration_text}\n")
+        tail = get_latest_log_tail(short_name) if not success else ""
+        block = f"{name}\nПоследний запуск: {last_run_fmt}\nСтатус: {status}\nВремя выполнения: {duration_text}"
+        if not success and tail:
+            block += f"\n\n📄 Последние строки лога:\n{tail}"
+        lines.append(block)
 
     await message.reply("\n\n".join(lines), reply_markup=get_reply_keyboard())
 
 
-@router.callback_query(lambda c: c.data in SCRIPTS)
-async def run_script(callback: types.CallbackQuery):
-    script_name = callback.data
+@router.message(F.text.in_(SCRIPTS.keys()))
+async def run_script(message: types.Message):
+    script_name = message.text
     script_path = SCRIPTS[script_name]
 
-    await callback.message.edit_text(f"⏳ Запуск скрипта: {script_name}")
+    await message.reply(f"⏳ Запуск скрипта: {script_name}")
     start_time = time.time()
     try:
         subprocess.Popen(["nohup", "python3", script_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         duration = time.time() - start_time
         update_status(script_name, True, duration)
-        await callback.message.edit_text(f"✅ Скрипт {script_name} запущен", reply_markup=get_inline_keyboard())
+        await message.reply(f"✅ Скрипт {script_name} запущен", reply_markup=get_reply_keyboard())
     except Exception as e:
         update_status(script_name, False, 0)
-        await callback.message.edit_text(f"❌ Ошибка запуска {script_name}: {str(e)}", reply_markup=get_inline_keyboard())
+        await message.reply(f"❌ Ошибка запуска {script_name}: {str(e)}", reply_markup=get_reply_keyboard())
 
+
+# === Фоновая очистка логов ===
+from log_manager import cleanup_old_logs
+
+def periodic_log_cleanup(interval_seconds=1800):
+    async def _loop():
+        while True:
+            cleanup_old_logs()
+            await asyncio.sleep(interval_seconds)
+    return _loop()
 
 # === Запуск ===
 async def main():
@@ -166,6 +172,7 @@ async def main():
             await bot.send_message(uid.strip(), "🤖 Бот запущен", reply_markup=get_reply_keyboard())
         except Exception as e:
             logging.warning(f"Не удалось отправить сообщение {uid}: {e}")
+        asyncio.create_task(periodic_log_cleanup())
     await dp.start_polling(bot)
 
 
