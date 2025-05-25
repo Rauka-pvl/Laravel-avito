@@ -8,3 +8,4 @@ aiogram==3.4.1
 python-dotenv
 psutil
 sys
+croniter
