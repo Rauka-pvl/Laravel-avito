@@ -231,8 +231,14 @@ async def show_script_controls(message: types.Message):
 @router.message(F.text.startswith("🚀 Запустить: "))
 async def run_script(message: types.Message):
     script_name = message.text.replace("🚀 Запустить: ", "")
-    script_path = SCRIPTS[script_name]
-    await message.reply(f"⏳ Запуск скрипта: {script_name}")
+    script_path = SCRIPTS.get(script_name)
+
+    if not script_path or not os.path.isfile(script_path):
+        await message.reply(f"❌ Скрипт {script_name} не найден по пути: {script_path}")
+        return
+
+    await message.reply(f"⏳ Запуск скрипта: {script_name}\n🧩 Путь: {script_path}")
+    logging.info(f"Запуск скрипта '{script_name}' по пути: {script_path}")
     start_time = time.time()
     try:
         subprocess.Popen(
@@ -245,8 +251,8 @@ async def run_script(message: types.Message):
         update_status(script_name, True, duration)
         await message.reply(f"✅ Скрипт {script_name} запущен", reply_markup=get_script_keyboard(script_name))
     except Exception as e:
+        logging.exception(f"Ошибка запуска скрипта {script_name}")
         update_status(script_name, False, 0)
-        await message.reply(f"❌ Ошибка запуска {script_name}: {str(e)}", reply_markup=get_script_keyboard(script_name))
         await message.reply(f"❌ Ошибка запуска {script_name}: {str(e)}", reply_markup=get_script_keyboard(script_name))
 
 
