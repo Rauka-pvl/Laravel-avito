@@ -23,7 +23,7 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-def get_latest_log_tail(script_key: str, lines: int = 10) -> str:
+def get_latest_log_tail(script_key: str, lines: int = 5) -> str:
     log_folder = os.path.join(LOGS_DIR, f"logs-{script_key}")
     if not os.path.isdir(log_folder):
         return "Логов не найдено."
