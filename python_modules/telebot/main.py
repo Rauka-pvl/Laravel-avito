@@ -121,9 +121,41 @@ def is_script_running_and_duration(name: str):
 def get_status():
     enriched = []
     for name in SCRIPTS:
-        running, duration, last_run = is_script_running_and_duration(name)
-        success = not running  # если не работает — считаем завершённым успешно (или можно усложнить)
-        enriched.append((name, last_run, success, duration, running))
+        try:
+            script_path = SCRIPTS.get(name)
+            running = False
+            for proc in psutil.process_iter(['cmdline']):
+                cmdline = proc.info.get('cmdline') or []
+                full_cmd = " ".join(cmdline)
+                if full_cmd.endswith(script_path):
+                    running = True
+                    break
+
+            with sqlite3.connect(DB_PATH) as conn:
+                c = conn.cursor()
+                c.execute("SELECT last_run, duration FROM script_status WHERE name = ?", (name,))
+                row = c.fetchone()
+
+            if row:
+                last_run_str, last_duration = row
+                if running:
+                    try:
+                        last_run_dt = datetime.fromisoformat(last_run_str)
+                        duration = (datetime.now() - last_run_dt).total_seconds()
+                    except Exception:
+                        duration = 0.0
+                    success = False
+                else:
+                    duration = last_duration
+                    success = True
+            else:
+                last_run_str = None
+                duration = 0.0
+                success = not running
+
+            enriched.append((name, last_run_str, success, duration, running))
+        except Exception:
+            enriched.append((name, None, False, 0.0, False))
     return enriched
 
 # === Клавиатура ===
