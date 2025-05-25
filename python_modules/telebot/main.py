@@ -178,7 +178,16 @@ async def show_status(message: types.Message):
     lines = []
     for name, last_run, success, duration, running in rows:
         status = "🟢 Работает" if running else ("✅ Завершён" if success else "❌ Ошибка")
-        duration_text = f"{duration:.2f} сек." if duration else "–"
+        if duration:
+            minutes = int(duration) // 60
+            seconds = int(duration) % 60
+            if minutes > 0:
+                duration_text = f"{minutes} мин {seconds} сек"
+            else:
+                duration_text = f"{seconds} сек"
+        else:
+            duration_text = "–"
+
         last_run_fmt = datetime.fromisoformat(last_run).strftime("%Y-%m-%d %H:%M:%S") if last_run else "–"
         tail = get_latest_log_tail(name) if not success else ""
         if tail:
