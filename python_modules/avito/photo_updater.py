@@ -78,7 +78,7 @@ def update_photo(ad, db):
                 images.remove(img)
 
         for row in rows:
-            img_url = f"https://233204.fornex.cloud/storage/uploads/{row['brand'].lower()}/{row['articul'].lower()}"
+            img_url = f"https://233204.fornex.cloud/storage/uploads/{row['brand']}/{row['articul']}"
             new_image = ET.SubElement(images, 'Image')
             new_image.set('url', img_url)
             logging.info(f"Добавлено изображение: {img_url}")
