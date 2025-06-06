@@ -8,7 +8,7 @@ from config import CACHE_DIR, LOG_DIR, LOG_FILE, COMBINED_XML
 from downloader import download_all
 from merger import merge_xml
 from photo_updater import update_all_photos
-from telebot.database_manager import set_script_start, set_script_end
+from bz_telebot.database_manager import set_script_start, set_script_end
 from notification.main import TelegramNotifier
 
 def setup_logging():

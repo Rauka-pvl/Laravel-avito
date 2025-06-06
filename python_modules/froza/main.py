@@ -8,7 +8,7 @@ from io import BytesIO
 from datetime import datetime
 from lxml import etree
 from openpyxl import Workbook
-from telebot.database_manager import set_script_start, set_script_end
+from bz_telebot.database_manager import set_script_start, set_script_end
 from openpyxl.utils import get_column_letter
 
 # === Import configuration ===
