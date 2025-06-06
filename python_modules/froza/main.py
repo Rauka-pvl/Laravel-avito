@@ -29,7 +29,10 @@ OUTPUT_FILE = os.path.abspath(os.path.join(LOG_DIR, "..", "froza.xlsx"))
 BACKUP_FILE = os.path.abspath(os.path.join(LOG_DIR, "..", "froza_backup.xlsx"))
 
 # === Logging setup ===
+logger = None
 def setup_logging():
+    global logger
+    logger = logging.getLogger("froza")
     os.makedirs(LOG_DIR, exist_ok=True)
     log_subdir = os.path.abspath(os.path.join(LOG_DIR, "..", "logs-froza"))
     os.makedirs(log_subdir, exist_ok=True)
