@@ -5,17 +5,18 @@ import random
 import logging
 import requests
 import shutil
+import threading
 from time import sleep
 from datetime import datetime
 from bs4 import BeautifulSoup
 from openpyxl import Workbook, load_workbook
-import mysql.connector
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 import sys
 import csv
+from telebot.database_manager import set_script_start, set_script_end
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from notification.main import TelegramNotifier
@@ -30,54 +31,18 @@ CSV_FILE = os.path.join(LOG_DIR, "..", "trast.csv")
 BACKUP_CSV = os.path.join(LOG_DIR, "..", "trast_backup.csv")
 os.makedirs(LOG_DIR, exist_ok=True)
 
-timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-log_filename = os.path.join(LOG_DIR, f"trast_{timestamp}.log")
+logger = logging.getLogger("trast")
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(log_filename, encoding="utf-8-sig"),
+        logging.FileHandler(os.path.join(LOG_DIR, f"trast_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"), encoding="utf-8-sig"),
         logging.StreamHandler()
     ]
 )
-logger = logging.getLogger(__name__)
 
 total_products = 0
-
-def connect_to_db(retries=3, delay=3):
-    for attempt in range(retries):
-        try:
-            conn = mysql.connector.connect(
-                host="127.0.0.1",
-                user="uploader",
-                password="uploader",
-                database="avito"
-            )
-            if conn.is_connected():
-                logger.info("Successfully connected to the database")
-                return conn
-        except mysql.connector.Error as err:
-            logger.warning(f"Attempt {attempt+1}: DB connection error: {err}")
-            sleep(delay)
-    logger.warning("Database is not available.")
-    return None
-
-def update_config_status(db, name, value):
-    if not db:
-        return
-    try:
-        with db.cursor() as cursor:
-            cursor.execute("SELECT COUNT(*) FROM config WHERE name = %s", (name,))
-            exists = cursor.fetchone()[0]
-            if exists:
-                cursor.execute("UPDATE config SET value = %s WHERE name = %s", (value, name))
-            else:
-                cursor.execute("INSERT INTO config (name, value) VALUES (%s, %s)", (name, value))
-            db.commit()
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Error updating config: {e}")
 
 def create_new_excel(path):
     if os.path.exists(path):
@@ -148,7 +113,6 @@ def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
 def get_products_from_page_soup(soup):
     results = []
     cards = soup.select("div.product.product-plate")
-    
     for card in cards:
         stock_badge = card.select_one("div.product-badge.product-stock.instock")
         if not stock_badge or "В наличии" not in stock_badge.text.strip():
@@ -165,7 +129,6 @@ def get_products_from_page_soup(soup):
         title = title_el.text.strip()
         article = article_el.text.strip()
         manufacturer = manufacturer_el.text.strip()
-
         raw_price = price_el.text.strip().replace("\xa0", " ")
         clean_price = re.sub(r"[^\d\s]", "", raw_price).strip()
 
@@ -175,19 +138,16 @@ def get_products_from_page_soup(soup):
             "description": title,
             "price": {"price": clean_price}
         }
-
         results.append(product)
         logger.info(f"[Product Added] {product}")
-
     return results
+
 def producer():
     thread_name = threading.current_thread().name
     logger.info(f"[{thread_name}] Starting producer thread")
-    
     driver = create_driver()
     try:
         total_pages = get_pages_count_with_driver(driver)
-        # total_pages = 5
         for page_num in range(1, total_pages + 1):
             page_url = f"https://trast-zapchast.ru/shop/?_paged={page_num}/"
             logger.info(f"[{thread_name}] Parsing page {page_num}/{total_pages}")
@@ -217,44 +177,38 @@ def create_backup():
         logger.error(f"Error creating backup: {e}")
 
 if __name__ == "__main__":
-    TelegramNotifier.notify("🚀 Starting Trast script")
-    start = time.time()
+    script_name = "trast"
+    TelegramNotifier.notify("🚀 Trast parsing start...")
+    start_time = datetime.now()
+    set_script_start(script_name)
 
     create_new_excel(OUTPUT_FILE)
     create_new_csv(CSV_FILE)
 
-    db = connect_to_db()
-    if db:
-        update_config_status(db, 'parser_status', 'in_progress')
-        update_config_status(db, 'parser_update_time', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-
-    import threading
     t1 = threading.Thread(target=producer, name="Producer")
     t1.start()
     t1.join()
 
     status = 'done'
-    if total_products >= 100:
-        logger.info(f"Successfully collected {total_products} items")
-        try:
+    try:
+        if total_products >= 100:
+            logger.info(f"Successfully collected {total_products} items")
             create_backup()
-        except Exception as e:
-            logger.error(f"Backup creation error: {e}")
-            status = 'error'
-    else:
-        logger.critical(f"Not enough data collected: {total_products} items")
-        status = 'insufficient_data'
-        if os.path.exists(BACKUP_FILE):
-            shutil.copy2(BACKUP_FILE, OUTPUT_FILE)
-            logger.info("Excel restored from backup")
-        if os.path.exists(BACKUP_CSV):
-            shutil.copy2(BACKUP_CSV, CSV_FILE)
-            logger.info("CSV restored from backup")
+        else:
+            logger.critical(f"Not enough data collected: {total_products} items")
+            status = 'insufficient_data'
+            if os.path.exists(BACKUP_FILE):
+                shutil.copy2(BACKUP_FILE, OUTPUT_FILE)
+                logger.info("Excel restored from backup")
+            if os.path.exists(BACKUP_CSV):
+                shutil.copy2(BACKUP_CSV, CSV_FILE)
+                logger.info("CSV restored from backup")
+    except Exception as e:
+        logger.exception(f"Backup creation error: {e}")
+        status = 'error'
 
-    if db:
-        update_config_status(db, 'parser_status', status)
-        update_config_status(db, 'parser_update_time', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-        db.close()
+    duration = (datetime.now() - start_time).total_seconds()
+    set_script_end(script_name, status=status, duration=duration)
 
-    logger.info(f"Completed in {round(time.time() - start, 2)} seconds.")
+    logger.info(f"Completed in {round(duration, 2)} seconds.")
     TelegramNotifier.notify(f"✅ Trast parsing completed. Total: {total_products} items")
