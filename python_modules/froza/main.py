@@ -192,7 +192,7 @@ if __name__ == "__main__":
 
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
-        set_script_end(script_name, status="done", duration=duration)
+        set_script_end(script_name, status="done")
 
         TelegramNotifier.notify(
             f"Froza processing completed successfully. Duration: {duration:.2f} seconds."

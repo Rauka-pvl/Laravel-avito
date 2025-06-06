@@ -211,7 +211,7 @@ if __name__ == "__main__":
         status = 'error'
 
     duration = (datetime.now() - start_time).total_seconds()
-    set_script_end(script_name, status=status, duration=duration)
+    set_script_end(script_name, status=status)
 
     logger.info(f"Completed in {round(duration, 2)} seconds.")
     TelegramNotifier.notify(f"✅ Trast parsing completed. Total: {total_products} items")

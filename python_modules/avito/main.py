@@ -74,7 +74,7 @@ def main():
 
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
-        set_script_end(script_name, status="done", duration=duration)
+        set_script_end(script_name, status="done")
 
         logging.info("=== Update finished successfully ===")
         TelegramNotifier.notify(f"Avito update completed. Duration: {duration:.2f} seconds")
