@@ -9,6 +9,9 @@ import threading
 from time import sleep
 from datetime import datetime
 from bs4 import BeautifulSoup
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from openpyxl import Workbook, load_workbook
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service

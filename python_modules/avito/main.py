@@ -8,6 +8,10 @@ from config import CACHE_DIR, LOG_DIR, LOG_FILE, COMBINED_XML
 from downloader import download_all
 from merger import merge_xml
 from photo_updater import update_all_photos
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from bz_telebot.database_manager import set_script_start, set_script_end
 from notification.main import TelegramNotifier
 
