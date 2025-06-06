@@ -3,9 +3,9 @@ import subprocess
 import os
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, Router, F, types
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -14,6 +14,8 @@ import psutil
 from log_manager import get_latest_log_tail, cleanup_old_logs
 import html
 from database_manager import *
+from user_state import set_user_state, get_user_state, clear_user_state
+from scheduler import router as schedule_router, handle_schedule_time_input
 
 # === Настройки ===
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -36,6 +38,7 @@ bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTM
 dp = Dispatcher(storage=MemoryStorage())
 router = Router()
 dp.include_router(router)
+dp.include_router(schedule_router)
 
 # === Клавиатура ===
 def get_main_keyboard():
@@ -107,10 +110,6 @@ async def show_scripts(message: types.Message):
     keyboard.append([KeyboardButton(text="🔙 Назад")])
     await message.reply("Выберите скрипт:", reply_markup=ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True))
 
-@router.message(F.text == "⏰ Расписание")
-async def show_schedule_placeholder(message: types.Message):
-    await message.reply("⏳ Настройка расписания будет доступна позже", reply_markup=get_main_keyboard())
-
 @router.message(F.text == "🔙 Назад")
 async def go_back(message: types.Message):
     await message.reply("Главное меню:", reply_markup=get_main_keyboard())
@@ -175,6 +174,53 @@ def periodic_log_cleanup(interval_seconds=1800):
             await asyncio.sleep(interval_seconds)
     return _loop()
 
+# === Фоновый запуск по расписанию (из config с cron) ===
+from croniter import croniter
+
+def get_due_schedules(now: datetime) -> list:
+    result = []
+    conn = connect_to_db()
+    cursor = conn.cursor()
+    try:
+        query = "SELECT name, value FROM config WHERE name LIKE %s" if DB_TYPE == "mysql" else "SELECT name, value FROM config WHERE name LIKE ?"
+        like_pattern = "%.schedule.%" if DB_TYPE == "mysql" else "%.schedule.%"
+        cursor.execute(query, (like_pattern,))
+        for name, cron_expr in cursor.fetchall():
+            try:
+                script_name = name.split(".")[0]
+                base_time = now.replace(second=0, microsecond=0)
+                itr = croniter(cron_expr, base_time - timedelta(minutes=1))
+                next_time = itr.get_next(datetime)
+                if next_time == base_time:
+                    result.append({"script_name": script_name, "cron_expr": cron_expr})
+            except Exception as e:
+                logging.warning(f"Некорректный cron-выражение '{cron_expr}' для '{name}': {e}")
+    finally:
+        cursor.close()
+        conn.close()
+    return result
+
+def periodic_schedule_runner(interval_seconds=60):
+    async def _loop():
+        await asyncio.sleep(5)
+        while True:
+            now = datetime.now()
+            due = get_due_schedules(now)
+            for task in due:
+                script_name = task["script_name"]
+                script_path = SCRIPTS.get(script_name)
+                if script_path and os.path.exists(script_path):
+                    logging.info(f"[SCHEDULE] Запуск по cron: {script_name} ({task['cron_expr']})")
+                    set_script_start(script_name)
+                    subprocess.Popen(
+                        ["nohup", "python3", script_path],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        preexec_fn=os.setpgrp
+                    )
+            await asyncio.sleep(interval_seconds)
+    return _loop()
+
 # === Запуск ===
 async def main():
     init_db()
@@ -184,6 +230,7 @@ async def main():
         except Exception as e:
             logging.warning(f"Не удалось отправить сообщение {uid}: {e}")
     asyncio.create_task(periodic_log_cleanup())
+    asyncio.create_task(periodic_schedule_runner())
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

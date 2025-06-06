@@ -133,3 +133,42 @@ def get_script_info(script_name: str) -> dict:
             "status": None,
             "duration": None
         }
+    
+def get_all_configs_like(pattern: str):
+    """
+    Получает все пары (ключ, значение) из таблицы config, где имя соответствует шаблону.
+    Шаблон должен использовать SQL-совместимые подстановки: % для любого количества символов.
+    """
+    conn = connect_to_db()
+    cursor = conn.cursor()
+    try:
+        if DB_TYPE == "mysql":
+            query = "SELECT name, value FROM config WHERE name LIKE %s"
+        else:
+            query = "SELECT name, value FROM config WHERE name LIKE ?"
+        cursor.execute(query, (pattern,))
+        return cursor.fetchall()
+    except Exception as e:
+        logging.error(f"Ошибка при получении параметров по шаблону '{pattern}': {e}")
+        return []
+    finally:
+        cursor.close()
+        conn.close()
+
+def delete_config_key(key: str):
+    """
+    Удаляет запись из таблицы config по имени ключа.
+    """
+    conn = connect_to_db()
+    cursor = conn.cursor()
+    try:
+        query = "DELETE FROM config WHERE name = %s" if DB_TYPE == "mysql" else "DELETE FROM config WHERE name = ?"
+        cursor.execute(query, (key,))
+        conn.commit()
+        logging.info(f"Параметр config['{key}'] удалён")
+    except Exception as e:
+        logging.error(f"Ошибка при удалении config['{key}']: {e}")
+        conn.rollback()
+    finally:
+        cursor.close()
+        conn.close()
