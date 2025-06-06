@@ -126,10 +126,14 @@ async def process_days(call: CallbackQuery):
         cron_key = f"{script}.schedule.{hour:02d}_{minute:02d}_{'_'.join(map(str, days))}"
         set_config(cron_key, cron_expr)
 
+        time_str = f"{hour:02d}:{minute:02d}"
+        day_names = ", ".join(WEEKDAYS.get(int(d), str(d)) for d in days)
+
         await call.message.edit_text(
-            f"✅ Расписание сохранено для <b>{script}</b>\nCron: <code>{cron_expr}</code>",
+            f"✅ Расписание сохранено для <b>{script}</b>\n🕒 <b>{time_str}</b> — <i>{day_names}</i>",
             parse_mode="HTML"
         )
+
         user_state.pop(user_id, None)
 
 @router.callback_query(F.data == "schedule_delete")
