@@ -14,7 +14,7 @@ from zzap_storage import backup_combined_yml, COMBINED_ZZAP
 
 from notification.main import TelegramNotifier
 from config import LOG_DIR, BASE_DIR
-from telebot.database_manager import set_script_start, set_script_end
+from bz_telebot.database_manager import set_script_start, set_script_end
 
 # Logging setup
 LOG_DIR = os.path.join(BASE_DIR, "..", "..", "storage", "app", "public", "output", "logs-zzap")

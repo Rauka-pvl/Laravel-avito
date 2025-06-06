@@ -16,7 +16,7 @@ from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 import sys
 import csv
-from telebot.database_manager import set_script_start, set_script_end
+from bz_telebot.database_manager import set_script_start, set_script_end
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from notification.main import TelegramNotifier
