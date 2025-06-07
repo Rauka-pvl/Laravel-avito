@@ -1,6 +1,7 @@
 import asyncio
 import subprocess
 import os
+import sys
 import time
 import logging
 from datetime import datetime, timedelta
@@ -22,6 +23,7 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 API_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 ADMIN_IDS = os.getenv("TELEGRAM_USER_IDS", "").split(",")
+LOG_DIR = os.path.join(BASE_DIR, "..", "storage", "app", "public", "output", "logs-trast")
 
 # === Сканирование скриптов ===
 SCRIPTS = {}
@@ -33,7 +35,15 @@ for item in os.listdir(BASE_DIR):
         SCRIPTS[item] = full_path
 
 # === Telegram setup ===
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler(os.path.join(LOG_DIR, f"bot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"), encoding="utf-8-sig"),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
 bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher(storage=MemoryStorage())
 router = Router()

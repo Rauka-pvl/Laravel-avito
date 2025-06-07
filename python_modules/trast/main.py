@@ -146,9 +146,10 @@ def get_products_from_page_soup(soup):
     return results
 
 def producer():
-    thread_name = threading.current_thread().name
-    logger.info(f"[{thread_name}] Starting producer thread")
+    thread_name = "MainThread"
+    logger.info(f"[{thread_name}] Starting producer")
     driver = create_driver()
+    total_collected = 0
     try:
         total_pages = get_pages_count_with_driver(driver)
         for page_num in range(1, total_pages + 1):
@@ -162,11 +163,13 @@ def producer():
                 append_to_excel(OUTPUT_FILE, products)
                 append_to_csv(CSV_FILE, products)
                 logger.info(f"[{thread_name}] Page {page_num}: added {len(products)} products")
+                total_collected += len(products)
             else:
                 logger.warning(f"[{thread_name}] Page {page_num}: no products found")
             time.sleep(random.uniform(1, 2))
     finally:
         driver.quit()
+    return total_collected
 
 def create_backup():
     try:
@@ -188,30 +191,29 @@ if __name__ == "__main__":
     create_new_excel(OUTPUT_FILE)
     create_new_csv(CSV_FILE)
 
-    t1 = threading.Thread(target=producer, name="Producer")
-    t1.start()
-    t1.join()
+    logger.info("Запуск парсинга в однопоточном режиме")
+    total_products = producer()  # 👈 теперь просто вызываем функцию
 
     status = 'done'
     try:
         if total_products >= 100:
-            logger.info(f"Successfully collected {total_products} items")
+            logger.info(f"✅ Собрано {total_products} товаров")
             create_backup()
         else:
-            logger.critical(f"Not enough data collected: {total_products} items")
+            logger.critical(f"❗ Недостаточно данных: {total_products} товаров")
             status = 'insufficient_data'
             if os.path.exists(BACKUP_FILE):
                 shutil.copy2(BACKUP_FILE, OUTPUT_FILE)
-                logger.info("Excel restored from backup")
+                logger.info("Excel восстановлен из бэкапа")
             if os.path.exists(BACKUP_CSV):
                 shutil.copy2(BACKUP_CSV, CSV_FILE)
-                logger.info("CSV restored from backup")
+                logger.info("CSV восстановлен из бэкапа")
     except Exception as e:
-        logger.exception(f"Backup creation error: {e}")
+        logger.exception(f"Ошибка при создании бэкапа: {e}")
         status = 'error'
 
     duration = (datetime.now() - start_time).total_seconds()
     set_script_end(script_name, status=status)
 
-    logger.info(f"Completed in {round(duration, 2)} seconds.")
+    logger.info(f"Завершено за {round(duration, 2)} секунд.")
     TelegramNotifier.notify(f"✅ Trast parsing completed. Total: {total_products} items")
