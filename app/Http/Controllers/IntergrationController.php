@@ -67,7 +67,7 @@ class IntergrationController extends Controller
         $intergration = Intergration::where('type_integration', '=', $id)->paginate(30);
         return view('intergration.list', compact('id', 'intergration', 'typeInter'));
     }
-    public function listCreateEdit(Request $request, $id = null)
+    public function listCreateEdit($id = null, Request $request)
     {
         $request->validate([
             'type_integration' => 'nullable|exists:intergrations,id',
