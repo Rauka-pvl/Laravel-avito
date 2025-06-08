@@ -69,6 +69,7 @@ class IntergrationController extends Controller
     }
     public function listCreateEdit(Request $request, $id = null)
     {
+        dd($request->all());
         $request->validate([
             'type_integration' => 'nullable|exists:intergrations,id',
         ]);
