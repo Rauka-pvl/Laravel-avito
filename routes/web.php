@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\BrandSpravController;
 use App\Http\Controllers\ImagesController;
+use App\Http\Controllers\IntergrationController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\UpdateController;
 use App\Jobs\UpdateXmlJob;
@@ -72,6 +73,20 @@ Route::middleware('auth')->group(function () {
             'files' => collect($files)->map(fn($file) => basename($file)),
         ]);
     })->where('path', '.*')->name('file.manager');
+
+    Route::get('/intergrations', [IntergrationController::class, 'index'])->name('intergration.index');
+    Route::get('/intergration/create', [IntergrationController::class, 'createEdit'])->name('intergration.create');
+    Route::get('/intergration/edit/{id}', [IntergrationController::class, 'createEdit'])->name('intergration.edit');
+    Route::post('/intergration/store', [IntergrationController::class, 'store'])->name('intergration.store');
+    Route::put('/intergration/update', [IntergrationController::class, 'update'])->name('intergration.update');
+    Route::delete('/intergration/destroy/{id}', [IntergrationController::class, 'destroy'])->name('intergration.destroy');
+
+    Route::get('/intergrations/{id}', [IntergrationController::class, 'list'])->name('intergration.list');
+    Route::get('/intergration/list/create', [IntergrationController::class, 'listCreateEdit'])->name('intergration.list.create');
+    Route::get('/intergration/list/edit/{id}', [IntergrationController::class, 'listCreateEdit'])->name('intergration.list.edit');
+    Route::post('/intergration/list/store', [IntergrationController::class, 'listStore'])->name('intergration.list.store');
+    Route::put('/intergration/list/update', [IntergrationController::class, 'listUpdate'])->name('intergration.list.update');
+    Route::delete('/intergration/list/destroy/{id}', [IntergrationController::class, 'listDestroy'])->name('intergration.list.destroy');
 });
 
 Route::get('/updateXML', [UpdateController::class, 'update'])->name('updateXML');

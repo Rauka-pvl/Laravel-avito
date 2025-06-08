@@ -30,6 +30,10 @@
                         class="text-gray-900 dark:text-gray-100 hover:text-blue-500 dark:hover:text-blue-400">
                         {{ __('Справочник бренда') }}
                     </x-nav-link>
+                    <x-nav-link :href="route('intergration.index')" :active="request()->routeIs('intergration.index')"
+                        class="text-gray-900 dark:text-gray-100 hover:text-blue-500 dark:hover:text-blue-400">
+                        {{ __('Справочник интеграции') }}
+                    </x-nav-link>
                     <x-nav-link :href="route('images.view')" :active="request()->routeIs('images.view')"
                         class="text-gray-900 dark:text-gray-100 hover:text-blue-500 dark:hover:text-blue-400">
                         {{ __('Просмотр') }}
@@ -114,6 +118,10 @@
             <x-responsive-nav-link :href="route('brand.index')" :active="request()->routeIs('brand.index')"
                 class="text-gray-900 dark:text-gray-100 hover:text-blue-500 dark:hover:text-blue-400">
                 {{ __('Справочник бренда') }}
+            </x-responsive-nav-link>
+            <x-responsive-nav-link :href="route('intergration.index')" :active="request()->routeIs('intergration.index')"
+                class="text-gray-900 dark:text-gray-100 hover:text-blue-500 dark:hover:text-blue-400">
+                {{ __('Справочник интеграции') }}
             </x-responsive-nav-link>
             <x-responsive-nav-link :href="route('images.view')" :active="request()->routeIs('images.view')"
                 class="text-gray-900 dark:text-gray-100 hover:text-blue-500 dark:hover:text-blue-400">
