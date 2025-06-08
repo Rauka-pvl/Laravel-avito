@@ -67,7 +67,7 @@ class IntergrationController extends Controller
         $intergration = Intergration::where('type_integration', '=', $id)->paginate(30);
         return view('intergration.list', compact('id', 'intergration', 'typeInter'));
     }
-    public function listCreateEdit($id = null, Request $request)
+    public function listCreateEdit(Request $request, $id = null)
     {
         $request->validate([
             'type_integration' => 'nullable|exists:intergrations,id',
@@ -78,11 +78,13 @@ class IntergrationController extends Controller
             $intergration = Intergration::find($id);
             $type_integration = $intergration->type_integration;
             if (!$intergration) {
-                return redirect()->route('intergration.index')->with('error', 'Интеграции не найден');
+                echo 'Интеграции не найден';
+                // return redirect()->route('intergration.index')->with('error', 'Интеграции не найден');
             }
         }
         $typeInter = TypeIntergration::all();
-        return view('intergration.list-createEdit', compact('type_integration', 'intergration', 'typeInter'));
+        echo '11';
+        // return view('intergration.list-createEdit', compact('type_integration', 'intergration', 'typeInter'));
     }
     public function listStore(Request $request)
     {
