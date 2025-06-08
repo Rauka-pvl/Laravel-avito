@@ -72,18 +72,16 @@ class IntergrationController extends Controller
         $request->validate([
             'type_integration' => 'nullable|exists:intergrations,id',
         ]);
-        $type_integration = $request->query('type_integration');
-        $intergration = null;
-        if ($id) {
-            $intergration = Intergration::find($id);
-            $type_integration = $intergration->type_integration;
-            if (!$intergration) {
-                echo 'Интеграции не найден';
-                // return redirect()->route('intergration.index')->with('error', 'Интеграции не найден');
-            }
-        }
-        $typeInter = TypeIntergration::all();
-        echo '11';
+        // $type_integration = $request->query('type_integration');
+        // $intergration = null;
+        // if ($id) {
+        //     $intergration = Intergration::find($id);
+        //     $type_integration = $intergration->type_integration;
+        //     if (!$intergration) {
+        //         return redirect()->route('intergration.index')->with('error', 'Интеграции не найден');
+        //     }
+        // }
+        // $typeInter = TypeIntergration::all();
         // return view('intergration.list-createEdit', compact('type_integration', 'intergration', 'typeInter'));
     }
     public function listStore(Request $request)
