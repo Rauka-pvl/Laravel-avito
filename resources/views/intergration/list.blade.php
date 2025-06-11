@@ -8,7 +8,7 @@
         <div class="max-w-7xl mx-auto sm:px-6 lg:px-8">
             <div class="bg-white dark:bg-gray-800 shadow sm:rounded-lg">
                 <div class="p-6 text-gray-900 dark:text-gray-100">
-                    <a href="{{ route('intergration.list.create', ['type_integration' => $id]) }}"
+                    <a href="{{ route('intergration.list.createM', ['type_integration' => $id]) }}"
                         class="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded-md text-sm transition">
                          Добавить
                      </a>

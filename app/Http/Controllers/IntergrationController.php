@@ -84,6 +84,14 @@ class IntergrationController extends Controller
         $typeInter = TypeIntergration::all();
         return view('intergration.list-createEdit', compact('type_integration', 'intergration', 'typeInter'));
     }
+    public function listCreateM(Request $request)
+    {
+        // $request->validate([
+        //     'type_integration' => 'nullable|exists:intergrations,id',
+        // ]);
+        $type_integration = $request->query('type_integration');
+        return view('intergration.list-create', compact('type_integration'));
+    }
     public function listStore(Request $request)
     {
         $data = $request->validate([
@@ -99,6 +107,33 @@ class IntergrationController extends Controller
         Intergration::create($data);
 
         return redirect()->route('intergration.list', $data['type_integration'])->with('success', 'Интеграции успешно создан');
+    }
+    public function listCreateMultiple(Request $request)
+    {
+        $type_integration = $request->query('type_integration');
+        return view('intergration.list-createEdit', compact('type_integration'));
+    }
+    public function listStoreMultiple(Request $request)
+    {
+        $validated = $request->validate([
+            'type_integration' => 'required|exists:type_intergrations,id',
+            'items' => 'required|array',
+            'items.*.brand' => 'required|string|max:255',
+            'items.*.article' => 'required|string|max:255',
+            'items.*.description' => 'nullable|string',
+            'items.*.brand_replace' => 'required|string|max:255',
+            'items.*.article_replace' => 'required|string|max:255',
+            'items.*.description_replace' => 'nullable|string',
+        ]);
+
+        foreach ($validated['items'] as $item) {
+            Intergration::create([
+                'type_integration' => $validated['type_integration'],
+                ...$item,
+            ]);
+        }
+
+        return redirect()->route('intergration.list', $validated['type_integration'])->with('success', 'Все записи добавлены');
     }
     public function listUpdate(Request $request)
     {

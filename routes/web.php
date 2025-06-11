@@ -83,10 +83,18 @@ Route::middleware('auth')->group(function () {
 
     Route::get('/intergrations/{id}', [IntergrationController::class, 'list'])->name('intergration.list');
     Route::get('/intergration/list/create', [IntergrationController::class, 'listCreateEdit'])->name('intergration.list.create');
+    Route::get('/intergration/list/createM', [IntergrationController::class, 'listCreateM'])->name('intergration.list.createM');
     Route::get('/intergration/list/edit/{id}', [IntergrationController::class, 'listCreateEdit'])->name('intergration.list.edit');
     Route::post('/intergration/list/store', [IntergrationController::class, 'listStore'])->name('intergration.list.store');
     Route::put('/intergration/list/update', [IntergrationController::class, 'listUpdate'])->name('intergration.list.update');
     Route::delete('/intergration/list/destroy/{id}', [IntergrationController::class, 'listDestroy'])->name('intergration.list.destroy');
+
+    // web.php
+    Route::get('/intergration/item-fields/{index}', function ($index) {
+        return view('intergration.partials.fields', ['index' => $index]);
+    });
+
+    Route::post('/intergration/store-multiple', [IntergrationController::class, 'listStoreMultiple'])->name('intergration.list.storeMultiple');
 });
 
 Route::get('/updateXML', [UpdateController::class, 'update'])->name('updateXML');
