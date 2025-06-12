@@ -104,10 +104,30 @@ class IntergrationController extends Controller
             'description_replace' => 'nullable|string',
         ]);
 
-        Intergration::create($data);
+        $item = Intergration::create($data);
 
-        return redirect()->route('intergration.list', $data['type_integration'])->with('success', 'Интеграции успешно создан');
+        // Для AJAX: возвращаем данные в JSON
+        return response()->json([
+            'status' => 'success',
+            'item' => $item,
+        ]);
     }
+    // public function listStore(Request $request)
+    // {
+    //     $data = $request->validate([
+    //         'type_integration' => 'required|exists:type_intergrations,id',
+    //         'brand' => 'required|string|max:255',
+    //         'article' => 'required|string|max:255',
+    //         'description' => 'nullable|string',
+    //         'brand_replace' => 'required|string|max:255',
+    //         'article_replace' => 'required|string|max:255',
+    //         'description_replace' => 'nullable|string',
+    //     ]);
+
+    //     Intergration::create($data);
+
+    //     return redirect()->route('intergration.list', $data['type_integration'])->with('success', 'Интеграции успешно создан');
+    // }
     public function listCreateMultiple(Request $request)
     {
         $type_integration = $request->query('type_integration');
@@ -135,24 +155,41 @@ class IntergrationController extends Controller
 
         return redirect()->route('intergration.list', $validated['type_integration'])->with('success', 'Все записи добавлены');
     }
-    public function listUpdate(Request $request)
+    public function listUpdate(Request $request, $id)
     {
         $data = $request->validate([
-            'id' => 'required|exists:intergrations,id',
-            'type_integration' => 'required|exists:type_intergrations,id',
             'brand' => 'required|string|max:255',
             'article' => 'required|string|max:255',
             'description' => 'nullable|string',
             'brand_replace' => 'required|string|max:255',
             'article_replace' => 'required|string|max:255',
             'description_replace' => 'nullable|string',
+            'type_integration' => 'required|exists:type_intergrations,id',
         ]);
 
-        $intergration = Intergration::find($data['id']);
+        $intergration = Intergration::findOrFail($id);
         $intergration->update($data);
 
-        return redirect()->route('intergration.list', $data['type_integration'])->with('success', 'Интеграции успешно обновлен');
+        return response()->json(['status' => 'success']);
     }
+    // public function listUpdate(Request $request)
+    // {
+    //     $data = $request->validate([
+    //         'id' => 'required|exists:intergrations,id',
+    //         'type_integration' => 'required|exists:type_intergrations,id',
+    //         'brand' => 'required|string|max:255',
+    //         'article' => 'required|string|max:255',
+    //         'description' => 'nullable|string',
+    //         'brand_replace' => 'required|string|max:255',
+    //         'article_replace' => 'required|string|max:255',
+    //         'description_replace' => 'nullable|string',
+    //     ]);
+
+    //     $intergration = Intergration::find($data['id']);
+    //     $intergration->update($data);
+
+    //     return redirect()->route('intergration.list', $data['type_integration'])->with('success', 'Интеграции успешно обновлен');
+    // }
     public function listDestroy($id)
     {
         $intergration = Intergration::find($id);

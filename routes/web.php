@@ -86,7 +86,8 @@ Route::middleware('auth')->group(function () {
     Route::get('/intergration/list/createM', [IntergrationController::class, 'listCreateM'])->name('intergration.list.createM');
     Route::get('/intergration/list/edit/{id}', [IntergrationController::class, 'listCreateEdit'])->name('intergration.list.edit');
     Route::post('/intergration/list/store', [IntergrationController::class, 'listStore'])->name('intergration.list.store');
-    Route::put('/intergration/list/update', [IntergrationController::class, 'listUpdate'])->name('intergration.list.update');
+    // Route::put('/intergration/list/update', [IntergrationController::class, 'listUpdate'])->name('intergration.list.update');
+    Route::put('/intergration/list/update/{id}', [IntergrationController::class, 'listUpdate'])->name('intergration.list.update');
     Route::delete('/intergration/list/destroy/{id}', [IntergrationController::class, 'listDestroy'])->name('intergration.list.destroy');
 
     // web.php
