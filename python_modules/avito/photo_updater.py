@@ -152,8 +152,8 @@ def update_description(ad, db):
 
         query = """
             SELECT i.*
-            FROM integrations i
-            JOIN type_integrations ti ON i.type_integration = ti.id
+            FROM intergrations i
+            JOIN type_intergrations ti ON i.type_integration = ti.id
             WHERE LOWER(i.brand) = %s
               AND LOWER(i.article) = %s
               AND LOWER(ti.name) = 'avito'
