@@ -99,8 +99,8 @@ class IntergrationController extends Controller
             'brand' => 'required|string|max:255',
             'article' => 'required|string|max:255',
             'description' => 'nullable|string',
-            'brand_replace' => 'required|string|max:255',
-            'article_replace' => 'required|string|max:255',
+            'brand_replace' => 'nullable|string|max:255',
+            'article_replace' => 'nullable|string|max:255',
             'description_replace' => 'nullable|string',
         ]);
 
@@ -141,8 +141,8 @@ class IntergrationController extends Controller
             'items.*.brand' => 'required|string|max:255',
             'items.*.article' => 'required|string|max:255',
             'items.*.description' => 'nullable|string',
-            'items.*.brand_replace' => 'required|string|max:255',
-            'items.*.article_replace' => 'required|string|max:255',
+            'items.*.brand_replace' => 'nullable|string|max:255',
+            'items.*.article_replace' => 'nullable|string|max:255',
             'items.*.description_replace' => 'nullable|string',
         ]);
 
@@ -161,8 +161,8 @@ class IntergrationController extends Controller
             'brand' => 'required|string|max:255',
             'article' => 'required|string|max:255',
             'description' => 'nullable|string',
-            'brand_replace' => 'required|string|max:255',
-            'article_replace' => 'required|string|max:255',
+            'brand_replace' => 'nullable|string|max:255',
+            'article_replace' => 'nullable|string|max:255',
             'description_replace' => 'nullable|string',
             'type_integration' => 'required|exists:type_intergrations,id',
         ]);
