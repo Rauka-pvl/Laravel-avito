@@ -144,7 +144,7 @@ def update_description(ad, db):
         desc_elem = ad.find('Description')
 
         if brand_elem is None or oem_elem is None:
-            logging.warning(f"Missing Brand or OEM in ad: {ET.tostring(ad, encoding='unicode')}")
+            logging.warning(f"Missing <Brand> or <OEM> in ad: {ET.tostring(ad, encoding='unicode')}")
             return False
 
         brand = brand_elem.text.strip()
@@ -163,25 +163,31 @@ def update_description(ad, db):
             row = cursor.fetchone()
 
         if not row:
+            logging.info(f"No replacement found for Brand = {brand}, Article = {articul}")
             return False
 
         updated = False
 
-        if row.get("brand_replace"):
+        if row.get("brand_replace") and row["brand_replace"] != brand:
+            logging.info(f"Replacing Brand: '{brand}' → '{row['brand_replace']}'")
             brand_elem.text = row["brand_replace"]
             updated = True
 
-        if row.get("article_replace"):
+        if row.get("article_replace") and row["article_replace"] != articul:
+            logging.info(f"Replacing OEM: '{articul}' → '{row['article_replace']}'")
             oem_elem.text = row["article_replace"]
             updated = True
 
         if row.get("description_replace") and desc_elem is not None:
             base_text = desc_elem.text.strip() if desc_elem.text else ""
             desc_elem.text = base_text + " — " + row["description_replace"]
+            logging.info(f"Appending to <Description>: '{row['description_replace']}'")
             updated = True
 
         if updated:
-            logging.info(f"Updated description or brand/article for {brand} {articul}")
+            logging.info(f"Updated ad for Brand = {brand}, Article = {articul}")
+        else:
+            logging.info(f"No changes applied for Brand = {brand}, Article = {articul}")
         return updated
 
     except Exception as e:
