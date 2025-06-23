@@ -52,9 +52,6 @@ def create_backup():
     if os.path.exists(OUTPUT_FILE):
         shutil.copy2(OUTPUT_FILE, BACKUP_FILE)
         logging.info(f"Backup created: {BACKUP_FILE}")
-        os.remove(OUTPUT_FILE)
-        logging.info(f"Deleted original output file: {OUTPUT_FILE}")
-
 
 def main():
     script_name = "avito"
@@ -66,12 +63,17 @@ def main():
     set_script_start(script_name)
 
     try:
-        create_backup()
+        create_backup()         # Только копирование
         clear_cache()
 
         updated_files = download_all()
         if updated_files:
             merge_xml(updated_files, COMBINED_XML)
+
+            # Удаляем старый файл только если новый успешно создан
+            if os.path.exists(OUTPUT_FILE):
+                os.remove(OUTPUT_FILE)
+                logging.info(f"Deleted original output file: {OUTPUT_FILE}")
 
         update_all_photos()
 
@@ -86,6 +88,3 @@ def main():
         logging.exception("Error occurred during update:")
         set_script_end(script_name, status="failed")
         TelegramNotifier.notify(f"Avito update failed: {str(e)}")
-
-if __name__ == "__main__":
-    main()
