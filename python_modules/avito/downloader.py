@@ -15,26 +15,21 @@ def download_if_changed(url):
     filename = os.path.join(CACHE_DIR, url_to_filename(url))
 
     try:
-        logging.info(f"Скачивание файла: {url}")
+        logging.info(f"Принудительное скачивание файла: {url}")
         response = requests.get(url, timeout=10)
         response.raise_for_status()
         content = response.content
+
+        with open(filename, "wb") as f:
+            f.write(content)
+
+        logging.info(f"Файл сохранён: {filename}")
+        return filename
+
     except requests.RequestException as e:
         logging.error(f"Ошибка при скачивании {url}: {e}")
         return None
 
-    new_hash = hashlib.md5(content).hexdigest()
-    old_hash = get_file_hash(filename)
-
-    if new_hash != old_hash:
-        with open(filename, "wb") as f:
-            f.write(content)
-        save_file_hash(filename, new_hash)
-        logging.info(f"Файл обновлён: {filename}")
-        return filename
-    else:
-        logging.info(f"Файл не изменился: {filename}")
-        return None
 
 def download_all():
     updated_files = []
