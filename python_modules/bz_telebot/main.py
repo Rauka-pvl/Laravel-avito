@@ -44,15 +44,17 @@ dp.include_router(schedule_router)
 def get_main_keyboard():
     keyboard = [
         [KeyboardButton(text="📂 Службы"), KeyboardButton(text="📊 Статус")],
-        [KeyboardButton(text="⏰ Расписание"), KeyboardButton(text="🔄 Git Pull")]
+        [KeyboardButton(text="⏰ Расписание"), KeyboardButton(text="🔄 Обновить/перезапустить бота")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 @router.message(F.text == "🔄 Git Pull")
 async def handle_git_pull(message: types.Message):
-    repo_dir = BASE_DIR  # укажи здесь нужную директорию, если не BASE_DIR
+    repo_dir = BASE_DIR  # Путь к директории с git-репозиторием
+    restart_script = os.path.join(repo_dir, "bot_start.sh")  # Путь к скрипту перезапуска
 
     try:
+        # Выполняем git pull
         result = subprocess.run(
             ["git", "-C", repo_dir, "pull"],
             stdout=subprocess.PIPE,
@@ -62,10 +64,24 @@ async def handle_git_pull(message: types.Message):
         )
         output = result.stdout + result.stderr
         if not output.strip():
-            output = "✅ Git Pull выполнен, но нет вывода."
+            output = "✅ Обновление выполнено, но нет вывода."
+
+        # Пытаемся перезапустить бот через скрипт
+        if os.path.exists(restart_script):
+            subprocess.Popen(
+                ["bash", restart_script],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                preexec_fn=os.setpgrp  # запускаем в фоне
+            )
+            output += "\n\n🔁 <b>Перезапуск бота через <code>bot_start.sh</code> инициирован.</b>"
+        else:
+            output += "\n\n⚠️ <b>Скрипт <code>bot_start.sh</code> не найден!</b>"
+
         await message.reply(f"<b>Результат git pull:</b>\n<pre>{html.escape(output.strip())}</pre>", parse_mode="HTML")
+
     except Exception as e:
-        await message.reply(f"❌ Ошибка при git pull:\n<code>{html.escape(str(e))}</code>", parse_mode="HTML")
+        await message.reply(f"❌ Ошибка при git pull или запуске:\n<code>{html.escape(str(e))}</code>", parse_mode="HTML")
 
 
 def get_script_keyboard(script_name):
