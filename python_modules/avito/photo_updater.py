@@ -169,12 +169,12 @@ def update_description(ad, db):
         updated = False
 
         if row.get("brand_replace") and row["brand_replace"] != brand:
-            logging.info(f"Replacing Brand: '{brand}' → '{row['brand_replace']}'")
+            logging.info(f"Replacing Brand: '{brand}' '{articul}' → '{row['brand_replace']}'")
             brand_elem.text = row["brand_replace"]
             updated = True
 
         if row.get("article_replace") and row["article_replace"] != articul:
-            logging.info(f"Replacing OEM: '{articul}' → '{row['article_replace']}'")
+            logging.info(f"Replacing OEM: '{brand}' '{articul}' → '{row['article_replace']}'")
             oem_elem.text = row["article_replace"]
             updated = True
 
