@@ -44,9 +44,29 @@ dp.include_router(schedule_router)
 def get_main_keyboard():
     keyboard = [
         [KeyboardButton(text="📂 Службы"), KeyboardButton(text="📊 Статус")],
-        [KeyboardButton(text="⏰ Расписание")]
+        [KeyboardButton(text="⏰ Расписание"), KeyboardButton(text="🔄 Git Pull")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
+@router.message(F.text == "🔄 Git Pull")
+async def handle_git_pull(message: types.Message):
+    repo_dir = BASE_DIR  # укажи здесь нужную директорию, если не BASE_DIR
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", repo_dir, "pull"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=20
+        )
+        output = result.stdout + result.stderr
+        if not output.strip():
+            output = "✅ Git Pull выполнен, но нет вывода."
+        await message.reply(f"<b>Результат git pull:</b>\n<pre>{html.escape(output.strip())}</pre>", parse_mode="HTML")
+    except Exception as e:
+        await message.reply(f"❌ Ошибка при git pull:\n<code>{html.escape(str(e))}</code>", parse_mode="HTML")
+
 
 def get_script_keyboard(script_name):
     return ReplyKeyboardMarkup(
