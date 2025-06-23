@@ -68,8 +68,7 @@ def main():
         clear_cache()
 
         updated_files = download_all()
-        if updated_files:
-            merge_xml(updated_files, COMBINED_XML)
+        merge_xml(updated_files, COMBINED_XML)
 
         update_all_photos()
 
