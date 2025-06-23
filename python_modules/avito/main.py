@@ -88,3 +88,7 @@ def main():
         logging.exception("Error occurred during update:")
         set_script_end(script_name, status="failed")
         TelegramNotifier.notify(f"Avito update failed: {str(e)}")
+
+
+if __name__ == "__main__":
+    main()
