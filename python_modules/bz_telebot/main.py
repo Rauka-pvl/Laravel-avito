@@ -48,7 +48,7 @@ def get_main_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
-@router.message(F.text == "🔄 Git Pull")
+@router.message(F.text == "🔄 Обновить/перезапустить бота")
 async def handle_git_pull(message: types.Message):
     repo_dir = BASE_DIR  # Путь к директории с git-репозиторием
     restart_script = os.path.join(repo_dir, "bot_start.sh")  # Путь к скрипту перезапуска
