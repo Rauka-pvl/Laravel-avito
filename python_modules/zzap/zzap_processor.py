@@ -24,7 +24,7 @@ def connect_to_db():
 
 def get_matching_brands(brand: str, db):
     try:
-        with db.cursor(dictionary=True) as cursor:
+        with db.cursor(dictionary=True, buffered=True) as cursor:
             query = """
                 SELECT brand, sprav 
                 FROM brand_sprav
@@ -111,7 +111,7 @@ def update_description_yml(offer, db):
               AND LOWER(i.article) = %s
               AND LOWER(ti.name) = 'zzap'
         """
-        with db.cursor(dictionary=True) as cursor:
+        with db.cursor(dictionary=True, buffered=True) as cursor:
             cursor.execute(query, (brand.lower(), articul.lower()))
             row = cursor.fetchone()
 
@@ -161,7 +161,7 @@ def update_picture_yml(offer, db):
             WHERE LOWER(brand) IN ({placeholders}) AND LOWER(articul) LIKE %s
         """
 
-        with db.cursor(dictionary=True) as cursor:
+        with db.cursor(dictionary=True, buffered=True) as cursor:
             cursor.execute(query, (*valid_brands, f"{article.lower()}%"))
             rows = cursor.fetchall()
 

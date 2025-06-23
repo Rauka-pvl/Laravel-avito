@@ -20,7 +20,7 @@ def connect_to_db():
 
 def get_matching_brands(brand: str, db):
     try:
-        with db.cursor(dictionary=True) as cursor:
+        with db.cursor(dictionary=True, buffered=True) as cursor:
             query = """
                 SELECT brand, sprav 
                 FROM brand_sprav
@@ -62,7 +62,7 @@ def update_photo(ad, db):
             FROM images
             WHERE LOWER(brand) IN ({placeholders}) AND LOWER(articul) LIKE %s
         """
-        with db.cursor(dictionary=True) as cursor:
+        with db.cursor(dictionary=True, buffered=True) as cursor:
             cursor.execute(query, (*valid_brands, f"{articul.lower()}%"))
             rows = cursor.fetchall()
 
@@ -158,7 +158,7 @@ def update_description(ad, db):
               AND LOWER(i.article) = %s
               AND LOWER(ti.name) = 'avito'
         """
-        with db.cursor(dictionary=True) as cursor:
+        with db.cursor(dictionary=True, buffered=True) as cursor:
             cursor.execute(query, (brand.lower(), articul.lower()))
             row = cursor.fetchone()
 
