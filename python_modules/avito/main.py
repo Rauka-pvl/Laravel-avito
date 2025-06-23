@@ -14,6 +14,9 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from bz_telebot.database_manager import set_script_start, set_script_end
 from notification.main import TelegramNotifier
+OUTPUT_FILE = os.path.join(LOG_DIR, "..", "avito.xml")
+BACKUP_FILE = os.path.join(LOG_DIR, "..", "avito_backup.xml")
+
 
 def setup_logging():
     os.makedirs(LOG_DIR, exist_ok=True)
@@ -45,8 +48,6 @@ def clear_cache():
                 os.remove(os.path.join(CACHE_DIR, f))
         logging.info("Old XML files have been removed from cache.")
 
-OUTPUT_FILE = os.path.join(LOG_DIR, "..", "avito.xml")
-BACKUP_FILE = os.path.join(LOG_DIR, "..", "avito_backup.xml")
 
 def create_backup():
     if os.path.exists(OUTPUT_FILE):
@@ -69,11 +70,6 @@ def main():
         updated_files = download_all()
         if updated_files:
             merge_xml(updated_files, COMBINED_XML)
-
-            # Удаляем старый файл только если новый успешно создан
-            if os.path.exists(OUTPUT_FILE):
-                os.remove(OUTPUT_FILE)
-                logging.info(f"Deleted original output file: {OUTPUT_FILE}")
 
         update_all_photos()
 
