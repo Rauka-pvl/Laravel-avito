@@ -50,11 +50,11 @@ def get_main_keyboard():
 
 @router.message(F.text == "🔄 Обновить/перезапустить бота")
 async def handle_git_pull(message: types.Message):
-    repo_dir = BASE_DIR  # Путь к директории с git-репозиторием
-    restart_script = os.path.join(repo_dir, "bot_start.sh")  # Путь к скрипту перезапуска
+    repo_dir = BASE_DIR
+    restart_script = os.path.join(repo_dir, "bot_start.sh")
 
     try:
-        # Выполняем git pull
+        # Выполняем git pull и ждём завершения
         result = subprocess.run(
             ["git", "-C", repo_dir, "pull"],
             stdout=subprocess.PIPE,
@@ -64,24 +64,30 @@ async def handle_git_pull(message: types.Message):
         )
         output = result.stdout + result.stderr
         if not output.strip():
-            output = "✅ Обновление выполнено, но нет вывода."
+            output = "✅ Update выполнен, но нет вывода."
 
-        # Пытаемся перезапустить бот через скрипт
+        # Отправляем результат pull пользователю
+        await message.reply(
+            f"<b>Результат:</b>\n<pre>{html.escape(output.strip())}</pre>",
+            parse_mode="HTML"
+        )
+
+        # После отправки — перезапуск
         if os.path.exists(restart_script):
             subprocess.Popen(
                 ["bash", restart_script],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                preexec_fn=os.setpgrp  # запускаем в фоне
+                preexec_fn=os.setpgrp
             )
-            output += "\n\n🔁 <b>Перезапуск бота через <code>bot_start.sh</code> инициирован.</b>"
         else:
-            output += "\n\n⚠️ <b>Скрипт <code>bot_start.sh</code> не найден!</b>"
-
-        await message.reply(f"<b>Результат git pull:</b>\n<pre>{html.escape(output.strip())}</pre>", parse_mode="HTML")
+            await message.reply("⚠️ <code>bot_start.sh</code> не найден", parse_mode="HTML")
 
     except Exception as e:
-        await message.reply(f"❌ Ошибка при git pull или запуске:\n<code>{html.escape(str(e))}</code>", parse_mode="HTML")
+        await message.reply(
+            f"❌ Ошибка при git pull:\n<code>{html.escape(str(e))}</code>",
+            parse_mode="HTML"
+        )
 
 
 def get_script_keyboard(script_name):
