@@ -53,6 +53,9 @@ def create_backup():
     if os.path.exists(OUTPUT_FILE):
         shutil.copy2(OUTPUT_FILE, BACKUP_FILE)
         logging.info(f"Backup created: {BACKUP_FILE}")
+        os.remove(OUTPUT_FILE)
+        logging.info(f"Deleted original output file: {OUTPUT_FILE}")
+
 
 def main():
     script_name = "avito"
