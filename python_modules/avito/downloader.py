@@ -1,5 +1,11 @@
 import os
 import hashlib
+import logging
+import os
+import hashlib
+import requests
+from config import CACHE_DIR, url_to_filename
+from storage import get_file_hash, save_file_hash
 import requests
 from config import XML_URLS, CACHE_DIR, url_to_filename
 from storage import get_file_hash, save_file_hash
@@ -7,9 +13,15 @@ from storage import get_file_hash, save_file_hash
 def download_if_changed(url):
     os.makedirs(CACHE_DIR, exist_ok=True)
     filename = os.path.join(CACHE_DIR, url_to_filename(url))
-    response = requests.get(url)
-    response.raise_for_status()
-    content = response.content
+
+    try:
+        logging.info(f"Скачивание файла: {url}")
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        content = response.content
+    except requests.RequestException as e:
+        logging.error(f"Ошибка при скачивании {url}: {e}")
+        return None
 
     new_hash = hashlib.md5(content).hexdigest()
     old_hash = get_file_hash(filename)
@@ -18,8 +30,11 @@ def download_if_changed(url):
         with open(filename, "wb") as f:
             f.write(content)
         save_file_hash(filename, new_hash)
+        logging.info(f"Файл обновлён: {filename}")
         return filename
-    return None
+    else:
+        logging.info(f"Файл не изменился: {filename}")
+        return None
 
 def download_all():
     updated_files = []
