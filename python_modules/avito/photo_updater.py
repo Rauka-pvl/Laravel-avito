@@ -109,33 +109,47 @@ def update_price(ad, brand, articul, db_connection):
         response.raise_for_status()
 
         price_data = response.json()
-
         if not price_data:
             logging.warning(f"No data returned for Brand = {brand}, Article = {articul}")
             return
 
+        valid_distributors = {"1664240", "1696189"}
+        matched_prices = []
+
         for data in price_data:
+            distributor_id = str(data.get('distributorId'))
+            data_brand = data.get('brand', '').lower()
+            data_number = data.get('numberFix', '').lower()
+            price = data.get('price')
+
             if (
-                (str(data.get('distributorId')) in ["1664240", "1696189"])
-                and data.get('brand').lower() in [b.lower() for b in valid_brands]
-                and data.get('numberFix').lower() == articul.lower()
+                distributor_id in valid_distributors and
+                data_brand in [b.lower() for b in valid_brands] and
+                data_number == articul.lower() and
+                price
             ):
-                new_price_value = data.get('price')
-                if new_price_value:
-                    price_elem = ad.find('Price')
-                    old_price = None
-                    if price_elem is not None:
-                        old_price = price_elem.text
-                        ad.remove(price_elem)
+                matched_prices.append((float(price), distributor_id))
 
-                    new_price = ET.SubElement(ad, 'Price')
-                    new_price.text = str(new_price_value)
-                    logging.info(f"Price updated for {brand} {articul}: old = {old_price}, new = {new_price_value}")
-                    return
+        if not matched_prices:
+            logging.warning(f"No matching price data found for {brand} {articul}.")
+            return
 
-        logging.warning(f"No matching price data found for {brand} {articul}.")
+        # Выбираем минимальную цену из подходящих
+        best_price, selected_distributor = min(matched_prices, key=lambda x: x[0])
+
+        # Обновляем XML
+        price_elem = ad.find('Price')
+        old_price = price_elem.text if price_elem is not None else None
+        if price_elem is not None:
+            ad.remove(price_elem)
+        new_price = ET.SubElement(ad, 'Price')
+        new_price.text = str(best_price)
+
+        logging.info(f"Price updated for {brand} {articul}: old = {old_price}, new = {best_price}, distributor = {selected_distributor}")
+
     except Exception as e:
         logging.error(f"Error in update_price: {e}")
+
 
 def update_description(ad, db):
     try:
