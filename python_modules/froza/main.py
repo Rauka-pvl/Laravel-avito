@@ -130,15 +130,29 @@ def scan_ads_file(filepath: str) -> list:
         if oem and brand:
             logger.info(f"({idx}/{total}) Searching: OEM={oem}, Brand={brand}")
             prices = get_price_list(oem, brand)
-            offer, comment = select_offer(prices, oem=oem, brand=brand)
-            results.append({
-                "Manufacturer": brand,
-                "Article": oem,
-                "Description": offer.get("description_rus") if offer else "",
-                "Price": offer.get("price") if offer else "",
-                "Delivery Time": f"{offer.get('delivery_time')}–{offer.get('delivery_time_guar')} days" if offer else "",
-                "Comment": comment or ""
-            })
+            if prices:
+                top_offers = prices[:5]
+                for offer in top_offers:
+                    results.append({
+                        "Manufacturer": brand,
+                        "Article": oem,
+                        "Description": offer.get("description_rus", ""),
+                        "Price": offer.get("price", ""),
+                        "Delivery Time": f"{offer.get('delivery_time', '')}–{offer.get('delivery_time_guar', '')} days",
+                        "Comment": ""
+                    })
+                logger.info(f"Found {len(top_offers)} offers for OEM={oem}")
+            else:
+                logger.warning(f"No offers found for OEM={oem}, Brand={brand}")
+                results.append({
+                    "Manufacturer": brand,
+                    "Article": oem,
+                    "Description": "",
+                    "Price": "",
+                    "Delivery Time": "",
+                    "Comment": "No offers found"
+                })
+
             processed += 1
         else:
             logger.warning(f"Skipped ad ({idx}/{total}): missing OEM or Brand")
