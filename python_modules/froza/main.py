@@ -139,7 +139,12 @@ def scan_ads_file(filepath: str) -> list:
                         "Description": offer.get("description_rus", ""),
                         "Price": offer.get("price", ""),
                         "Delivery Time": f"{offer.get('delivery_time', '')}–{offer.get('delivery_time_guar', '')} days",
-                        "Comment": ""
+                        "Comment": (
+                            "Delivery > 5 days"
+                            if offer.get("delivery_time") and offer.get("delivery_time_guar")
+                            and int(offer.get("delivery_time", "0")) > 5
+                            else ""
+                        )
                     })
                 logger.info(f"Found {len(top_offers)} offers for OEM={oem}")
             else:
