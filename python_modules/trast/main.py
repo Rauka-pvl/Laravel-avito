@@ -110,6 +110,8 @@ def check_site_protection(url="https://trast-zapchast.ru/shop/"):
             'Accept-Encoding': 'gzip, deflate',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
+            'Referer': 'https://trast-zapchast.ru/',
+            'Cache-Control': 'no-cache',
         }
         
         response = requests.get(url, headers=headers, timeout=10)
@@ -145,7 +147,101 @@ def check_site_protection(url="https://trast-zapchast.ru/shop/"):
         logger.error(f"Error checking site protection: {e}")
         return False
 
-def create_driver():
+# Proxy servers from Chrome extension
+PROXY_SERVERS = [
+    # Trafflink VPN servers
+    "vpn-uk1.trafflink.xyz:443",
+    "vpn-uk2.trafflink.xyz:443", 
+    "vpn-uk3.trafflink.xyz:443",
+    "vpn-de1.trafflink.xyz:443",
+    "vpn-de2.trafflink.xyz:443",
+    "vpn-nl1.trafflink.xyz:443",
+    "vpn-nl2.trafflink.xyz:443",
+    "vpn-ca1.trafflink.xyz:443",
+    "vpn-ca2.trafflink.xyz:443",
+    
+    # Trafcfy servers
+    "uk22.trafcfy.com:437",
+    "uk23.trafcfy.com:437",
+    "uk24.trafcfy.com:437",
+    "nl41.trafcfy.com:437",
+    "nl42.trafcfy.com:437",
+    "nl43.trafcfy.com:437",
+    "us21.trafcfy.com:437",
+    "us22.trafcfy.com:437",
+    "us23.trafcfy.com:437",
+    
+    # HTTP proxies
+    "212.113.123.246:42681",
+    "194.87.201.123:24645",
+    "92.53.127.107:27807",
+    "79.137.133.95:40764",
+    "176.124.217.180:12048",
+]
+
+def test_proxy_connection(proxy):
+    """Тестируем подключение через прокси"""
+    try:
+        proxies = {
+            'https': f'https://{proxy}',
+            'http': f'http://{proxy}'
+        }
+        
+        response = requests.get(
+            'https://trast-zapchast.ru/shop/', 
+            proxies=proxies, 
+            timeout=10,
+            headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+        )
+        
+        logger.info(f"Proxy {proxy}: HTTP {response.status_code}")
+        return response.status_code == 200
+        
+    except Exception as e:
+        logger.error(f"Proxy {proxy} failed: {e}")
+        return False
+
+def get_random_proxy():
+    """Получить случайный прокси сервер"""
+    return random.choice(PROXY_SERVERS)
+
+def test_all_proxies():
+    """Тестируем все прокси и возвращаем рабочие"""
+    logger.info("Testing all available proxies...")
+    working_proxies = []
+    
+    for proxy in PROXY_SERVERS:
+        logger.info(f"Testing proxy: {proxy}")
+        if test_proxy_connection(proxy):
+            working_proxies.append(proxy)
+            logger.info(f"✅ Working proxy: {proxy}")
+        else:
+            logger.warning(f"❌ Failed proxy: {proxy}")
+    
+    logger.info(f"Found {len(working_proxies)} working proxies out of {len(PROXY_SERVERS)}")
+    return working_proxies
+
+def get_working_proxy():
+    """Найти рабочий прокси сервер"""
+    logger.info("Searching for working proxy...")
+    
+    for proxy in PROXY_SERVERS:
+        logger.info(f"Testing proxy: {proxy}")
+        if test_proxy_connection(proxy):
+            logger.info(f"✅ Working proxy found: {proxy}")
+            return proxy
+        else:
+            logger.warning(f"❌ Proxy failed: {proxy}")
+    
+    logger.error("❌ No working proxy found!")
+    return None
+
+def create_driver_with_proxy():
+    """Создать драйвер с рабочим прокси"""
+    proxy = get_working_proxy()
+    
     options = Options()
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
@@ -157,6 +253,13 @@ def create_driver():
     options.add_experimental_option('useAutomationExtension', False)
     options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36")
     options.add_argument(f"--window-size={random.randint(1200, 1920)},{random.randint(900, 1080)}")
+    
+    # Proxy configuration
+    if proxy:
+        logger.info(f"Using proxy: {proxy}")
+        options.add_argument(f"--proxy-server=https://{proxy}")
+    else:
+        logger.warning("No proxy available, using direct connection")
     
     # Additional anti-detection measures + speed optimizations
     options.add_argument("--disable-dev-shm-usage")
@@ -172,10 +275,93 @@ def create_driver():
     options.add_argument("--disable-renderer-backgrounding")  # Speed up rendering
     options.add_argument("--disable-background-networking")  # Reduce network overhead
     options.add_argument("--aggressive-cache-discard")  # More aggressive caching
-    # options.add_argument("--disable-javascript")  # FacetWP needs JS!
+    
+    # Additional anti-blocking measures
+    options.add_argument("--disable-features=TranslateUI")
+    options.add_argument("--disable-ipc-flooding-protection")
+    options.add_argument("--disable-hang-monitor")
+    options.add_argument("--disable-prompt-on-repost")
+    options.add_argument("--disable-domain-reliability")
+    options.add_argument("--disable-component-extensions-with-background-pages")
+    options.add_argument("--disable-default-apps")
+    options.add_argument("--disable-sync")
+    options.add_argument("--disable-translate")
+    options.add_argument("--hide-scrollbars")
+    options.add_argument("--mute-audio")
     options.add_argument("--no-first-run")
     options.add_argument("--no-default-browser-check")
+    options.add_argument("--disable-logging")
+    options.add_argument("--disable-permissions-api")
+    options.add_argument("--disable-presentation-api")
+    options.add_argument("--disable-print-preview")
+    options.add_argument("--disable-speech-api")
+    options.add_argument("--disable-file-system")
+    options.add_argument("--disable-notifications")
+    
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    
+    # Remove webdriver flag and other detection vectors
+    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+    driver.execute_script("Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})")
+    driver.execute_script("Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']})")
+    
+    return driver, proxy
+
+def create_driver(use_proxy=True):
+    options = Options()
+    options.add_argument("--headless")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-gpu")
+    
+    # Anti-detection
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option('useAutomationExtension', False)
+    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36")
+    options.add_argument(f"--window-size={random.randint(1200, 1920)},{random.randint(900, 1080)}")
+    
+    # Proxy configuration
+    if use_proxy:
+        proxy = get_random_proxy()
+        logger.info(f"Using proxy: {proxy}")
+        options.add_argument(f"--proxy-server=https://{proxy}")
+    
+    # Additional anti-detection measures + speed optimizations
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--disable-plugins")
+    options.add_argument("--disable-images")  # Faster loading, less memory
+    options.add_argument("--disable-web-security")  # Reduce overhead
+    options.add_argument("--disable-features=VizDisplayCompositor")  # Reduce GPU usage
+    options.add_argument("--memory-pressure-off")  # Disable memory pressure
+    options.add_argument("--max_old_space_size=2048")  # Limit memory usage
+    options.add_argument("--disable-background-timer-throttling")  # Speed up timers
+    options.add_argument("--disable-backgrounding-occluded-windows")  # Speed up rendering
+    options.add_argument("--disable-renderer-backgrounding")  # Speed up rendering
+    options.add_argument("--disable-background-networking")  # Reduce network overhead
+    options.add_argument("--aggressive-cache-discard")  # More aggressive caching
+    
+    # Additional anti-blocking measures
+    options.add_argument("--disable-features=TranslateUI")
+    options.add_argument("--disable-ipc-flooding-protection")
+    options.add_argument("--disable-hang-monitor")
+    options.add_argument("--disable-prompt-on-repost")
+    options.add_argument("--disable-domain-reliability")
+    options.add_argument("--disable-component-extensions-with-background-pages")
     options.add_argument("--disable-default-apps")
+    options.add_argument("--disable-sync")
+    options.add_argument("--disable-translate")
+    options.add_argument("--hide-scrollbars")
+    options.add_argument("--mute-audio")
+    options.add_argument("--no-first-run")
+    options.add_argument("--no-default-browser-check")
+    options.add_argument("--disable-logging")
+    options.add_argument("--disable-permissions-api")
+    options.add_argument("--disable-presentation-api")
+    options.add_argument("--disable-print-preview")
+    options.add_argument("--disable-speech-api")
+    options.add_argument("--disable-file-system")
+    options.add_argument("--disable-notifications")
     
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     
@@ -187,7 +373,18 @@ def create_driver():
     return driver
 
 def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
-    driver.get(url)
+    # Try to access main page first to establish session
+    try:
+        logger.info("Accessing main page first to establish session...")
+        driver.get("https://trast-zapchast.ru/")
+        time.sleep(3)
+        
+        # Now try to access shop page
+        logger.info("Now accessing shop page...")
+        driver.get(url)
+    except Exception as e:
+        logger.warning(f"Error accessing main page: {e}")
+        driver.get(url)
     
     # Ждем загрузки товаров (FacetWP AJAX) - optimized timeout
     try:
@@ -254,8 +451,11 @@ def producer():
     if not check_site_protection():
         logger.error("Site protection check failed, but continuing...")
     
-    driver = create_driver()
+    driver, current_proxy = create_driver_with_proxy()
     total_collected = 0
+    proxy_failures = 0
+    max_proxy_failures = 3
+    
     try:
         total_pages = get_pages_count_with_driver(driver)
         logger.info(f"Total pages detected: {total_pages}")
@@ -274,17 +474,28 @@ def producer():
             end_page = min(start_page + pages_per_session - 1, total_pages)
             
             logger.info(f"[{thread_name}] Session {session + 1}/{sessions_needed}: pages {start_page}-{end_page}")
+            logger.info(f"[{thread_name}] Current proxy: {current_proxy}")
             
             for page_num in range(start_page, end_page + 1):
                 page_url = f"https://trast-zapchast.ru/shop/?_paged={page_num}"
                 logger.info(f"[{thread_name}] Parsing page {page_num}/{total_pages}")
                 
                 try:
+                    # Try to access main page first if this is the first page of a session
+                    if page_num == start_page:
+                        logger.info(f"[{thread_name}] Establishing session for page {page_num}")
+                        try:
+                            driver.get("https://trast-zapchast.ru/")
+                            time.sleep(2)
+                        except Exception as e:
+                            logger.warning(f"Error accessing main page: {e}")
+                    
                     driver.get(page_url)
                     
                     # Check if we got blocked
                     if "blocked" in driver.page_source.lower() or "captcha" in driver.page_source.lower():
                         logger.error(f"[{thread_name}] Page {page_num}: Blocked or CAPTCHA detected!")
+                        proxy_failures += 1
                         break
                     
                     # Scroll to trigger lazy loading
@@ -299,6 +510,7 @@ def producer():
                         time.sleep(2)  # Reduced from 3 to 2 seconds
                     except Exception as e:
                         logger.error(f"[{thread_name}] Page {page_num}: timeout - {e}")
+                        proxy_failures += 1
                         with open(os.path.join(LOG_DIR, f"debug_page_{page_num}.html"), "w", encoding="utf-8") as f:
                             f.write(driver.page_source)
                     
@@ -310,8 +522,10 @@ def producer():
                         append_to_csv(CSV_FILE, products)
                         logger.info(f"[{thread_name}] Page {page_num}/{total_pages}: added {len(products)} products")
                         total_collected += len(products)
+                        proxy_failures = 0  # Reset failure counter on success
                     else:
                         logger.warning(f"[{thread_name}] Page {page_num}/{total_pages}: no products found")
+                        proxy_failures += 1
                     
                     # Progress logging every 10 pages
                     if page_num % 10 == 0:
@@ -323,10 +537,19 @@ def producer():
                     
                 except Exception as e:
                     logger.error(f"[{thread_name}] Page {page_num}: Error - {e}")
+                    proxy_failures += 1
                     # If we get blocked, break the session
                     if "blocked" in str(e).lower() or "forbidden" in str(e).lower():
                         logger.error(f"[{thread_name}] Session terminated due to blocking")
                         break
+                
+                # Check if we need to switch proxy
+                if proxy_failures >= max_proxy_failures:
+                    logger.warning(f"[{thread_name}] Too many failures ({proxy_failures}), switching proxy...")
+                    driver.quit()
+                    driver, current_proxy = create_driver_with_proxy()
+                    proxy_failures = 0
+                    time.sleep(random.uniform(30, 60))  # Wait before continuing
             
             # Session break: restart driver to avoid rate limiting
             if session < sessions_needed - 1:  # Not the last session
@@ -336,7 +559,7 @@ def producer():
                 logger.info(f"[{thread_name}] Restarting driver to avoid rate limiting...")
                 driver.quit()
                 time.sleep(random.uniform(30, 60))  # Wait 30-60 seconds between sessions (optimized)
-                driver = create_driver()
+                driver, current_proxy = create_driver_with_proxy()
                 
     finally:
         driver.quit()
@@ -364,6 +587,18 @@ if __name__ == "__main__":
     TelegramNotifier.notify("🚀 Trast parsing start...")
     start_time = datetime.now()
     set_script_start(script_name)
+
+    # Test all proxies first
+    logger.info("=== PROXY TESTING PHASE ===")
+    working_proxies = test_all_proxies()
+    
+    if not working_proxies:
+        logger.error("❌ No working proxies found! Exiting...")
+        TelegramNotifier.notify("❌ Trast parsing failed: No working proxies")
+        exit(1)
+    
+    logger.info(f"✅ Found {len(working_proxies)} working proxies, starting parser...")
+    TelegramNotifier.notify(f"✅ Found {len(working_proxies)} working proxies")
 
     create_new_excel(OUTPUT_FILE)
     create_new_csv(CSV_FILE)
