@@ -6,6 +6,7 @@ import logging
 import requests
 import shutil
 import threading
+import subprocess
 from time import sleep
 from datetime import datetime
 from bs4 import BeautifulSoup
@@ -16,10 +17,13 @@ from openpyxl import Workbook, load_workbook
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.firefox.options import Options as FirefoxOptions
+from selenium.webdriver.firefox.service import Service as FirefoxService
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
+from webdriver_manager.firefox import GeckoDriverManager
 import sys
 import csv
 from bz_telebot.database_manager import set_script_start, set_script_end
@@ -177,31 +181,181 @@ PROXY_SERVERS = [
     "92.53.127.107:27807",
     "79.137.133.95:40764",
     "176.124.217.180:12048",
+    
+    # Public proxies (for testing)
+    "8.210.83.33:80",
+    "47.74.152.29:8888",
+    "47.88.3.19:8080",
+    "103.152.112.145:80",
+    "103.152.112.162:80",
+    "185.162.251.76:80",
+    "185.162.251.77:80",
+    "185.162.251.78:80",
 ]
 
-def test_proxy_connection(proxy):
-    """Тестируем подключение через прокси"""
+# Tor configuration
+TOR_SOCKS_PORT = 9050
+TOR_CONTROL_PORT = 9051
+TOR_PROCESS = None
+
+def start_tor():
+    """Запустить Tor процесс"""
+    global TOR_PROCESS
+    
+    try:
+        # Проверяем, не запущен ли уже Tor
+        if check_tor_connection():
+            logger.info("✅ Tor already running")
+            return True
+            
+        logger.info("Starting Tor process...")
+        
+        # Запускаем Tor в фоновом режиме
+        TOR_PROCESS = subprocess.Popen([
+            'tor',
+            '--SOCKSPort', str(TOR_SOCKS_PORT),
+            '--ControlPort', str(TOR_CONTROL_PORT),
+            '--DataDirectory', '/tmp/tor_data',
+            '--CookieAuthentication', '1',
+            '--CookieAuthFile', '/tmp/tor_cookie'
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        
+        # Ждем запуска Tor
+        for i in range(30):  # 30 секунд максимум
+            if check_tor_connection():
+                logger.info("✅ Tor started successfully")
+                return True
+            time.sleep(1)
+            
+        logger.error("❌ Failed to start Tor")
+        return False
+        
+    except Exception as e:
+        logger.error(f"Error starting Tor: {e}")
+        return False
+
+def stop_tor():
+    """Остановить Tor процесс"""
+    global TOR_PROCESS
+    
+    if TOR_PROCESS:
+        try:
+            TOR_PROCESS.terminate()
+            TOR_PROCESS.wait(timeout=10)
+            logger.info("✅ Tor stopped")
+        except Exception as e:
+            logger.error(f"Error stopping Tor: {e}")
+            TOR_PROCESS.kill()
+        finally:
+            TOR_PROCESS = None
+
+def check_tor_connection():
+    """Проверить доступность Tor"""
     try:
         proxies = {
-            'https': f'https://{proxy}',
-            'http': f'http://{proxy}'
+            'http': f'socks5://127.0.0.1:{TOR_SOCKS_PORT}',
+            'https': f'socks5://127.0.0.1:{TOR_SOCKS_PORT}'
         }
         
         response = requests.get(
-            'https://trast-zapchast.ru/shop/', 
-            proxies=proxies, 
-            timeout=10,
-            headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
+            'https://httpbin.org/ip',
+            proxies=proxies,
+            timeout=10
         )
         
-        logger.info(f"Proxy {proxy}: HTTP {response.status_code}")
-        return response.status_code == 200
+        if response.status_code == 200:
+            ip_info = response.json()
+            logger.info(f"Tor IP: {ip_info.get('origin', 'Unknown')}")
+            return True
+            
+    except Exception as e:
+        logger.debug(f"Tor connection check failed: {e}")
+        
+    return False
+
+def create_firefox_with_tor():
+    """Создать Firefox драйвер с Tor"""
+    options = FirefoxOptions()
+    
+    # Основные настройки
+    options.add_argument("--headless")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-gpu")
+    
+    # Anti-detection для Firefox
+    options.set_preference("general.useragent.override", 
+                         "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0")
+    options.set_preference("dom.webdriver.enabled", False)
+    options.set_preference("useAutomationExtension", False)
+    options.set_preference("general.platform.override", "Win32")
+    options.set_preference("general.oscpu.override", "Windows NT 10.0; Win64; x64")
+    
+    # Настройки производительности
+    options.set_preference("media.autoplay.default", 5)
+    options.set_preference("media.autoplay.enabled", False)
+    options.set_preference("media.block-autoplay-until-in-foreground", True)
+    options.set_preference("browser.cache.disk.enable", False)
+    options.set_preference("browser.cache.memory.enable", False)
+    options.set_preference("browser.cache.offline.enable", False)
+    options.set_preference("network.http.use-cache", False)
+    
+    # Отключение изображений для скорости
+    options.set_preference("permissions.default.image", 2)
+    options.set_preference("permissions.default.stylesheet", 2)
+    
+    # Tor proxy настройки
+    options.set_preference("network.proxy.type", 1)  # Manual proxy
+    options.set_preference("network.proxy.socks", "127.0.0.1")
+    options.set_preference("network.proxy.socks_port", TOR_SOCKS_PORT)
+    options.set_preference("network.proxy.socks_version", 5)
+    options.set_preference("network.proxy.socks_remote_dns", True)
+    
+    # Отключение DNS через Tor для скорости
+    options.set_preference("network.proxy.socks_remote_dns", False)
+    
+    try:
+        service = FirefoxService(GeckoDriverManager().install())
+        driver = webdriver.Firefox(service=service, options=options)
+        
+        # Дополнительные anti-detection меры
+        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        driver.execute_script("Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})")
+        driver.execute_script("Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']})")
+        
+        logger.info("✅ Firefox with Tor created successfully")
+        return driver
         
     except Exception as e:
-        logger.error(f"Proxy {proxy} failed: {e}")
-        return False
+        logger.error(f"Error creating Firefox with Tor: {e}")
+        return None
+
+def test_proxy_connection(proxy):
+    """Тестируем подключение через прокси с разными протоколами"""
+    protocols = ['http', 'https', 'socks5']
+    
+    for protocol in protocols:
+        try:
+            proxies = {
+                'https': f'{protocol}://{proxy}',
+                'http': f'{protocol}://{proxy}'
+            }
+            
+            response = requests.get(
+                'https://trast-zapchast.ru/shop/', 
+                proxies=proxies, 
+                timeout=5,  # Уменьшаем таймаут для быстрого тестирования
+                headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+            )
+            
+            if response.status_code == 200:
+                return True
+                
+        except Exception:
+            continue
+    
+    return False
 
 def get_random_proxy():
     """Получить случайный прокси сервер"""
@@ -209,33 +363,24 @@ def get_random_proxy():
 
 def test_all_proxies():
     """Тестируем все прокси и возвращаем рабочие"""
-    logger.info("Testing all available proxies...")
+    logger.info("Testing proxies...")
     working_proxies = []
     
     for proxy in PROXY_SERVERS:
-        logger.info(f"Testing proxy: {proxy}")
         if test_proxy_connection(proxy):
             working_proxies.append(proxy)
-            logger.info(f"✅ Working proxy: {proxy}")
-        else:
-            logger.warning(f"❌ Failed proxy: {proxy}")
     
     logger.info(f"Found {len(working_proxies)} working proxies out of {len(PROXY_SERVERS)}")
     return working_proxies
 
 def get_working_proxy():
     """Найти рабочий прокси сервер"""
-    logger.info("Searching for working proxy...")
-    
     for proxy in PROXY_SERVERS:
-        logger.info(f"Testing proxy: {proxy}")
         if test_proxy_connection(proxy):
-            logger.info(f"✅ Working proxy found: {proxy}")
+            logger.info(f"Using proxy: {proxy}")
             return proxy
-        else:
-            logger.warning(f"❌ Proxy failed: {proxy}")
     
-    logger.error("❌ No working proxy found!")
+    logger.error("No working proxy found!")
     return None
 
 def create_driver_with_proxy():
@@ -259,7 +404,29 @@ def create_driver_with_proxy():
         logger.info(f"Using proxy: {proxy}")
         options.add_argument(f"--proxy-server=https://{proxy}")
     else:
-        logger.warning("No proxy available, using direct connection")
+        logger.info("Using direct connection (no proxy)")
+        # Enhanced anti-detection for direct connection
+        options.add_argument("--disable-features=TranslateUI")
+        options.add_argument("--disable-ipc-flooding-protection")
+        options.add_argument("--disable-hang-monitor")
+        options.add_argument("--disable-prompt-on-repost")
+        options.add_argument("--disable-domain-reliability")
+        options.add_argument("--disable-component-extensions-with-background-pages")
+        options.add_argument("--disable-default-apps")
+        options.add_argument("--disable-sync")
+        options.add_argument("--disable-translate")
+        options.add_argument("--disable-logging")
+        options.add_argument("--disable-permissions-api")
+        options.add_argument("--disable-presentation-api")
+        options.add_argument("--disable-print-preview")
+        options.add_argument("--disable-speech-api")
+        options.add_argument("--hide-scrollbars")
+        options.add_argument("--mute-audio")
+        options.add_argument("--no-first-run")
+        options.add_argument("--no-default-browser-check")
+        options.add_argument("--no-pings")
+        options.add_argument("--no-zygote")
+        options.add_argument("--single-process")
     
     # Additional anti-detection measures + speed optimizations
     options.add_argument("--disable-dev-shm-usage")
@@ -446,12 +613,24 @@ def producer():
     thread_name = "MainThread"
     logger.info(f"[{thread_name}] Starting producer")
     
-    # Check site protection first
-    logger.info("Checking site protection...")
-    if not check_site_protection():
-        logger.error("Site protection check failed, but continuing...")
+    # Try Tor + Firefox first
+    logger.info("=== TOR + FIREFOX MODE ===")
+    if start_tor():
+        logger.info("✅ Tor started, creating Firefox driver...")
+        driver = create_firefox_with_tor()
+        
+        if driver:
+            logger.info("✅ Firefox with Tor created successfully")
+            use_tor = True
+        else:
+            logger.warning("❌ Failed to create Firefox with Tor, falling back to Chrome")
+            driver, current_proxy = create_driver_with_proxy()
+            use_tor = False
+    else:
+        logger.warning("❌ Failed to start Tor, using Chrome with proxies")
+        driver, current_proxy = create_driver_with_proxy()
+        use_tor = False
     
-    driver, current_proxy = create_driver_with_proxy()
     total_collected = 0
     proxy_failures = 0
     max_proxy_failures = 3
@@ -563,6 +742,9 @@ def producer():
                 
     finally:
         driver.quit()
+        if use_tor:
+            logger.info("Stopping Tor process...")
+            stop_tor()
     
     logger.info(f"[{thread_name}] FINAL STATS:")
     logger.info(f"[{thread_name}] Total pages processed: {total_pages}")
@@ -588,17 +770,23 @@ if __name__ == "__main__":
     start_time = datetime.now()
     set_script_start(script_name)
 
-    # Test all proxies first
-    logger.info("=== PROXY TESTING PHASE ===")
-    working_proxies = test_all_proxies()
+    # Try Tor first, then fallback to proxies
+    logger.info("=== CONNECTION TESTING PHASE ===")
     
-    if not working_proxies:
-        logger.error("❌ No working proxies found! Exiting...")
-        TelegramNotifier.notify("❌ Trast parsing failed: No working proxies")
-        exit(1)
-    
-    logger.info(f"✅ Found {len(working_proxies)} working proxies, starting parser...")
-    TelegramNotifier.notify(f"✅ Found {len(working_proxies)} working proxies")
+    # Test Tor connection first
+    if check_tor_connection():
+        logger.info("✅ Tor is available")
+        TelegramNotifier.notify("✅ Using Tor + Firefox")
+    else:
+        logger.info("⚠️ Tor not available, testing proxies...")
+        working_proxies = test_all_proxies()
+        
+        if not working_proxies:
+            logger.warning("⚠️ No working proxies found, using direct connection...")
+            TelegramNotifier.notify("⚠️ Using direct connection (no proxies)")
+        else:
+            logger.info(f"✅ Found {len(working_proxies)} working proxies")
+            TelegramNotifier.notify("✅ Proxy connection established")
 
     create_new_excel(OUTPUT_FILE)
     create_new_csv(CSV_FILE)
