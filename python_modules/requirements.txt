@@ -2,10 +2,11 @@ requests
 beautifulsoup4
 openpyxl
 mysql-connector-python
-selenium
+selenium>=4.0.0
 webdriver-manager
 aiogram==3.4.1
 python-dotenv
 psutil
-sys
 croniter
+lxml
+html5lib

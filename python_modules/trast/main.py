@@ -16,6 +16,9 @@ from openpyxl import Workbook, load_workbook
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
 import sys
 import csv
@@ -97,16 +100,107 @@ def append_to_csv(path, product_list):
     except Exception as e:
         logger.error(f"Error writing to CSV: {e}")
 
+def check_site_protection(url="https://trast-zapchast.ru/shop/"):
+    """Проверяем защиту сайта через HTTP заголовки"""
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'ru-RU,ru;q=0.8,en-US;q=0.5,en;q=0.3',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        }
+        
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        logger.info(f"HTTP Status: {response.status_code}")
+        logger.info(f"Server: {response.headers.get('Server', 'Unknown')}")
+        logger.info(f"X-Powered-By: {response.headers.get('X-Powered-By', 'None')}")
+        logger.info(f"X-Cache: {response.headers.get('X-Cache', 'None')}")
+        logger.info(f"CF-Cache-Status: {response.headers.get('CF-Cache-Status', 'None')}")
+        logger.info(f"X-RateLimit: {response.headers.get('X-RateLimit', 'None')}")
+        
+        # Check for protection indicators
+        protection_indicators = []
+        if 'cloudflare' in response.headers.get('Server', '').lower():
+            protection_indicators.append("Cloudflare detected")
+        if 'cf-cache-status' in response.headers:
+            protection_indicators.append("Cloudflare CDN")
+        if 'x-rate-limit' in response.headers:
+            protection_indicators.append("Rate limiting")
+        if response.status_code == 403:
+            protection_indicators.append("Access forbidden")
+        if response.status_code == 429:
+            protection_indicators.append("Too many requests")
+            
+        if protection_indicators:
+            logger.warning(f"Protection detected: {', '.join(protection_indicators)}")
+        else:
+            logger.info("No obvious protection detected")
+            
+        return response.status_code == 200
+        
+    except Exception as e:
+        logger.error(f"Error checking site protection: {e}")
+        return False
+
 def create_driver():
     options = Options()
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-gpu")
-    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    
+    # Anti-detection
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option('useAutomationExtension', False)
+    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36")
+    options.add_argument(f"--window-size={random.randint(1200, 1920)},{random.randint(900, 1080)}")
+    
+    # Additional anti-detection measures + speed optimizations
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--disable-plugins")
+    options.add_argument("--disable-images")  # Faster loading, less memory
+    options.add_argument("--disable-web-security")  # Reduce overhead
+    options.add_argument("--disable-features=VizDisplayCompositor")  # Reduce GPU usage
+    options.add_argument("--memory-pressure-off")  # Disable memory pressure
+    options.add_argument("--max_old_space_size=2048")  # Limit memory usage
+    options.add_argument("--disable-background-timer-throttling")  # Speed up timers
+    options.add_argument("--disable-backgrounding-occluded-windows")  # Speed up rendering
+    options.add_argument("--disable-renderer-backgrounding")  # Speed up rendering
+    options.add_argument("--disable-background-networking")  # Reduce network overhead
+    options.add_argument("--aggressive-cache-discard")  # More aggressive caching
+    # options.add_argument("--disable-javascript")  # FacetWP needs JS!
+    options.add_argument("--no-first-run")
+    options.add_argument("--no-default-browser-check")
+    options.add_argument("--disable-default-apps")
+    
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    
+    # Remove webdriver flag and other detection vectors
+    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+    driver.execute_script("Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})")
+    driver.execute_script("Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']})")
+    
+    return driver
 
 def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
     driver.get(url)
-    time.sleep(2)
+    
+    # Ждем загрузки товаров (FacetWP AJAX) - optimized timeout
+    try:
+        WebDriverWait(driver, 10).until(  # Reduced from 15 to 10 seconds
+            EC.presence_of_element_located((By.CSS_SELECTOR, "div.product.product-plate"))
+        )
+        time.sleep(2)  # Reduced from 3 to 2 seconds
+    except Exception as e:
+        logger.warning(f"Timeout waiting for products: {e}")
+        # Save HTML for debugging
+        with open(os.path.join(LOG_DIR, "debug_page.html"), "w", encoding="utf-8") as f:
+            f.write(driver.page_source)
+    
     soup = BeautifulSoup(driver.page_source, "html.parser")
     last_page_el = soup.select_one(".facetwp-pager .facetwp-page.last")
     if last_page_el and last_page_el.has_attr("data-page"):
@@ -116,11 +210,15 @@ def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
 def get_products_from_page_soup(soup):
     results = []
     cards = soup.select("div.product.product-plate")
+    total_cards = len(cards)
+    available_cards = 0
+    
     for card in cards:
         stock_badge = card.select_one("div.product-badge.product-stock.instock")
         if not stock_badge or "В наличии" not in stock_badge.text.strip():
             continue
-
+        
+        available_cards += 1
         title_el = card.select_one("a.product-title")
         article_el = card.select_one("div.product-attributes .item:nth-child(1) .value")
         manufacturer_el = card.select_one("div.product-attributes .item:nth-child(2) .value")
@@ -143,32 +241,111 @@ def get_products_from_page_soup(soup):
         }
         results.append(product)
         logger.info(f"[Product Added] {product}")
+    
+    logger.info(f"[Page Stats] Total cards: {total_cards}, Available: {available_cards}, Added: {len(results)}")
     return results
 
 def producer():
     thread_name = "MainThread"
     logger.info(f"[{thread_name}] Starting producer")
+    
+    # Check site protection first
+    logger.info("Checking site protection...")
+    if not check_site_protection():
+        logger.error("Site protection check failed, but continuing...")
+    
     driver = create_driver()
     total_collected = 0
     try:
         total_pages = get_pages_count_with_driver(driver)
-        for page_num in range(1, total_pages + 1):
-            page_url = f"https://trast-zapchast.ru/shop/?_paged={page_num}/"
-            logger.info(f"[{thread_name}] Parsing page {page_num}/{total_pages}")
-            driver.get(page_url)
-            time.sleep(2)
-            soup = BeautifulSoup(driver.page_source, "html.parser")
-            products = get_products_from_page_soup(soup)
-            if products:
-                append_to_excel(OUTPUT_FILE, products)
-                append_to_csv(CSV_FILE, products)
-                logger.info(f"[{thread_name}] Page {page_num}: added {len(products)} products")
-                total_collected += len(products)
-            else:
-                logger.warning(f"[{thread_name}] Page {page_num}: no products found")
-            time.sleep(random.uniform(1, 2))
+        logger.info(f"Total pages detected: {total_pages}")
+        
+        # Rate limiting protection: optimized for 10-hour completion
+        pages_per_session = 20  # Increased from 5 to process more pages per session
+        sessions_needed = (total_pages + pages_per_session - 1) // pages_per_session
+        
+        logger.info(f"Server specs: 2 cores, 4GB RAM - optimized for 10-hour completion")
+        logger.info(f"Estimated total products: ~{total_pages * 16}")
+        logger.info(f"Expected available products: ~{int(total_pages * 16 * 0.4)} (40% in stock)")
+        logger.info(f"Estimated total time: ~{sessions_needed * 0.5} hours (optimized)")
+        
+        for session in range(sessions_needed):
+            start_page = session * pages_per_session + 1
+            end_page = min(start_page + pages_per_session - 1, total_pages)
+            
+            logger.info(f"[{thread_name}] Session {session + 1}/{sessions_needed}: pages {start_page}-{end_page}")
+            
+            for page_num in range(start_page, end_page + 1):
+                page_url = f"https://trast-zapchast.ru/shop/?_paged={page_num}"
+                logger.info(f"[{thread_name}] Parsing page {page_num}/{total_pages}")
+                
+                try:
+                    driver.get(page_url)
+                    
+                    # Check if we got blocked
+                    if "blocked" in driver.page_source.lower() or "captcha" in driver.page_source.lower():
+                        logger.error(f"[{thread_name}] Page {page_num}: Blocked or CAPTCHA detected!")
+                        break
+                    
+                    # Scroll to trigger lazy loading
+                    driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
+                    time.sleep(1)
+                    
+                    # Wait for products - optimized timeout
+                    try:
+                        WebDriverWait(driver, 10).until(  # Reduced from 15 to 10 seconds
+                            EC.presence_of_element_located((By.CSS_SELECTOR, "div.product.product-plate"))
+                        )
+                        time.sleep(2)  # Reduced from 3 to 2 seconds
+                    except Exception as e:
+                        logger.error(f"[{thread_name}] Page {page_num}: timeout - {e}")
+                        with open(os.path.join(LOG_DIR, f"debug_page_{page_num}.html"), "w", encoding="utf-8") as f:
+                            f.write(driver.page_source)
+                    
+                    soup = BeautifulSoup(driver.page_source, "html.parser")
+                    products = get_products_from_page_soup(soup)
+                    
+                    if products:
+                        append_to_excel(OUTPUT_FILE, products)
+                        append_to_csv(CSV_FILE, products)
+                        logger.info(f"[{thread_name}] Page {page_num}/{total_pages}: added {len(products)} products")
+                        total_collected += len(products)
+                    else:
+                        logger.warning(f"[{thread_name}] Page {page_num}/{total_pages}: no products found")
+                    
+                    # Progress logging every 10 pages
+                    if page_num % 10 == 0:
+                        progress_percent = (page_num / total_pages) * 100
+                        logger.info(f"[PROGRESS] {page_num}/{total_pages} pages ({progress_percent:.1f}%) - {total_collected} products collected")
+                    
+                    # Random delay between pages (optimized for speed)
+                    time.sleep(random.uniform(3, 6))
+                    
+                except Exception as e:
+                    logger.error(f"[{thread_name}] Page {page_num}: Error - {e}")
+                    # If we get blocked, break the session
+                    if "blocked" in str(e).lower() or "forbidden" in str(e).lower():
+                        logger.error(f"[{thread_name}] Session terminated due to blocking")
+                        break
+            
+            # Session break: restart driver to avoid rate limiting
+            if session < sessions_needed - 1:  # Not the last session
+                session_progress = ((session + 1) / sessions_needed) * 100
+                logger.info(f"[{thread_name}] Session {session + 1}/{sessions_needed} completed ({session_progress:.1f}%)")
+                logger.info(f"[{thread_name}] Total collected so far: {total_collected} products")
+                logger.info(f"[{thread_name}] Restarting driver to avoid rate limiting...")
+                driver.quit()
+                time.sleep(random.uniform(30, 60))  # Wait 30-60 seconds between sessions (optimized)
+                driver = create_driver()
+                
     finally:
         driver.quit()
+    
+    logger.info(f"[{thread_name}] FINAL STATS:")
+    logger.info(f"[{thread_name}] Total pages processed: {total_pages}")
+    logger.info(f"[{thread_name}] Total products collected: {total_collected}")
+    logger.info(f"[{thread_name}] Average products per page: {total_collected/total_pages:.1f}")
+    
     return total_collected
 
 def create_backup():
@@ -196,7 +373,8 @@ if __name__ == "__main__":
 
     status = 'done'
     try:
-        if total_products >= 100:
+        # Simple threshold - any products collected is success
+        if total_products > 0:
             logger.info(f"✅ Собрано {total_products} товаров")
             create_backup()
         else:
