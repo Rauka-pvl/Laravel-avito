@@ -627,8 +627,8 @@ def producer():
     
     # Try Tor + Chrome first
     logger.info("=== TOR + CHROME MODE ===")
-    if start_tor():
-        logger.info("✅ Tor started, creating Chrome driver...")
+    if check_tor_connection():
+        logger.info("✅ Tor is available, creating Chrome driver...")
         driver = create_chrome_with_tor()
         
         if driver:
@@ -640,7 +640,7 @@ def producer():
             driver, current_proxy = create_driver_with_proxy()
             use_tor = False
     else:
-        logger.warning("❌ Failed to start Tor, using Chrome with proxies")
+        logger.warning("❌ Tor not available, using Chrome with proxies")
         driver, current_proxy = create_driver_with_proxy()
         use_tor = False
     
@@ -739,7 +739,16 @@ def producer():
                 if proxy_failures >= max_proxy_failures:
                     logger.warning(f"[{thread_name}] Too many failures ({proxy_failures}), switching proxy...")
                     driver.quit()
-                    driver, current_proxy = create_driver_with_proxy()
+                    # Try to recreate with Tor if available
+                    if check_tor_connection():
+                        logger.info("🔄 Recreating Chrome with Tor...")
+                        driver = create_chrome_with_tor()
+                        if driver:
+                            current_proxy = "Tor (SOCKS5)"
+                        else:
+                            driver, current_proxy = create_driver_with_proxy()
+                    else:
+                        driver, current_proxy = create_driver_with_proxy()
                     proxy_failures = 0
                     time.sleep(random.uniform(30, 60))  # Wait before continuing
             
@@ -751,7 +760,16 @@ def producer():
                 logger.info(f"[{thread_name}] Restarting driver to avoid rate limiting...")
                 driver.quit()
                 time.sleep(random.uniform(30, 60))  # Wait 30-60 seconds between sessions (optimized)
-                driver, current_proxy = create_driver_with_proxy()
+                # Try to recreate with Tor if available
+                if check_tor_connection():
+                    logger.info("🔄 Recreating Chrome with Tor for new session...")
+                    driver = create_chrome_with_tor()
+                    if driver:
+                        current_proxy = "Tor (SOCKS5)"
+                    else:
+                        driver, current_proxy = create_driver_with_proxy()
+                else:
+                    driver, current_proxy = create_driver_with_proxy()
                 
     except Exception as e:
         logger.error(f"[{thread_name}] Critical error in producer: {e}")
@@ -759,9 +777,7 @@ def producer():
         
     finally:
         driver.quit()
-        if use_tor:
-            logger.info("Stopping Tor process...")
-            stop_tor()
+        # Tor is managed by systemd service, no need to stop it
     
     logger.info(f"[{thread_name}] FINAL STATS:")
     logger.info(f"[{thread_name}] Total pages processed: {total_pages}")
