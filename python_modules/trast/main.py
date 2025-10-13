@@ -273,61 +273,55 @@ def check_tor_connection():
         
     return False
 
-def create_firefox_with_tor():
-    """Создать Firefox драйвер с Tor"""
+def create_chrome_with_tor():
+    """Создать Chrome драйвер с Tor"""
     try:
-        options = FirefoxOptions()
+        options = Options()
         
         # Основные настройки
         options.add_argument("--headless")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-gpu")
         
-        # Anti-detection для Firefox
-        options.set_preference("general.useragent.override", 
-                             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0")
-        options.set_preference("dom.webdriver.enabled", False)
-        options.set_preference("useAutomationExtension", False)
-        options.set_preference("general.platform.override", "Win32")
-        options.set_preference("general.oscpu.override", "Windows NT 10.0; Win64; x64")
+        # Anti-detection для Chrome
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option('useAutomationExtension', False)
+        options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36")
+        options.add_argument(f"--window-size={random.randint(1200, 1920)},{random.randint(900, 1080)}")
         
-        # Настройки производительности
-        options.set_preference("media.autoplay.default", 5)
-        options.set_preference("media.autoplay.enabled", False)
-        options.set_preference("media.block-autoplay-until-in-foreground", True)
-        options.set_preference("browser.cache.disk.enable", False)
-        options.set_preference("browser.cache.memory.enable", False)
-        options.set_preference("browser.cache.offline.enable", False)
-        options.set_preference("network.http.use-cache", False)
+        # Tor proxy настройки для Chrome
+        options.add_argument(f"--proxy-server=socks5://127.0.0.1:{TOR_SOCKS_PORT}")
         
-        # Отключение изображений для скорости
-        options.set_preference("permissions.default.image", 2)
-        options.set_preference("permissions.default.stylesheet", 2)
+        # Дополнительные anti-detection меры
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-extensions")
+        options.add_argument("--disable-plugins")
+        options.add_argument("--disable-images")
+        options.add_argument("--disable-web-security")
+        options.add_argument("--disable-features=VizDisplayCompositor")
+        options.add_argument("--memory-pressure-off")
+        options.add_argument("--max_old_space_size=2048")
+        options.add_argument("--disable-background-timer-throttling")
+        options.add_argument("--disable-backgrounding-occluded-windows")
+        options.add_argument("--disable-renderer-backgrounding")
+        options.add_argument("--disable-background-networking")
+        options.add_argument("--aggressive-cache-discard")
         
-        # Tor proxy настройки
-        options.set_preference("network.proxy.type", 1)  # Manual proxy
-        options.set_preference("network.proxy.socks", "127.0.0.1")
-        options.set_preference("network.proxy.socks_port", TOR_SOCKS_PORT)
-        options.set_preference("network.proxy.socks_version", 5)
-        options.set_preference("network.proxy.socks_remote_dns", True)
-        
-        # Отключение DNS через Tor для скорости
-        options.set_preference("network.proxy.socks_remote_dns", False)
-        
-        service = FirefoxService(GeckoDriverManager().install())
-        driver = webdriver.Firefox(service=service, options=options)
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=options)
         
         # Дополнительные anti-detection меры
         driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         driver.execute_script("Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})")
         driver.execute_script("Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']})")
         
-        logger.info("✅ Firefox with Tor created successfully")
+        logger.info("✅ Chrome with Tor created successfully")
         return driver
         
     except Exception as e:
-        logger.error(f"Error creating Firefox with Tor: {e}")
-        logger.info("Firefox not available, will use Chrome instead")
+        logger.error(f"Error creating Chrome with Tor: {e}")
+        logger.info("Chrome with Tor failed, will use Chrome with proxies instead")
         return None
 
 def test_proxy_connection(proxy):
@@ -614,17 +608,17 @@ def producer():
     thread_name = "MainThread"
     logger.info(f"[{thread_name}] Starting producer")
     
-    # Try Tor + Firefox first
-    logger.info("=== TOR + FIREFOX MODE ===")
+    # Try Tor + Chrome first
+    logger.info("=== TOR + CHROME MODE ===")
     if start_tor():
-        logger.info("✅ Tor started, creating Firefox driver...")
-        driver = create_firefox_with_tor()
+        logger.info("✅ Tor started, creating Chrome driver...")
+        driver = create_chrome_with_tor()
         
         if driver:
-            logger.info("✅ Firefox with Tor created successfully")
+            logger.info("✅ Chrome with Tor created successfully")
             use_tor = True
         else:
-            logger.warning("❌ Failed to create Firefox with Tor, falling back to Chrome")
+            logger.warning("❌ Failed to create Chrome with Tor, falling back to Chrome with proxies")
             driver, current_proxy = create_driver_with_proxy()
             use_tor = False
     else:
@@ -777,7 +771,7 @@ if __name__ == "__main__":
     # Test Tor connection first
     if check_tor_connection():
         logger.info("✅ Tor is available")
-        TelegramNotifier.notify("✅ Using Tor + Firefox")
+        TelegramNotifier.notify("✅ Using Tor + Chrome")
     else:
         logger.info("⚠️ Tor not available, testing proxies...")
         working_proxies = test_all_proxies()
