@@ -7,6 +7,7 @@ import requests
 import shutil
 import threading
 import subprocess
+import traceback
 from time import sleep
 from datetime import datetime
 from bs4 import BeautifulSoup
@@ -562,7 +563,7 @@ def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
         driver.get(url)
     except Exception as e:
         logger.warning(f"Error accessing main page: {e}")
-        driver.get(url)
+    driver.get(url)
     
     # Ждем загрузки товаров (FacetWP AJAX) - optimized timeout
     try:
@@ -592,7 +593,7 @@ def get_products_from_page_soup(soup):
         stock_badge = card.select_one("div.product-badge.product-stock.instock")
         if not stock_badge or "В наличии" not in stock_badge.text.strip():
             continue
-        
+
         available_cards += 1
         title_el = card.select_one("a.product-title")
         article_el = card.select_one("div.product-attributes .item:nth-child(1) .value")
@@ -633,6 +634,7 @@ def producer():
         if driver:
             logger.info("✅ Chrome with Tor created successfully")
             use_tor = True
+            current_proxy = "Tor (SOCKS5)"
         else:
             logger.warning("❌ Failed to create Chrome with Tor, falling back to Chrome with proxies")
             driver, current_proxy = create_driver_with_proxy()
@@ -751,6 +753,10 @@ def producer():
                 time.sleep(random.uniform(30, 60))  # Wait 30-60 seconds between sessions (optimized)
                 driver, current_proxy = create_driver_with_proxy()
                 
+    except Exception as e:
+        logger.error(f"[{thread_name}] Critical error in producer: {e}")
+        logger.error(f"[{thread_name}] Traceback: {traceback.format_exc()}")
+        
     finally:
         driver.quit()
         if use_tor:
