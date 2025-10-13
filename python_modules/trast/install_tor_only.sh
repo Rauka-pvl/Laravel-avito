@@ -1,17 +1,13 @@
 #!/bin/bash
 
-# Скрипт автоматической установки и настройки Tor для парсера Trast
-# Автор: AI Assistant
-# Дата: $(date)
+# Установка только Tor (без Firefox)
+# Для случаев когда Firefox недоступен
 
-set -e  # Остановка при ошибке
-
-echo "🚀 Установка Tor для парсера Trast"
-echo "=================================="
+echo "🚀 Установка только Tor для парсера Trast"
 
 # Проверка прав root
 if [ "$EUID" -ne 0 ]; then
-    echo "❌ Запустите скрипт с правами root: sudo ./install_tor.sh"
+    echo "❌ Запустите с правами root: sudo ./install_tor_only.sh"
     exit 1
 fi
 
@@ -39,24 +35,14 @@ elif [ "$DISTRO" = "arch" ]; then
     pacman -Sy
 fi
 
-# Установка Tor и Firefox
-echo "📦 Установка Tor и Firefox..."
+# Установка только Tor
+echo "📦 Установка Tor..."
 if [ "$DISTRO" = "debian" ]; then
-    # Попробуем разные варианты Firefox
-    if apt list --installed | grep -q firefox-esr; then
-        echo "Firefox ESR уже установлен"
-    elif apt list --available | grep -q firefox-esr; then
-        apt install -y tor firefox-esr
-    elif apt list --available | grep -q firefox; then
-        apt install -y tor firefox
-    else
-        echo "⚠️ Firefox не найден в репозиториях, устанавливаем только Tor"
-        apt install -y tor
-    fi
+    apt install -y tor
 elif [ "$DISTRO" = "redhat" ]; then
-    yum install -y tor firefox
+    yum install -y tor
 elif [ "$DISTRO" = "arch" ]; then
-    pacman -S --noconfirm tor firefox
+    pacman -S --noconfirm tor
 fi
 
 # Создание директорий
@@ -242,69 +228,13 @@ EOF
 
 chmod +x /usr/local/bin/tor-parser
 
-# Создание скрипта мониторинга
-echo "📊 Создание скрипта мониторинга..."
-cat > /usr/local/bin/tor-monitor << 'EOF'
-#!/bin/bash
-
-echo "🔍 Мониторинг Tor для парсера Trast"
-echo "=================================="
-
-# Проверка статуса сервиса
-if systemctl is-active --quiet tor-parser; then
-    echo "✅ Tor сервис: АКТИВЕН"
-else
-    echo "❌ Tor сервис: НЕ АКТИВЕН"
-fi
-
-# Проверка портов
-if netstat -tlnp | grep -q ":9050"; then
-    echo "✅ SOCKS порт 9050: ОТКРЫТ"
-else
-    echo "❌ SOCKS порт 9050: ЗАКРЫТ"
-fi
-
-if netstat -tlnp | grep -q ":9051"; then
-    echo "✅ Control порт 9051: ОТКРЫТ"
-else
-    echo "❌ Control порт 9051: ЗАКРЫТ"
-fi
-
-# Проверка подключения
-echo "🌐 Тестирование подключения..."
-if curl --socks5 127.0.0.1:9050 --connect-timeout 5 https://httpbin.org/ip > /dev/null 2>&1; then
-    echo "✅ Подключение через Tor: РАБОТАЕТ"
-    TOR_IP=$(curl --socks5 127.0.0.1:9050 --connect-timeout 5 -s https://httpbin.org/ip | grep -o '"origin":"[^"]*"' | cut -d'"' -f4)
-    echo "🌍 IP через Tor: $TOR_IP"
-else
-    echo "❌ Подключение через Tor: НЕ РАБОТАЕТ"
-fi
-
-# Проверка сайта
-echo "🎯 Проверка сайта trast-zapchast.ru..."
-if curl --socks5 127.0.0.1:9050 --connect-timeout 5 -I https://trast-zapchast.ru/shop/ > /dev/null 2>&1; then
-    echo "✅ Сайт доступен через Tor"
-else
-    echo "⚠️ Сайт недоступен через Tor"
-fi
-
-echo ""
-echo "📋 Полезные команды:"
-echo "  tor-parser status  - Статус сервиса"
-echo "  tor-parser logs    - Логи в реальном времени"
-echo "  tor-parser test    - Тест подключения"
-echo "  tor-parser ip      - Показать IP"
-EOF
-
-chmod +x /usr/local/bin/tor-monitor
-
 # Финальная проверка
 echo ""
 echo "🎉 Установка завершена!"
 echo "======================"
 echo ""
 echo "✅ Tor установлен и настроен"
-echo "✅ Firefox установлен"
+echo "⚠️ Firefox не установлен (будет использоваться Chrome)"
 echo "✅ Systemd сервис создан"
 echo "✅ Автозапуск включен"
 echo "✅ Скрипты управления созданы"
@@ -316,13 +246,14 @@ echo "  tor-parser status   - Статус сервиса"
 echo "  tor-parser logs     - Логи в реальном времени"
 echo "  tor-parser test     - Тест подключения"
 echo "  tor-parser ip       - Показать IP через Tor"
-echo "  tor-monitor         - Полная диагностика"
 echo ""
 echo "🚀 Теперь можно запускать парсер:"
 echo "  cd python_modules/trast"
 echo "  python main.py"
 echo ""
-echo "📊 Для мониторинга используйте:"
-echo "  tor-monitor"
+echo "📊 Парсер будет использовать:"
+echo "  1. Tor + Chrome (если Tor доступен)"
+echo "  2. Chrome + прокси (если Tor недоступен)"
+echo "  3. Chrome напрямую (если прокси не работают)"
 echo ""
 echo "🎯 Tor готов к работе с парсером Trast!"

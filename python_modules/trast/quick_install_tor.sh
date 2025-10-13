@@ -13,7 +13,17 @@ fi
 
 # Установка Tor и Firefox
 echo "📦 Установка Tor и Firefox..."
-apt update && apt install -y tor firefox-esr
+apt update
+
+# Попробуем разные варианты Firefox
+if apt list --available | grep -q firefox-esr; then
+    apt install -y tor firefox-esr
+elif apt list --available | grep -q firefox; then
+    apt install -y tor firefox
+else
+    echo "⚠️ Firefox не найден, устанавливаем только Tor"
+    apt install -y tor
+fi
 
 # Создание директорий
 mkdir -p /tmp/tor_data

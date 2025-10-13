@@ -275,45 +275,45 @@ def check_tor_connection():
 
 def create_firefox_with_tor():
     """Создать Firefox драйвер с Tor"""
-    options = FirefoxOptions()
-    
-    # Основные настройки
-    options.add_argument("--headless")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-gpu")
-    
-    # Anti-detection для Firefox
-    options.set_preference("general.useragent.override", 
-                         "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0")
-    options.set_preference("dom.webdriver.enabled", False)
-    options.set_preference("useAutomationExtension", False)
-    options.set_preference("general.platform.override", "Win32")
-    options.set_preference("general.oscpu.override", "Windows NT 10.0; Win64; x64")
-    
-    # Настройки производительности
-    options.set_preference("media.autoplay.default", 5)
-    options.set_preference("media.autoplay.enabled", False)
-    options.set_preference("media.block-autoplay-until-in-foreground", True)
-    options.set_preference("browser.cache.disk.enable", False)
-    options.set_preference("browser.cache.memory.enable", False)
-    options.set_preference("browser.cache.offline.enable", False)
-    options.set_preference("network.http.use-cache", False)
-    
-    # Отключение изображений для скорости
-    options.set_preference("permissions.default.image", 2)
-    options.set_preference("permissions.default.stylesheet", 2)
-    
-    # Tor proxy настройки
-    options.set_preference("network.proxy.type", 1)  # Manual proxy
-    options.set_preference("network.proxy.socks", "127.0.0.1")
-    options.set_preference("network.proxy.socks_port", TOR_SOCKS_PORT)
-    options.set_preference("network.proxy.socks_version", 5)
-    options.set_preference("network.proxy.socks_remote_dns", True)
-    
-    # Отключение DNS через Tor для скорости
-    options.set_preference("network.proxy.socks_remote_dns", False)
-    
     try:
+        options = FirefoxOptions()
+        
+        # Основные настройки
+        options.add_argument("--headless")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-gpu")
+        
+        # Anti-detection для Firefox
+        options.set_preference("general.useragent.override", 
+                             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0")
+        options.set_preference("dom.webdriver.enabled", False)
+        options.set_preference("useAutomationExtension", False)
+        options.set_preference("general.platform.override", "Win32")
+        options.set_preference("general.oscpu.override", "Windows NT 10.0; Win64; x64")
+        
+        # Настройки производительности
+        options.set_preference("media.autoplay.default", 5)
+        options.set_preference("media.autoplay.enabled", False)
+        options.set_preference("media.block-autoplay-until-in-foreground", True)
+        options.set_preference("browser.cache.disk.enable", False)
+        options.set_preference("browser.cache.memory.enable", False)
+        options.set_preference("browser.cache.offline.enable", False)
+        options.set_preference("network.http.use-cache", False)
+        
+        # Отключение изображений для скорости
+        options.set_preference("permissions.default.image", 2)
+        options.set_preference("permissions.default.stylesheet", 2)
+        
+        # Tor proxy настройки
+        options.set_preference("network.proxy.type", 1)  # Manual proxy
+        options.set_preference("network.proxy.socks", "127.0.0.1")
+        options.set_preference("network.proxy.socks_port", TOR_SOCKS_PORT)
+        options.set_preference("network.proxy.socks_version", 5)
+        options.set_preference("network.proxy.socks_remote_dns", True)
+        
+        # Отключение DNS через Tor для скорости
+        options.set_preference("network.proxy.socks_remote_dns", False)
+        
         service = FirefoxService(GeckoDriverManager().install())
         driver = webdriver.Firefox(service=service, options=options)
         
@@ -327,6 +327,7 @@ def create_firefox_with_tor():
         
     except Exception as e:
         logger.error(f"Error creating Firefox with Tor: {e}")
+        logger.info("Firefox not available, will use Chrome instead")
         return None
 
 def test_proxy_connection(proxy):
