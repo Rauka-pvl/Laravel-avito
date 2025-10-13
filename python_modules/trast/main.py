@@ -648,6 +648,11 @@ def producer():
     proxy_failures = 0
     max_proxy_failures = 3
     
+    # Early exit optimization
+    empty_pages_count = 0
+    max_empty_pages = 3  # Stop after 3 consecutive empty pages
+    last_productive_page = 0
+    
     try:
         total_pages = get_pages_count_with_driver(driver)
         logger.info(f"Total pages detected: {total_pages}")
@@ -715,9 +720,24 @@ def producer():
                         logger.info(f"[{thread_name}] Page {page_num}/{total_pages}: added {len(products)} products")
                         total_collected += len(products)
                         proxy_failures = 0  # Reset failure counter on success
+                        
+                        # Reset empty pages counter on successful page
+                        empty_pages_count = 0
+                        last_productive_page = page_num
                     else:
                         logger.warning(f"[{thread_name}] Page {page_num}/{total_pages}: no products found")
                         proxy_failures += 1
+                        
+                        # Track empty pages for early exit optimization
+                        empty_pages_count += 1
+                        logger.info(f"[{thread_name}] Empty pages in a row: {empty_pages_count}/{max_empty_pages}")
+                        
+                        # Early exit if too many empty pages
+                        if empty_pages_count >= max_empty_pages:
+                            logger.info(f"[{thread_name}] 🛑 EARLY EXIT: {max_empty_pages} consecutive empty pages detected")
+                            logger.info(f"[{thread_name}] Last productive page: {last_productive_page}")
+                            logger.info(f"[{thread_name}] Stopping parsing to save time...")
+                            break
                     
                     # Progress logging every 10 pages
                     if page_num % 10 == 0:
@@ -752,6 +772,11 @@ def producer():
                     proxy_failures = 0
                     time.sleep(random.uniform(30, 60))  # Wait before continuing
             
+            # Check if we had early exit from inner loop
+            if empty_pages_count >= max_empty_pages:
+                logger.info(f"[{thread_name}] 🛑 EARLY EXIT from session {session + 1}")
+                break
+            
             # Session break: restart driver to avoid rate limiting
             if session < sessions_needed - 1:  # Not the last session
                 session_progress = ((session + 1) / sessions_needed) * 100
@@ -783,6 +808,13 @@ def producer():
     logger.info(f"[{thread_name}] Total pages processed: {total_pages}")
     logger.info(f"[{thread_name}] Total products collected: {total_collected}")
     logger.info(f"[{thread_name}] Average products per page: {total_collected/total_pages:.1f}")
+    
+    # Early exit statistics
+    if empty_pages_count >= max_empty_pages:
+        logger.info(f"[{thread_name}] 🎯 EARLY EXIT OPTIMIZATION:")
+        logger.info(f"[{thread_name}] Last productive page: {last_productive_page}")
+        logger.info(f"[{thread_name}] Empty pages before exit: {empty_pages_count}")
+        logger.info(f"[{thread_name}] Time saved by early exit: ~{(total_pages - last_productive_page) * 0.5:.1f} hours")
     
     return total_collected
 
