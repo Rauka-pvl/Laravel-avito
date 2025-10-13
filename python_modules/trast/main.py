@@ -252,21 +252,37 @@ def stop_tor():
 def check_tor_connection():
     """Проверить доступность Tor"""
     try:
-        proxies = {
-            'http': f'socks5://127.0.0.1:{TOR_SOCKS_PORT}',
-            'https': f'socks5://127.0.0.1:{TOR_SOCKS_PORT}'
-        }
+        # Сначала проверяем, что порт открыт
+        import socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(5)
+        result = sock.connect_ex(('127.0.0.1', TOR_SOCKS_PORT))
+        sock.close()
         
-        response = requests.get(
-            'https://httpbin.org/ip',
-            proxies=proxies,
-            timeout=10
-        )
-        
-        if response.status_code == 200:
-            ip_info = response.json()
-            logger.info(f"Tor IP: {ip_info.get('origin', 'Unknown')}")
-            return True
+        if result != 0:
+            logger.debug(f"Tor port {TOR_SOCKS_PORT} not accessible")
+            return False
+            
+        # Теперь проверяем через curl (более надежно)
+        import subprocess
+        try:
+            result = subprocess.run([
+                'curl', '--socks5', f'127.0.0.1:{TOR_SOCKS_PORT}',
+                '--connect-timeout', '10',
+                '--max-time', '15',
+                '-s', 'https://httpbin.org/ip'
+            ], capture_output=True, text=True, timeout=20)
+            
+            if result.returncode == 0 and result.stdout:
+                logger.info("✅ Tor connection verified")
+                return True
+            else:
+                logger.debug(f"Tor curl test failed: {result.stderr}")
+                return False
+                
+        except Exception as curl_e:
+            logger.debug(f"Tor curl test error: {curl_e}")
+            return False
             
     except Exception as e:
         logger.debug(f"Tor connection check failed: {e}")
