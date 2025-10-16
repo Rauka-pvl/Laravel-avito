@@ -251,36 +251,88 @@ def cloudflare_safe_delay():
     logger.info(f"🛡️ Cloudflare-safe задержка: {total_delay:.1f}с")
     time.sleep(total_delay)
 
-# Сессионная стратегия
-def establish_legitimate_session(driver):
-    """Устанавливает легитимную сессию для обхода Cloudflare"""
-    try:
-        logger.info("🏠 Заходим на главную страницу для установки сессии...")
-        driver.get("https://trast-zapchast.ru/")
-        human_like_behavior(driver)
-        
-        # Ждем загрузки Cloudflare
-        time.sleep(random.uniform(5, 10))
-        
-        # Проверяем на CAPTCHA
-        if check_for_captcha(driver):
-            logger.warning("🛡️ Обнаружена CAPTCHA, ждем...")
-            time.sleep(random.uniform(30, 60))
+# Сессионная стратегия с улучшенной обработкой блокировок
+def establish_legitimate_session(driver, max_attempts=3):
+    """Устанавливает легитимную сессию для обхода Cloudflare с множественными попытками"""
+    for attempt in range(max_attempts):
+        try:
+            logger.info(f"🏠 Попытка {attempt + 1}/{max_attempts}: Заходим на главную страницу...")
             
-            # Повторная проверка
+            # Сначала пробуем зайти на главную страницу
+            driver.get("https://trast-zapchast.ru/")
+            
+            # Увеличиваем время ожидания для Cloudflare
+            wait_time = random.uniform(10, 20)
+            logger.info(f"⏳ Ждем загрузки Cloudflare: {wait_time:.1f}с")
+            time.sleep(wait_time)
+            
+            # Человеческое поведение
+            human_like_behavior(driver)
+            
+            # Проверяем статус страницы
+            page_title = driver.title.lower()
+            page_source = driver.page_source.lower()
+            
+            logger.info(f"📄 Заголовок страницы: {driver.title}")
+            
+            # Проверяем на различные типы блокировок
             if check_for_captcha(driver):
-                logger.error("🛡️ CAPTCHA не исчезла, возможно блокировка")
+                logger.warning("🛡️ Обнаружена CAPTCHA, ждем...")
+                time.sleep(random.uniform(30, 60))
+                
+                # Повторная проверка
+                if check_for_captcha(driver):
+                    logger.error("🛡️ CAPTCHA не исчезла, пробуем другую стратегию")
+                    if attempt < max_attempts - 1:
+                        continue
+                    return False
+            
+            # Проверяем на другие типы блокировок
+            block_indicators = [
+                "access denied", "blocked", "forbidden", "403", "429",
+                "too many requests", "rate limit", "ip blocked"
+            ]
+            
+            for indicator in block_indicators:
+                if indicator in page_source or indicator in page_title:
+                    logger.warning(f"🚫 Обнаружен индикатор блокировки: {indicator}")
+                    if attempt < max_attempts - 1:
+                        logger.info("🔄 Пробуем другую стратегию...")
+                        time.sleep(random.uniform(30, 60))
+                        continue
+                    return False
+            
+            # Если дошли до сюда, пробуем перейти в магазин
+            logger.info("✅ Главная страница загружена, переходим в магазин...")
+            driver.get("https://trast-zapchast.ru/shop/")
+            
+            # Дополнительное ожидание для магазина
+            time.sleep(random.uniform(5, 10))
+            human_like_behavior(driver)
+            
+            # Проверяем, что магазин загрузился
+            try:
+                WebDriverWait(driver, 15).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "body"))
+                )
+                logger.info("✅ Магазин загружен успешно")
+                return True
+            except Exception as e:
+                logger.warning(f"⚠️ Магазин не загрузился: {e}")
+                if attempt < max_attempts - 1:
+                    continue
                 return False
-        
-        logger.info("✅ Сессия установлена, переходим в магазин...")
-        driver.get("https://trast-zapchast.ru/shop/")
-        human_like_behavior(driver)
-        
-        return True
-        
-    except Exception as e:
-        logger.error(f"Ошибка установки сессии: {e}")
-        return False
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка установки сессии (попытка {attempt + 1}): {e}")
+            if attempt < max_attempts - 1:
+                logger.info("🔄 Пробуем еще раз через 30 секунд...")
+                time.sleep(30)
+                continue
+            return False
+    
+    logger.error("🛡️ Все попытки установки сессии исчерпаны")
+    return False
 
 # Сохранение куков между сессиями
 def save_session_cookies(driver):
