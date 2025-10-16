@@ -280,7 +280,7 @@ def main():
     script_name = "trast_modular"
     
     # Notify start
-    # TelegramNotifier.notify("🚀 Modular Trast parsing start...")
+    TelegramNotifier.notify("🚀 Modular Trast parsing start...")
     set_script_start(script_name)
     
     try:
@@ -294,22 +294,22 @@ def main():
         # Notify completion
         if total_products > 0:
             logger.info("✅ Parsing completed successfully")
-            # TelegramNotifier.notify(
-            #     f"✅ Modular Trast parsing completed\n"
-            #     f"Products: {total_products}\n"
-            #     f"Duration: {stats['duration_seconds']:.1f}s\n"
-            #     f"Proxy success rate: {stats['proxy_stats'].get('success_rate', 0):.2f}"
-            # )
+            TelegramNotifier.notify(
+                f"✅ Modular Trast parsing completed\n"
+                f"Products: {total_products}\n"
+                f"Duration: {stats['duration_seconds']:.1f}s\n"
+                f"Proxy success rate: {stats['proxy_stats'].get('success_rate', 0):.2f}"
+            )
             set_script_end(script_name, "completed")
         else:
             logger.error("❌ Parsing failed: 0 products")
-            # TelegramNotifier.notify("❌ Modular Trast parsing failed: 0 products")
+            TelegramNotifier.notify("❌ Modular Trast parsing failed: 0 products")
             set_script_end(script_name, "insufficient_data")
             
             # Try smart restore
             if parser.backup_manager.smart_restore(0):
                 logger.info("📦 Restored from backup")
-                # TelegramNotifier.notify("📦 Restored from backup due to failure")
+                TelegramNotifier.notify("📦 Restored from backup due to failure")
         
         # Log final statistics
         logger.info("📊 Final Statistics:")
@@ -318,7 +318,7 @@ def main():
         
     except Exception as e:
         logger.error(f"❌ Critical error in main: {e}")
-        # TelegramNotifier.notify(f"❌ Critical error in modular Trast parser: {e}")
+        TelegramNotifier.notify(f"❌ Critical error in modular Trast parser: {e}")
         set_script_end(script_name, "error")
 
 
