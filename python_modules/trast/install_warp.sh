@@ -58,7 +58,7 @@ fi
 
 # Регистрация WARP
 echo "📝 Регистрация WARP..."
-warp-cli register
+warp-cli registration new
 
 # Подключение к WARP
 echo "🔗 Подключение к WARP..."

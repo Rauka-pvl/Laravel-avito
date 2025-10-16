@@ -7,7 +7,7 @@ load_dotenv()
 
 class TelegramNotifier:
     __BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-    __USER_IDS = list(map(int, os.getenv("TELEGRAM_USER_IDS", "").split(",")))
+    __USER_IDS = list(map(int, os.getenv("TELEGRAM_USER_IDS", "").split(","))) if os.getenv("TELEGRAM_USER_IDS", "") else []
 
     @classmethod
     def notify(cls, text: str):

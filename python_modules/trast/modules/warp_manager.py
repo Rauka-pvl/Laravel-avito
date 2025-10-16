@@ -279,7 +279,7 @@ class WARPManager:
             logger.info("📝 Registering WARP...")
             
             result = subprocess.run(
-                ["warp-cli", "register"], 
+                ["warp-cli", "registration", "new"], 
                 capture_output=True, 
                 text=True, 
                 timeout=30
