@@ -173,12 +173,17 @@ class BrowserFactory:
         try:
             options = ChromeOptions()
             
-            # Basic configuration - disable headless for debugging
-            # if headless:
-            #     options.add_argument("--headless")
+            # Basic configuration
+            if headless:
+                options.add_argument("--headless")
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-gpu")
             options.add_argument("--disable-dev-shm-usage")
+            
+            # Add unique user data directory to avoid conflicts
+            import tempfile
+            user_data_dir = tempfile.mkdtemp(prefix="chrome_")
+            options.add_argument(f"--user-data-dir={user_data_dir}")
             
             # Apply proxy configuration
             if proxy:
