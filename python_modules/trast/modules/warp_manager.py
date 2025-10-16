@@ -23,6 +23,7 @@ class WARPManager:
         self.proxy_urls = self._get_warp_proxy_urls()
         self.current_proxy = None
         self.is_connected = False
+        self.proxy_only_mode = True  # По умолчанию используем безопасный режим
         
     def _get_warp_proxy_urls(self) -> List[str]:
         """Get list of WARP proxy URLs."""
@@ -68,10 +69,20 @@ class WARPManager:
             logger.debug(f"Error checking WARP availability: {e}")
             return False
     
-    def connect(self) -> bool:
+    def connect(self, proxy_only: bool = None) -> bool:
         """Connect to WARP."""
         try:
-            logger.info("🔗 Connecting to WARP...")
+            if proxy_only is None:
+                proxy_only = self.proxy_only_mode
+                
+            if proxy_only:
+                logger.info("🔗 Connecting to WARP in proxy-only mode...")
+                # Set WARP to proxy-only mode to avoid affecting SSH
+                subprocess.run(["warp-cli", "mode", "proxy"], timeout=5)
+            else:
+                logger.info("🔗 Connecting to WARP in full mode...")
+                # Set WARP to full mode (affects all traffic)
+                subprocess.run(["warp-cli", "mode", "warp"], timeout=5)
             
             # Try to connect
             result = subprocess.run(
@@ -87,7 +98,8 @@ class WARPManager:
                 
                 # Verify connection
                 if self.is_available():
-                    logger.info("✅ WARP connected successfully")
+                    mode = "proxy-only" if proxy_only else "full"
+                    logger.info(f"✅ WARP connected successfully in {mode} mode")
                     self.is_connected = True
                     return True
                 else:

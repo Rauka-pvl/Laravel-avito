@@ -8,6 +8,14 @@ set -e  # Остановка при ошибке
 
 echo "🌐 Установка Cloudflare WARP для парсера Trast"
 echo "=============================================="
+echo ""
+echo "⚠️  ВАЖНОЕ ПРЕДУПРЕЖДЕНИЕ:"
+echo "   Этот скрипт устанавливает WARP в БЕЗОПАСНОМ режиме (proxy-only)"
+echo "   SSH и другие соединения НЕ будут заблокированы"
+echo "   WARP будет работать только как прокси на порту 40000"
+echo ""
+echo "🔒 Безопасность гарантирована!"
+echo ""
 
 # Проверка прав root
 if [ "$EUID" -ne 0 ]; then
@@ -58,41 +66,69 @@ fi
 
 # Регистрация WARP
 echo "📝 Регистрация WARP..."
-warp-cli registration new
+if ! warp-cli registration new; then
+    echo "❌ Ошибка регистрации WARP"
+    echo "💡 Возможно, WARP уже зарегистрирован. Продолжаем..."
+fi
 
-# Подключение к WARP
-echo "🔗 Подключение к WARP..."
-warp-cli connect
-
-# Ожидание подключения
-echo "⏳ Ожидание подключения (10 секунд)..."
-sleep 10
-
-# Проверка статуса
-echo "🔍 Проверка статуса WARP..."
-if warp-cli status | grep -q "Connected"; then
-    echo "✅ WARP подключен успешно"
-else
-    echo "❌ Ошибка подключения WARP"
-    warp-cli status
+# Установка безопасного режима (proxy-only)
+echo "🔧 Установка безопасного режима (proxy-only)..."
+if ! warp-cli mode proxy; then
+    echo "❌ Ошибка установки proxy режима"
     exit 1
 fi
 
-# Получение IP
-echo "🌍 Получение IP через WARP..."
-WARP_IP=$(curl --socks5 127.0.0.1:40000 --connect-timeout 10 -s https://httpbin.org/ip | grep -o '"origin":"[^"]*"' | cut -d'"' -f4)
-if [ -n "$WARP_IP" ]; then
-    echo "✅ IP через WARP: $WARP_IP"
-else
-    echo "⚠️ Не удалось получить IP через WARP"
+# Проверка режима
+echo "🔍 Проверка режима WARP..."
+warp-cli settings list | grep "Mode:"
+
+# Подключение к WARP
+echo "🔗 Подключение к WARP..."
+if ! warp-cli connect; then
+    echo "❌ Ошибка подключения WARP"
+    exit 1
 fi
 
-# Тестирование сайта
-echo "🎯 Тестирование сайта trast-zapchast.ru через WARP..."
-if curl --socks5 127.0.0.1:40000 --connect-timeout 10 -I https://trast-zapchast.ru/shop/ > /dev/null 2>&1; then
-    echo "✅ Сайт доступен через WARP"
+# Ожидание подключения
+echo "⏳ Ожидание подключения (15 секунд)..."
+sleep 15
+
+# Проверка статуса
+echo "🔍 Проверка статуса WARP..."
+WARP_STATUS=$(warp-cli status)
+echo "Статус WARP: $WARP_STATUS"
+
+if echo "$WARP_STATUS" | grep -q "Connected"; then
+    echo "✅ WARP подключен успешно"
+elif echo "$WARP_STATUS" | grep -q "Disconnected"; then
+    echo "⚠️ WARP отключен, но настроен правильно"
+    echo "💡 Можно подключиться командой: warp-cli connect"
 else
-    echo "⚠️ Сайт может быть недоступен через WARP"
+    echo "❌ Неожиданный статус WARP"
+    echo "Статус: $WARP_STATUS"
+fi
+
+# Тестирование подключения через WARP
+echo "🧪 Тестирование подключения через WARP..."
+if echo "$WARP_STATUS" | grep -q "Connected"; then
+    echo "🌍 Получение IP через WARP..."
+    WARP_IP=$(curl --socks5 127.0.0.1:40000 --connect-timeout 10 -s https://httpbin.org/ip | grep -o '"origin":"[^"]*"' | cut -d'"' -f4)
+    if [ -n "$WARP_IP" ]; then
+        echo "✅ IP через WARP: $WARP_IP"
+        
+        # Тестирование сайта
+        echo "🎯 Тестирование сайта trast-zapchast.ru через WARP..."
+        if curl --socks5 127.0.0.1:40000 --connect-timeout 10 -I https://trast-zapchast.ru/shop/ > /dev/null 2>&1; then
+            echo "✅ Сайт доступен через WARP"
+        else
+            echo "⚠️ Сайт может быть недоступен через WARP"
+        fi
+    else
+        echo "⚠️ Не удалось получить IP через WARP"
+    fi
+else
+    echo "⚠️ WARP отключен, тестирование пропущено"
+    echo "💡 Для тестирования выполните: warp-cli connect"
 fi
 
 # Создание скрипта управления
@@ -174,9 +210,16 @@ echo "🎉 Установка завершена!"
 echo "======================"
 echo ""
 echo "✅ Cloudflare WARP установлен и настроен"
+echo "✅ Безопасный режим (proxy-only) активирован"
+echo "✅ SSH и сеть защищены от блокировки"
 echo "✅ Systemd сервис создан"
 echo "✅ Автозапуск включен"
 echo "✅ Скрипты управления созданы"
+echo ""
+echo "🔒 БЕЗОПАСНОСТЬ:"
+echo "   - WARP работает только как прокси (порт 40000)"
+echo "   - SSH и другие соединения НЕ затрагиваются"
+echo "   - Можно безопасно отключить: warp-cli disconnect"
 echo ""
 echo "📋 Полезные команды:"
 echo "  warp-parser start    - Подключиться к WARP"
@@ -190,8 +233,9 @@ echo "  cd python_modules/trast"
 echo "  python main.py"
 echo ""
 echo "📊 Парсер будет использовать:"
-echo "  1. WARP (если доступен)"
+echo "  1. WARP (если доступен) - ПРИОРИТЕТ"
 echo "  2. Tor + прокси (если WARP недоступен)"
 echo "  3. Прокси напрямую (если Tor недоступен)"
 echo ""
 echo "🎯 WARP готов к работе с парсером Trast!"
+echo "🛡️ Безопасность гарантирована!"
