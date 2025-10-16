@@ -49,6 +49,7 @@ class BrowserFactory:
         try:
             # Determine best browser for current OS
             browser_type = BrowserFactory._get_best_browser()
+            logger.info(f"🔍 Selected browser: {browser_type}")
             
             if browser_type == "firefox":
                 return BrowserFactory._create_firefox_browser(proxy, proxy_config, headless)
@@ -67,34 +68,78 @@ class BrowserFactory:
         """Determine the best browser for current OS."""
         system = platform.system().lower()
         
+        # Check if Firefox is actually available (not just importable)
+        firefox_available = BrowserFactory._check_firefox_availability()
+        chrome_available = BrowserFactory._check_chrome_availability()
+        
         # Linux: prefer Firefox (better Tor/WARP compatibility)
         if system == "linux":
-            if FIREFOX_AVAILABLE:
+            if firefox_available:
                 return "firefox"
-            elif CHROME_AVAILABLE:
+            elif chrome_available:
                 return "chrome"
         
         # Windows: prefer Chrome (more stable on Windows)
         elif system == "windows":
-            if CHROME_AVAILABLE:
+            if chrome_available:
                 return "chrome"
-            elif FIREFOX_AVAILABLE:
+            elif firefox_available:
                 return "firefox"
         
         # macOS: prefer Firefox
         elif system == "darwin":
-            if FIREFOX_AVAILABLE:
+            if firefox_available:
                 return "firefox"
-            elif CHROME_AVAILABLE:
+            elif chrome_available:
                 return "chrome"
         
         # Fallback
-        if CHROME_AVAILABLE:
+        if chrome_available:
             return "chrome"
-        elif FIREFOX_AVAILABLE:
+        elif firefox_available:
             return "firefox"
         
         return "none"
+    
+    @staticmethod
+    def _check_firefox_availability() -> bool:
+        """Check if Firefox is actually available on the system."""
+        try:
+            import subprocess
+            result = subprocess.run(['firefox', '--version'], 
+                                  capture_output=True, 
+                                  text=True, 
+                                  timeout=5)
+            return result.returncode == 0
+        except Exception:
+            return False
+    
+    @staticmethod
+    def _check_chrome_availability() -> bool:
+        """Check if Chrome is actually available on the system."""
+        try:
+            import subprocess
+            # Try different Chrome paths
+            chrome_paths = [
+                'google-chrome',
+                'chrome',
+                'chromium-browser',
+                'chromium'
+            ]
+            
+            for path in chrome_paths:
+                try:
+                    result = subprocess.run([path, '--version'], 
+                                          capture_output=True, 
+                                          text=True, 
+                                          timeout=5)
+                    if result.returncode == 0:
+                        return True
+                except Exception:
+                    continue
+            return False
+        except Exception:
+            return False
     
     @staticmethod
     def _create_firefox_browser(proxy: Optional[Proxy] = None, 
