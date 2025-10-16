@@ -175,6 +175,20 @@ class ProductExtractor:
             logger.warning(f"Error accessing main page: {e}")
             driver.get(url)
         
+        # Wait for page to load completely
+        logger.info("⏳ Waiting for page to load...")
+        time.sleep(10)
+        
+        # Save HTML for debugging
+        debug_file = os.path.join(TrastConfig.LOG_DIR, "debug_page_count.html")
+        with open(debug_file, "w", encoding="utf-8") as f:
+            f.write(driver.page_source)
+        logger.info(f"💾 Saved debug HTML to: {debug_file}")
+        
+        # Log page title and URL
+        logger.info(f"📄 Page title: {driver.title}")
+        logger.info(f"🌐 Current URL: {driver.current_url}")
+        
         # Wait for products to load (FacetWP AJAX) - try multiple selectors
         product_selectors = [
             ".woocommerce-loop-product__link",  # WooCommerce product links
