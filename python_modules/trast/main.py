@@ -236,11 +236,16 @@ class TrastParser:
     def _get_current_ip(self) -> str:
         """Get current IP address."""
         try:
-            if self.proxy_strategy.connection_type == 'tor':
-                return self.proxy_strategy.tor_manager.get_current_ip() or "tor_ip"
+            if self.proxy_strategy.connection_type == 'warp':
+                ip = self.proxy_strategy.warp_manager.get_current_ip()
+                return ip or "warp_ip"
+            elif self.proxy_strategy.connection_type == 'tor':
+                ip = self.proxy_strategy.tor_manager.get_current_ip()
+                return ip or "tor_ip"
             else:
                 return str(self.proxy_strategy.current_connection) if self.proxy_strategy.current_connection else "proxy_ip"
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Error getting current IP: {e}")
             return "unknown_ip"
     
     def _cleanup(self):

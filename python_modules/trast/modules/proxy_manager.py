@@ -282,16 +282,36 @@ class HybridProxyStrategy:
         self.success_count = 0
         self.failure_count = 0
     
+    def _test_warp_connection(self, proxy_config: Dict) -> bool:
+        """Test WARP connection quickly."""
+        try:
+            import requests
+            response = requests.get(
+                "https://httpbin.org/ip", 
+                proxies=proxy_config, 
+                timeout=5  # Быстрый тест
+            )
+            return response.status_code == 200
+        except Exception:
+            return False
+    
     def get_connection(self) -> Union[Proxy, Dict]:
         """Get next connection (WARP, Tor, or proxy)."""
         # Try WARP first if available
         if self.warp_manager.is_available():
-            proxy_config = self.warp_manager.get_proxy_config()
-            if proxy_config:
-                self.connection_type = 'warp'
-                self.current_connection = proxy_config
-                logger.info("🌐 Using WARP connection")
-                return proxy_config
+            try:
+                proxy_config = self.warp_manager.get_proxy_config()
+                if proxy_config:
+                    # Тестируем WARP соединение
+                    if self._test_warp_connection(proxy_config):
+                        self.connection_type = 'warp'
+                        self.current_connection = proxy_config
+                        logger.info("🌐 Using WARP connection")
+                        return proxy_config
+                    else:
+                        logger.warning("⚠️ WARP connection test failed, trying alternatives")
+            except Exception as e:
+                logger.warning(f"⚠️ WARP connection error: {e}, trying alternatives")
         
         # Try Tor if WARP is not available
         if self.tor_manager.is_available():

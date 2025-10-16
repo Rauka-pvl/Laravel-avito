@@ -186,29 +186,51 @@ class WARPManager:
     
     def get_current_ip(self) -> Optional[str]:
         """Get current IP address through WARP."""
-        try:
-            proxy_config = self.get_proxy_config()
-            if not proxy_config:
-                return None
-            
-            response = requests.get(
-                "https://httpbin.org/ip", 
-                proxies=proxy_config, 
-                timeout=10
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                ip = data.get('origin', '').split(',')[0].strip()
-                logger.debug(f"🌍 Current WARP IP: {ip}")
-                return ip
-            else:
-                logger.warning(f"⚠️ Failed to get WARP IP: {response.status_code}")
-                return None
-                
-        except Exception as e:
-            logger.error(f"❌ Error getting WARP IP: {e}")
+        proxy_config = self.get_proxy_config()
+        if not proxy_config:
             return None
+        
+        # Список сервисов для проверки IP
+        ip_services = [
+            "https://httpbin.org/ip",
+            "https://api.ipify.org?format=json",
+            "https://ipinfo.io/json",
+            "https://api.myip.com"
+        ]
+        
+        for service in ip_services:
+            try:
+                logger.debug(f"🔍 Trying IP service: {service}")
+                response = requests.get(
+                    service, 
+                    proxies=proxy_config, 
+                    timeout=30  # Увеличили таймаут
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    # Разные форматы ответов
+                    if 'origin' in data:
+                        ip = data['origin'].split(',')[0].strip()
+                    elif 'ip' in data:
+                        ip = data['ip']
+                    elif 'query' in data:
+                        ip = data['query']
+                    else:
+                        continue
+                    
+                    logger.info(f"✅ WARP IP obtained: {ip}")
+                    return ip
+                else:
+                    logger.warning(f"⚠️ Service {service} returned {response.status_code}")
+                    
+            except Exception as e:
+                logger.debug(f"❌ Service {service} failed: {e}")
+                continue
+        
+        logger.error("❌ All IP services failed")
+        return None
     
     def rotate_ip(self) -> bool:
         """Rotate WARP IP by reconnecting."""
