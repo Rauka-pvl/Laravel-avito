@@ -165,41 +165,59 @@ class ProductExtractor:
     
     @staticmethod
     def try_bulk_fetch(driver) -> Optional[List[Dict[str, Any]]]:
-        """Try to fetch all data in one request."""
+        """Try to fetch all data by getting page count first."""
         try:
-            for bulk_url in TrastConfig.BULK_URLS:
+            # First, get the total page count
+            logger.info("🔍 Determining total page count...")
+            total_pages = ProductExtractor.get_page_count(driver)
+            logger.info(f"📊 Total pages found: {total_pages}")
+            
+            if total_pages <= 0:
+                logger.warning("No pages found, falling back to regular parsing")
+                return None
+            
+            # Try to get products from first few pages to test
+            test_pages = min(3, total_pages)  # Test first 3 pages or all if less
+            all_products = []
+            
+            for page_num in range(1, test_pages + 1):
                 try:
-                    logger.info(f"🚀 Trying bulk request: {bulk_url}")
-                    driver.get(bulk_url)
+                    url = f"{TrastConfig.SHOP_URL}?_paged={page_num}"
+                    logger.info(f"🚀 Testing page {page_num}/{test_pages}: {url}")
+                    driver.get(url)
                     
                     # Human behavior
                     HumanBehaviorSimulator.apply_behavior(driver)
                     
                     # Check for CAPTCHA
                     if BlockDetector.check_for_captcha(driver):
-                        logger.warning("🛡️ CAPTCHA in bulk request, waiting...")
+                        logger.warning("🛡️ CAPTCHA detected, waiting...")
                         DelayStrategy.cloudflare_safe_delay()
                         continue
                     
                     # Additional wait for loading
-                    time.sleep(random.uniform(8, 15))
+                    time.sleep(random.uniform(3, 8))
                     
                     soup = BeautifulSoup(driver.page_source, 'html.parser')
                     products = ProductExtractor.extract_from_soup(soup)
                     
-                    if len(products) > 100:  # If we got many products
-                        logger.info(f"✅ Bulk request successful! Got {len(products)} products")
-                        return products
+                    if products:
+                        logger.info(f"✅ Page {page_num}: found {len(products)} products")
+                        all_products.extend(products)
                     else:
-                        logger.debug(f"Bulk request {bulk_url} gave only {len(products)} products")
+                        logger.warning(f"⚠️ Page {page_num}: no products found")
                         
                 except Exception as e:
-                    logger.debug(f"Bulk request {bulk_url} failed: {e}")
+                    logger.debug(f"Error on page {page_num}: {e}")
                     continue
             
-            logger.info("Bulk requests didn't work, using regular parsing")
-            return None
-            
+            if all_products:
+                logger.info(f"✅ Bulk test successful! Got {len(all_products)} products from {test_pages} pages")
+                return all_products
+            else:
+                logger.info("Bulk test failed, using regular parsing")
+                return None
+                
         except Exception as e:
             logger.error(f"Error in bulk fetch: {e}")
             return None

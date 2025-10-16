@@ -81,13 +81,11 @@ class TrastConfig:
     # Pagination pattern
     PAGINATION_PATTERN = "_paged={page}"
     
-    # Bulk fetch URLs
+    # Bulk fetch URLs - try to get all products at once
     BULK_URLS = [
-        f"{SHOP_URL}?per_page=9999",
-        f"{SHOP_URL}?posts_per_page=9999",
-        f"{SHOP_URL}?limit=9999",
-        f"{SHOP_URL}?show_all=1",
-        f"{SHOP_URL}?all_products=1"
+        f"{SHOP_URL}?_paged=1",  # Start with first page
+        f"{SHOP_URL}?_paged=2",  # Try second page
+        f"{SHOP_URL}?_paged=3"   # Try third page
     ]
     
     # Anti-blocking thresholds
