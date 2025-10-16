@@ -145,7 +145,7 @@ class ProxyPool:
         
         return False, None
     
-    def get_next_proxy(self, max_attempts: int = 500) -> Optional[Proxy]:
+    def get_next_proxy(self, max_attempts: int = 10) -> Optional[Proxy]:
         """Get next working proxy with adaptive selection."""
         attempts = 0
         max_attempts = min(max_attempts, len(self.proxies))
@@ -286,13 +286,33 @@ class HybridProxyStrategy:
         """Test WARP connection quickly."""
         try:
             import requests
-            response = requests.get(
-                "https://httpbin.org/ip", 
-                proxies=proxy_config, 
-                timeout=5  # Быстрый тест
-            )
-            return response.status_code == 200
-        except Exception:
+            
+            # Список сервисов для тестирования
+            test_urls = [
+                "https://httpbin.org/ip",
+                "https://api.ipify.org?format=json",
+                "https://ipinfo.io/json"
+            ]
+            
+            for url in test_urls:
+                try:
+                    response = requests.get(
+                        url, 
+                        proxies=proxy_config, 
+                        timeout=3  # Быстрый тест
+                    )
+                    if response.status_code == 200:
+                        logger.debug(f"✅ WARP connection test passed with {url}")
+                        return True
+                except Exception as e:
+                    logger.debug(f"❌ WARP test failed with {url}: {e}")
+                    continue
+            
+            logger.debug("❌ All WARP connection tests failed")
+            return False
+            
+        except Exception as e:
+            logger.debug(f"❌ WARP connection test error: {e}")
             return False
     
     def get_connection(self) -> Union[Proxy, Dict]:
@@ -306,10 +326,15 @@ class HybridProxyStrategy:
                     if self._test_warp_connection(proxy_config):
                         self.connection_type = 'warp'
                         self.current_connection = proxy_config
-                        logger.info("🌐 Using WARP connection")
+                        logger.info("🌐 Using WARP connection (tested)")
                         return proxy_config
                     else:
-                        logger.warning("⚠️ WARP connection test failed, trying alternatives")
+                        # Если тест не прошел, все равно попробуем использовать WARP
+                        logger.warning("⚠️ WARP connection test failed, but trying WARP anyway")
+                        self.connection_type = 'warp'
+                        self.current_connection = proxy_config
+                        logger.info("🌐 Using WARP connection (untested)")
+                        return proxy_config
             except Exception as e:
                 logger.warning(f"⚠️ WARP connection error: {e}, trying alternatives")
         
