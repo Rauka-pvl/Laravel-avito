@@ -179,6 +179,54 @@ def test_data_manager():
         print(f"❌ Data manager test error: {e}")
         return False
 
+def test_firefox_browser():
+    """Test Firefox browser creation and proxy integration."""
+    print("🧪 Testing Firefox browser manager...")
+    
+    try:
+        from modules.browser_manager import BrowserFactory, DisposableBrowserPool
+        
+        # Test Firefox browser creation
+        print("  🔥 Testing Firefox browser creation...")
+        driver = BrowserFactory.create_stealth_browser(headless=True)
+        
+        if driver:
+            print("  ✅ Firefox browser created successfully")
+            
+            # Test basic functionality
+            driver.get("https://httpbin.org/ip")
+            title = driver.title
+            print(f"  ✅ Firefox navigation test passed: {title}")
+            
+            driver.quit()
+            print("  ✅ Firefox browser disposed successfully")
+        else:
+            print("  ❌ Firefox browser creation failed")
+            return False
+        
+        # Test browser pool
+        print("  🏊 Testing Firefox browser pool...")
+        pool = DisposableBrowserPool(max_sessions=2)
+        
+        session1 = pool.get_browser()
+        if session1:
+            print("  ✅ Firefox session 1 created")
+            session1.dispose()
+        
+        session2 = pool.get_browser()
+        if session2:
+            print("  ✅ Firefox session 2 created")
+            session2.dispose()
+        
+        pool.cleanup_all()
+        print("  ✅ Firefox browser pool test passed")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Firefox browser test error: {e}")
+        return False
+
 def main():
     """Run all tests."""
     print("🚀 Starting modular Trast parser tests...\n")
@@ -188,7 +236,8 @@ def main():
         test_config,
         test_proxy_manager,
         test_adaptive_learning,
-        test_data_manager
+        test_data_manager,
+        test_firefox_browser
     ]
     
     passed = 0
