@@ -142,9 +142,19 @@ class WARPManager:
         if not self.is_available():
             return None
             
-        # Test available proxy ports
+        # Сначала попробуем стандартный порт 40000
+        default_proxy = "socks5://127.0.0.1:40000"
+        if self._test_proxy_port(default_proxy):
+            self.current_proxy = default_proxy
+            logger.info(f"🔗 Using WARP proxy: {default_proxy}")
+            return {
+                'http': default_proxy,
+                'https': default_proxy
+            }
+        
+        # Если стандартный порт не работает, тестируем альтернативные
         for proxy_url in self.proxy_urls:
-            if self._test_proxy_port(proxy_url):
+            if proxy_url != default_proxy and self._test_proxy_port(proxy_url):
                 self.current_proxy = proxy_url
                 logger.info(f"🔗 Using WARP proxy: {proxy_url}")
                 return {
@@ -152,8 +162,13 @@ class WARPManager:
                     'https': proxy_url
                 }
         
-        logger.warning("⚠️ No working WARP proxy ports found")
-        return None
+        # Если ничего не работает, попробуем использовать стандартный порт без тестирования
+        logger.warning("⚠️ No working WARP proxy ports found, using default port 40000")
+        self.current_proxy = default_proxy
+        return {
+            'http': default_proxy,
+            'https': default_proxy
+        }
     
     def _test_proxy_port(self, proxy_url: str) -> bool:
         """Test if a proxy port is working."""
@@ -167,18 +182,30 @@ class WARPManager:
                 'https': proxy_url
             }
             
-            response = requests.get(
-                "https://httpbin.org/ip", 
-                proxies=proxies, 
-                timeout=5
-            )
+            # Попробуем несколько сервисов для тестирования
+            test_urls = [
+                "https://httpbin.org/ip",
+                "https://api.ipify.org?format=json",
+                "https://ipinfo.io/json"
+            ]
             
-            if response.status_code == 200:
-                logger.debug(f"✅ WARP proxy port {port} is working")
-                return True
-            else:
-                logger.debug(f"❌ WARP proxy port {port} failed: {response.status_code}")
-                return False
+            for test_url in test_urls:
+                try:
+                    response = requests.get(
+                        test_url, 
+                        proxies=proxies, 
+                        timeout=3  # Уменьшили таймаут
+                    )
+                    
+                    if response.status_code == 200:
+                        logger.debug(f"✅ WARP proxy port {port} is working")
+                        return True
+                        
+                except Exception:
+                    continue
+            
+            logger.debug(f"❌ WARP proxy port {port} failed all tests")
+            return False
                 
         except Exception as e:
             logger.debug(f"❌ WARP proxy port test failed: {e}")
