@@ -8,6 +8,9 @@ import shutil
 import threading
 import subprocess
 import traceback
+import json
+import glob
+import pickle
 from time import sleep
 from datetime import datetime
 from bs4 import BeautifulSoup
@@ -18,14 +21,10 @@ from openpyxl import Workbook, load_workbook
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.firefox.options import Options as FirefoxOptions
-from selenium.webdriver.firefox.service import Service as FirefoxService
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
-from webdriver_manager.firefox import GeckoDriverManager
-import sys
 import csv
 from bz_telebot.database_manager import set_script_start, set_script_end
 
@@ -34,6 +33,14 @@ from notification.main import TelegramNotifier
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "avito")))
 from config import COMBINED_XML, LOG_DIR, BASE_DIR
+
+# Все пути относительно папки trast
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROXIES_FILE_JSON = os.path.join(SCRIPT_DIR, 'proxies (1).json')
+PROXIES_FILE_TXT = os.path.join(SCRIPT_DIR, '68f0af05c9bf6.txt')
+SESSION_COOKIES_FILE = os.path.join(SCRIPT_DIR, 'trast_session.pkl')
+BACKUP_DIR = os.path.join(SCRIPT_DIR, 'backups')
+os.makedirs(BACKUP_DIR, exist_ok=True)
 
 LOG_DIR = os.path.join(BASE_DIR, "..", "..", "storage", "app", "public", "output", "logs-trast")
 OUTPUT_FILE = os.path.join(LOG_DIR, "..", "trast.xlsx")
@@ -54,6 +61,235 @@ logging.basicConfig(
 )
 
 total_products = 0
+
+# Загрузка прокси из обоих файлов
+def load_proxies_from_json():
+    """Загружает прокси из JSON файла"""
+    try:
+        with open(PROXIES_FILE_JSON, 'r', encoding='utf-8') as f:
+            proxies_data = json.load(f)
+            proxies = [f"{p['ip_address']}:{p['port']}" for p in proxies_data]
+            logger.info(f"Загружено {len(proxies)} прокси из JSON файла")
+            return proxies
+    except Exception as e:
+        logger.error(f"Ошибка загрузки JSON прокси: {e}")
+        return []
+
+def load_proxies_from_txt():
+    """Загружает прокси из TXT файла"""
+    try:
+        proxies = []
+        with open(PROXIES_FILE_TXT, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line and ':' in line:
+                    proxies.append(line)
+        logger.info(f"Загружено {len(proxies)} прокси из TXT файла")
+        return proxies
+    except Exception as e:
+        logger.error(f"Ошибка загрузки TXT прокси: {e}")
+        return []
+
+def load_all_proxies():
+    """Загружает прокси из всех доступных файлов"""
+    json_proxies = load_proxies_from_json()
+    txt_proxies = load_proxies_from_txt()
+    
+    all_proxies = json_proxies + txt_proxies
+    logger.info(f"Всего загружено {len(all_proxies)} прокси")
+    return all_proxies
+
+PROXY_LIST = load_all_proxies()
+
+# Умная ротация прокси
+current_proxy_index = 0
+failed_proxies = set()
+proxy_success_count = {}
+
+def get_next_working_proxy():
+    global current_proxy_index
+    attempts = 0
+    max_attempts = min(50, len(PROXY_LIST))
+    
+    while attempts < max_attempts:
+        proxy = PROXY_LIST[current_proxy_index]
+        current_proxy_index = (current_proxy_index + 1) % len(PROXY_LIST)
+        
+        if proxy in failed_proxies:
+            attempts += 1
+            continue
+        
+        success, protocol = test_proxy_quick(proxy)
+        if success:
+            logger.info(f"Используем прокси: {proxy} (протокол: {protocol})")
+            return proxy, protocol
+        else:
+            failed_proxies.add(proxy)
+            attempts += 1
+    
+    logger.warning("Рабочие прокси не найдены, прямое подключение")
+    return None, None
+
+def mark_proxy_success(proxy):
+    if proxy:
+        proxy_success_count[proxy] = proxy_success_count.get(proxy, 0) + 1
+        if proxy in failed_proxies and proxy_success_count[proxy] > 3:
+            failed_proxies.remove(proxy)
+
+def mark_proxy_failure(proxy):
+    if proxy:
+        failed_proxies.add(proxy)
+        if proxy in proxy_success_count:
+            del proxy_success_count[proxy]
+
+def test_proxy_quick(proxy, timeout=5):
+    """Тестирует прокси с автоматическим определением протокола"""
+    protocols = ['http', 'https', 'socks4', 'socks5']
+    
+    for protocol in protocols:
+        try:
+            if protocol.startswith('socks'):
+                # Для SOCKS прокси используем специальный формат
+                proxy_url = f"{protocol}://{proxy}"
+            else:
+                proxy_url = f"{protocol}://{proxy}"
+            
+            proxies = {
+                'http': proxy_url,
+                'https': proxy_url
+            }
+            
+            response = requests.get(
+                'https://httpbin.org/ip', 
+                proxies=proxies, 
+                timeout=timeout,
+                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+            )
+            
+            if response.status_code == 200:
+                logger.debug(f"Прокси {proxy} работает с протоколом {protocol}")
+                return True, protocol
+                
+        except Exception as e:
+            logger.debug(f"Прокси {proxy} не работает с {protocol}: {e}")
+            continue
+    
+    return False, None
+
+# Продвинутая ротация User-Agent
+USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/134.0.0.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/134.0.0.0',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/134.0.0.0',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Firefox/122.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605.1.15'
+]
+
+def get_random_user_agent():
+    return random.choice(USER_AGENTS)
+
+# Сохранение куков между сессиями
+def save_session_cookies(driver):
+    try:
+        cookies = driver.get_cookies()
+        with open(SESSION_COOKIES_FILE, 'wb') as f:
+            pickle.dump(cookies, f)
+        logger.debug("Куки сохранены в trast/")
+    except Exception as e:
+        logger.error(f"Ошибка сохранения куков: {e}")
+
+def load_session_cookies(driver):
+    try:
+        if os.path.exists(SESSION_COOKIES_FILE):
+            with open(SESSION_COOKIES_FILE, 'rb') as f:
+                cookies = pickle.load(f)
+            driver.get("https://trast-zapchast.ru/")
+            for cookie in cookies:
+                try:
+                    driver.add_cookie(cookie)
+                except:
+                    pass
+            logger.debug("Куки загружены из trast/")
+    except Exception as e:
+        logger.error(f"Ошибка загрузки куков: {e}")
+
+# Stealth драйвер с прокси
+def create_stealth_driver(proxy=None, protocol=None):
+    options = Options()
+    options.add_argument("--headless")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-gpu")
+    
+    if proxy and protocol:
+        if protocol.startswith('socks'):
+            options.add_argument(f"--proxy-server={protocol}://{proxy}")
+        else:
+            options.add_argument(f"--proxy-server={protocol}://{proxy}")
+        logger.info(f"Настроен прокси: {protocol}://{proxy}")
+    
+    user_agent = get_random_user_agent()
+    options.add_argument(f"user-agent={user_agent}")
+    
+    width = random.randint(1366, 1920)
+    height = random.randint(768, 1080)
+    options.add_argument(f"--window-size={width},{height}")
+    
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option('useAutomationExtension', False)
+    
+    options.add_argument("--disable-images")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-extensions")
+    
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    
+    driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+        "source": """
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+            Object.defineProperty(navigator, 'languages', {get: () => ['ru-RU', 'ru', 'en']});
+            window.chrome = {runtime: {}};
+        """
+    })
+    
+    return driver
+
+# Умная система задержек
+def smart_delay(page_num, had_error=False):
+    if had_error:
+        delay = random.uniform(15, 30)
+    elif page_num % 10 == 0:
+        delay = random.uniform(10, 20)
+    else:
+        delay = random.uniform(5, 10)
+    
+    logger.debug(f"Задержка {delay:.1f}с перед следующим запросом")
+    time.sleep(delay)
+
+# Механизм повторных попыток
+def fetch_page_with_retry(driver, url, current_proxy, max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            driver.get(url)
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "div.product.product-plate"))
+            )
+            mark_proxy_success(current_proxy)
+            return True, driver, current_proxy
+        except Exception as e:
+            wait_time = (2 ** attempt) * 5
+            logger.warning(f"Попытка {attempt+1}/{max_retries} неудачна, ждем {wait_time}с")
+            time.sleep(wait_time)
+            
+            if attempt < max_retries - 1:
+                mark_proxy_failure(current_proxy)
+                driver.quit()
+                new_proxy, new_protocol = get_next_working_proxy()
+                driver = create_stealth_driver(new_proxy, new_protocol)
+                current_proxy = new_proxy
+    
+    return False, driver, current_proxy
 
 def create_new_excel(path):
     if os.path.exists(path):
@@ -105,6 +341,94 @@ def append_to_csv(path, product_list):
     except Exception as e:
         logger.error(f"Error writing to CSV: {e}")
 
+# Система умных бэкапов
+def create_backup_with_metadata(excel_file, csv_file, product_count, pages_processed):
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    
+    backup_excel = os.path.join(BACKUP_DIR, f"trast_backup_{timestamp}.xlsx")
+    backup_csv = os.path.join(BACKUP_DIR, f"trast_backup_{timestamp}.csv")
+    
+    if os.path.exists(excel_file):
+        shutil.copy2(excel_file, backup_excel)
+    if os.path.exists(csv_file):
+        shutil.copy2(csv_file, backup_csv)
+    
+    metadata = {
+        'timestamp': timestamp,
+        'product_count': product_count,
+        'pages_processed': pages_processed,
+        'excel_file': backup_excel,
+        'csv_file': backup_csv,
+        'excel_size': os.path.getsize(backup_excel) if os.path.exists(backup_excel) else 0,
+        'csv_size': os.path.getsize(backup_csv) if os.path.exists(backup_csv) else 0
+    }
+    
+    metadata_file = os.path.join(BACKUP_DIR, f"metadata_{timestamp}.json")
+    with open(metadata_file, 'w', encoding='utf-8') as f:
+        json.dump(metadata, f, indent=2, ensure_ascii=False)
+    
+    logger.info(f"Бэкап создан в trast/backups/: {product_count} товаров")
+    return metadata
+
+def get_best_backup():
+    metadata_files = glob.glob(os.path.join(BACKUP_DIR, "metadata_*.json"))
+    
+    if not metadata_files:
+        return None
+    
+    best_backup = None
+    max_products = 0
+    
+    for meta_file in metadata_files:
+        try:
+            with open(meta_file, 'r', encoding='utf-8') as f:
+                metadata = json.load(f)
+                if metadata['product_count'] > max_products:
+                    max_products = metadata['product_count']
+                    best_backup = metadata
+        except Exception as e:
+            logger.error(f"Ошибка чтения метаданных: {e}")
+    
+    return best_backup
+
+def smart_restore(current_product_count, threshold_percent=80):
+    best_backup = get_best_backup()
+    
+    if not best_backup:
+        logger.info("Нет бэкапов для сравнения")
+        return False
+    
+    best_count = best_backup['product_count']
+    threshold = best_count * (threshold_percent / 100)
+    
+    logger.info(f"Сравнение: Текущий={current_product_count}, Лучший={best_count}, Порог={threshold:.0f}")
+    
+    if current_product_count < threshold:
+        logger.warning(f"Текущий результат ниже порога, восстановление...")
+        
+        if os.path.exists(best_backup['excel_file']):
+            shutil.copy2(best_backup['excel_file'], OUTPUT_FILE)
+            logger.info(f"Excel восстановлен из trast/backups/")
+        
+        if os.path.exists(best_backup['csv_file']):
+            shutil.copy2(best_backup['csv_file'], CSV_FILE)
+            logger.info(f"CSV восстановлен из trast/backups/")
+        
+        TelegramNotifier.notify(
+            f"⚠️ Trast: Автовосстановление\n"
+            f"Текущий: {current_product_count}\n"
+            f"Восстановлен: {best_count} ({best_backup['timestamp']})"
+        )
+        
+        return True
+    else:
+        logger.info("Текущий результат приемлем")
+        return False
+
+def incremental_backup(session_num, total_collected, pages_processed):
+    logger.info(f"Инкрементный бэкап после сессии {session_num}")
+    create_backup_with_metadata(OUTPUT_FILE, CSV_FILE, total_collected, pages_processed)
+
 def check_site_protection(url="https://trast-zapchast.ru/shop/"):
     """Проверяем защиту сайта через HTTP заголовки"""
     try:
@@ -152,404 +476,42 @@ def check_site_protection(url="https://trast-zapchast.ru/shop/"):
         logger.error(f"Error checking site protection: {e}")
         return False
 
-# Proxy servers from Chrome extension
-PROXY_SERVERS = [
-    # Trafflink VPN servers
-    "vpn-uk1.trafflink.xyz:443",
-    "vpn-uk2.trafflink.xyz:443", 
-    "vpn-uk3.trafflink.xyz:443",
-    "vpn-de1.trafflink.xyz:443",
-    "vpn-de2.trafflink.xyz:443",
-    "vpn-nl1.trafflink.xyz:443",
-    "vpn-nl2.trafflink.xyz:443",
-    "vpn-ca1.trafflink.xyz:443",
-    "vpn-ca2.trafflink.xyz:443",
-    
-    # Trafcfy servers
-    "uk22.trafcfy.com:437",
-    "uk23.trafcfy.com:437",
-    "uk24.trafcfy.com:437",
-    "nl41.trafcfy.com:437",
-    "nl42.trafcfy.com:437",
-    "nl43.trafcfy.com:437",
-    "us21.trafcfy.com:437",
-    "us22.trafcfy.com:437",
-    "us23.trafcfy.com:437",
-    
-    # HTTP proxies
-    "212.113.123.246:42681",
-    "194.87.201.123:24645",
-    "92.53.127.107:27807",
-    "79.137.133.95:40764",
-    "176.124.217.180:12048",
-    
-    # Public proxies (for testing)
-    "8.210.83.33:80",
-    "47.74.152.29:8888",
-    "47.88.3.19:8080",
-    "103.152.112.145:80",
-    "103.152.112.162:80",
-    "185.162.251.76:80",
-    "185.162.251.77:80",
-    "185.162.251.78:80",
-]
-
-# Tor configuration
-TOR_SOCKS_PORT = 9050
-TOR_CONTROL_PORT = 9051
-TOR_PROCESS = None
-
-def start_tor():
-    """Запустить Tor процесс"""
-    global TOR_PROCESS
-    
+# Оптимизация: попытка получить все данные за один запрос
+def try_bulk_data_fetch(driver):
+    """Пытается получить все данные за один запрос через API или специальные параметры"""
     try:
-        # Проверяем, не запущен ли уже Tor
-        if check_tor_connection():
-            logger.info("✅ Tor already running")
-            return True
-            
-        logger.info("Starting Tor process...")
+        # Попробуем разные варианты bulk запросов
+        bulk_urls = [
+            "https://trast-zapchast.ru/shop/?per_page=9999",  # Все товары на одной странице
+            "https://trast-zapchast.ru/shop/?posts_per_page=9999",
+            "https://trast-zapchast.ru/shop/?limit=9999",
+            "https://trast-zapchast.ru/shop/?show_all=1",
+            "https://trast-zapchast.ru/shop/?all_products=1"
+        ]
         
-        # Запускаем Tor в фоновом режиме
-        TOR_PROCESS = subprocess.Popen([
-            'tor',
-            '--SOCKSPort', str(TOR_SOCKS_PORT),
-            '--ControlPort', str(TOR_CONTROL_PORT),
-            '--DataDirectory', '/tmp/tor_data',
-            '--CookieAuthentication', '1',
-            '--CookieAuthFile', '/tmp/tor_cookie'
-        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        
-        # Ждем запуска Tor
-        for i in range(30):  # 30 секунд максимум
-            if check_tor_connection():
-                logger.info("✅ Tor started successfully")
-                return True
-            time.sleep(1)
-            
-        logger.error("❌ Failed to start Tor")
-        return False
-        
-    except Exception as e:
-        logger.error(f"Error starting Tor: {e}")
-        return False
-
-def stop_tor():
-    """Остановить Tor процесс"""
-    global TOR_PROCESS
-    
-    if TOR_PROCESS:
-        try:
-            TOR_PROCESS.terminate()
-            TOR_PROCESS.wait(timeout=10)
-            logger.info("✅ Tor stopped")
-        except Exception as e:
-            logger.error(f"Error stopping Tor: {e}")
-            TOR_PROCESS.kill()
-        finally:
-            TOR_PROCESS = None
-
-def check_tor_connection():
-    """Проверить доступность Tor"""
-    try:
-        # Сначала проверяем, что порт открыт
-        import socket
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(5)
-        result = sock.connect_ex(('127.0.0.1', TOR_SOCKS_PORT))
-        sock.close()
-        
-        if result != 0:
-            logger.debug(f"Tor port {TOR_SOCKS_PORT} not accessible")
-            return False
-            
-        # Теперь проверяем через curl (более надежно)
-        import subprocess
-        try:
-            result = subprocess.run([
-                'curl', '--socks5', f'127.0.0.1:{TOR_SOCKS_PORT}',
-                '--connect-timeout', '10',
-                '--max-time', '15',
-                '-s', 'https://httpbin.org/ip'
-            ], capture_output=True, text=True, timeout=20)
-            
-            if result.returncode == 0 and result.stdout:
-                logger.info("✅ Tor connection verified")
-                return True
-            else:
-                logger.debug(f"Tor curl test failed: {result.stderr}")
-                return False
+        for bulk_url in bulk_urls:
+            try:
+                logger.info(f"Пробуем bulk запрос: {bulk_url}")
+                driver.get(bulk_url)
+                time.sleep(5)  # Даем время на загрузку
                 
-        except Exception as curl_e:
-            logger.debug(f"Tor curl test error: {curl_e}")
-            return False
-            
-    except Exception as e:
-        logger.debug(f"Tor connection check failed: {e}")
+                soup = BeautifulSoup(driver.page_source, 'html.parser')
+                products = get_products_from_page_soup(soup)
+                
+                if len(products) > 100:  # Если получили много товаров
+                    logger.info(f"✅ Bulk запрос успешен! Получено {len(products)} товаров")
+                    return products
+                    
+            except Exception as e:
+                logger.debug(f"Bulk запрос {bulk_url} не сработал: {e}")
+                continue
         
-    return False
-
-def create_chrome_with_tor():
-    """Создать Chrome драйвер с Tor"""
-    try:
-        options = Options()
-        
-        # Основные настройки
-        options.add_argument("--headless")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-gpu")
-        
-        # Anti-detection для Chrome
-        options.add_argument("--disable-blink-features=AutomationControlled")
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        options.add_experimental_option('useAutomationExtension', False)
-        options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36")
-        options.add_argument(f"--window-size={random.randint(1200, 1920)},{random.randint(900, 1080)}")
-        
-        # Tor proxy настройки для Chrome
-        options.add_argument(f"--proxy-server=socks5://127.0.0.1:{TOR_SOCKS_PORT}")
-        
-        # Дополнительные anti-detection меры
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-extensions")
-        options.add_argument("--disable-plugins")
-        options.add_argument("--disable-images")
-        options.add_argument("--disable-web-security")
-        options.add_argument("--disable-features=VizDisplayCompositor")
-        options.add_argument("--memory-pressure-off")
-        options.add_argument("--max_old_space_size=2048")
-        options.add_argument("--disable-background-timer-throttling")
-        options.add_argument("--disable-backgrounding-occluded-windows")
-        options.add_argument("--disable-renderer-backgrounding")
-        options.add_argument("--disable-background-networking")
-        options.add_argument("--aggressive-cache-discard")
-        
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=options)
-        
-        # Дополнительные anti-detection меры
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        driver.execute_script("Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})")
-        driver.execute_script("Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']})")
-        
-        logger.info("✅ Chrome with Tor created successfully")
-        return driver
-        
-    except Exception as e:
-        logger.error(f"Error creating Chrome with Tor: {e}")
-        logger.info("Chrome with Tor failed, will use Chrome with proxies instead")
+        logger.info("Bulk запросы не сработали, используем обычный парсинг")
         return None
-
-def test_proxy_connection(proxy):
-    """Тестируем подключение через прокси с разными протоколами"""
-    protocols = ['http', 'https', 'socks5']
-    
-    for protocol in protocols:
-        try:
-            proxies = {
-                'https': f'{protocol}://{proxy}',
-                'http': f'{protocol}://{proxy}'
-            }
-            
-            response = requests.get(
-                'https://trast-zapchast.ru/shop/', 
-                proxies=proxies, 
-                timeout=5,  # Уменьшаем таймаут для быстрого тестирования
-                headers={
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                }
-            )
-            
-            if response.status_code == 200:
-                return True
-                
-        except Exception:
-            continue
-    
-    return False
-
-def get_random_proxy():
-    """Получить случайный прокси сервер"""
-    return random.choice(PROXY_SERVERS)
-
-def test_all_proxies():
-    """Тестируем все прокси и возвращаем рабочие"""
-    logger.info("Testing proxies...")
-    working_proxies = []
-    
-    for proxy in PROXY_SERVERS:
-        if test_proxy_connection(proxy):
-            working_proxies.append(proxy)
-    
-    logger.info(f"Found {len(working_proxies)} working proxies out of {len(PROXY_SERVERS)}")
-    return working_proxies
-
-def get_working_proxy():
-    """Найти рабочий прокси сервер"""
-    for proxy in PROXY_SERVERS:
-        if test_proxy_connection(proxy):
-            logger.info(f"Using proxy: {proxy}")
-            return proxy
-    
-    logger.error("No working proxy found!")
-    return None
-
-def create_driver_with_proxy():
-    """Создать драйвер с рабочим прокси"""
-    proxy = get_working_proxy()
-    
-    options = Options()
-    options.add_argument("--headless")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-gpu")
-    
-    # Anti-detection
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option('useAutomationExtension', False)
-    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36")
-    options.add_argument(f"--window-size={random.randint(1200, 1920)},{random.randint(900, 1080)}")
-    
-    # Proxy configuration
-    if proxy:
-        logger.info(f"Using proxy: {proxy}")
-        options.add_argument(f"--proxy-server=https://{proxy}")
-    else:
-        logger.info("Using direct connection (no proxy)")
-        # Enhanced anti-detection for direct connection
-        options.add_argument("--disable-features=TranslateUI")
-        options.add_argument("--disable-ipc-flooding-protection")
-        options.add_argument("--disable-hang-monitor")
-        options.add_argument("--disable-prompt-on-repost")
-        options.add_argument("--disable-domain-reliability")
-        options.add_argument("--disable-component-extensions-with-background-pages")
-        options.add_argument("--disable-default-apps")
-        options.add_argument("--disable-sync")
-        options.add_argument("--disable-translate")
-        options.add_argument("--disable-logging")
-        options.add_argument("--disable-permissions-api")
-        options.add_argument("--disable-presentation-api")
-        options.add_argument("--disable-print-preview")
-        options.add_argument("--disable-speech-api")
-        options.add_argument("--hide-scrollbars")
-        options.add_argument("--mute-audio")
-        options.add_argument("--no-first-run")
-        options.add_argument("--no-default-browser-check")
-        options.add_argument("--no-pings")
-        options.add_argument("--no-zygote")
-        options.add_argument("--single-process")
-    
-    # Additional anti-detection measures + speed optimizations
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-extensions")
-    options.add_argument("--disable-plugins")
-    options.add_argument("--disable-images")  # Faster loading, less memory
-    options.add_argument("--disable-web-security")  # Reduce overhead
-    options.add_argument("--disable-features=VizDisplayCompositor")  # Reduce GPU usage
-    options.add_argument("--memory-pressure-off")  # Disable memory pressure
-    options.add_argument("--max_old_space_size=2048")  # Limit memory usage
-    options.add_argument("--disable-background-timer-throttling")  # Speed up timers
-    options.add_argument("--disable-backgrounding-occluded-windows")  # Speed up rendering
-    options.add_argument("--disable-renderer-backgrounding")  # Speed up rendering
-    options.add_argument("--disable-background-networking")  # Reduce network overhead
-    options.add_argument("--aggressive-cache-discard")  # More aggressive caching
-    
-    # Additional anti-blocking measures
-    options.add_argument("--disable-features=TranslateUI")
-    options.add_argument("--disable-ipc-flooding-protection")
-    options.add_argument("--disable-hang-monitor")
-    options.add_argument("--disable-prompt-on-repost")
-    options.add_argument("--disable-domain-reliability")
-    options.add_argument("--disable-component-extensions-with-background-pages")
-    options.add_argument("--disable-default-apps")
-    options.add_argument("--disable-sync")
-    options.add_argument("--disable-translate")
-    options.add_argument("--hide-scrollbars")
-    options.add_argument("--mute-audio")
-    options.add_argument("--no-first-run")
-    options.add_argument("--no-default-browser-check")
-    options.add_argument("--disable-logging")
-    options.add_argument("--disable-permissions-api")
-    options.add_argument("--disable-presentation-api")
-    options.add_argument("--disable-print-preview")
-    options.add_argument("--disable-speech-api")
-    options.add_argument("--disable-file-system")
-    options.add_argument("--disable-notifications")
-    
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-    
-    # Remove webdriver flag and other detection vectors
-    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-    driver.execute_script("Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})")
-    driver.execute_script("Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']})")
-    
-    return driver, proxy
-
-def create_driver(use_proxy=True):
-    options = Options()
-    options.add_argument("--headless")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-gpu")
-    
-    # Anti-detection
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option('useAutomationExtension', False)
-    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36")
-    options.add_argument(f"--window-size={random.randint(1200, 1920)},{random.randint(900, 1080)}")
-    
-    # Proxy configuration
-    if use_proxy:
-        proxy = get_random_proxy()
-        logger.info(f"Using proxy: {proxy}")
-        options.add_argument(f"--proxy-server=https://{proxy}")
-    
-    # Additional anti-detection measures + speed optimizations
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-extensions")
-    options.add_argument("--disable-plugins")
-    options.add_argument("--disable-images")  # Faster loading, less memory
-    options.add_argument("--disable-web-security")  # Reduce overhead
-    options.add_argument("--disable-features=VizDisplayCompositor")  # Reduce GPU usage
-    options.add_argument("--memory-pressure-off")  # Disable memory pressure
-    options.add_argument("--max_old_space_size=2048")  # Limit memory usage
-    options.add_argument("--disable-background-timer-throttling")  # Speed up timers
-    options.add_argument("--disable-backgrounding-occluded-windows")  # Speed up rendering
-    options.add_argument("--disable-renderer-backgrounding")  # Speed up rendering
-    options.add_argument("--disable-background-networking")  # Reduce network overhead
-    options.add_argument("--aggressive-cache-discard")  # More aggressive caching
-    
-    # Additional anti-blocking measures
-    options.add_argument("--disable-features=TranslateUI")
-    options.add_argument("--disable-ipc-flooding-protection")
-    options.add_argument("--disable-hang-monitor")
-    options.add_argument("--disable-prompt-on-repost")
-    options.add_argument("--disable-domain-reliability")
-    options.add_argument("--disable-component-extensions-with-background-pages")
-    options.add_argument("--disable-default-apps")
-    options.add_argument("--disable-sync")
-    options.add_argument("--disable-translate")
-    options.add_argument("--hide-scrollbars")
-    options.add_argument("--mute-audio")
-    options.add_argument("--no-first-run")
-    options.add_argument("--no-default-browser-check")
-    options.add_argument("--disable-logging")
-    options.add_argument("--disable-permissions-api")
-    options.add_argument("--disable-presentation-api")
-    options.add_argument("--disable-print-preview")
-    options.add_argument("--disable-speech-api")
-    options.add_argument("--disable-file-system")
-    options.add_argument("--disable-notifications")
-    
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-    
-    # Remove webdriver flag and other detection vectors
-    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-    driver.execute_script("Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})")
-    driver.execute_script("Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']})")
-    
-    return driver
+        
+    except Exception as e:
+        logger.error(f"Ошибка в bulk запросе: {e}")
+        return None
 
 def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
     # Try to access main page first to establish session
@@ -625,24 +587,10 @@ def producer():
     thread_name = "MainThread"
     logger.info(f"[{thread_name}] Starting producer")
     
-    # Try Tor + Chrome first
-    logger.info("=== TOR + CHROME MODE ===")
-    if check_tor_connection():
-        logger.info("✅ Tor is available, creating Chrome driver...")
-        driver = create_chrome_with_tor()
-        
-        if driver:
-            logger.info("✅ Chrome with Tor created successfully")
-            use_tor = True
-            current_proxy = "Tor (SOCKS5)"
-        else:
-            logger.warning("❌ Failed to create Chrome with Tor, falling back to Chrome with proxies")
-            driver, current_proxy = create_driver_with_proxy()
-            use_tor = False
-    else:
-        logger.warning("❌ Tor not available, using Chrome with proxies")
-        driver, current_proxy = create_driver_with_proxy()
-        use_tor = False
+    logger.info("=== STEALTH MODE (прокси + анти-детект) ===")
+    current_proxy, current_protocol = get_next_working_proxy()
+    driver = create_stealth_driver(current_proxy, current_protocol)
+    load_session_cookies(driver)
     
     total_collected = 0
     proxy_failures = 0
@@ -650,132 +598,109 @@ def producer():
     
     # Early exit optimization
     empty_pages_count = 0
-    max_empty_pages = 3  # Stop after 3 consecutive empty pages
+    max_empty_pages = 10  # Увеличили с 3 до 10
     last_productive_page = 0
     
+    # Детекция разреженных страниц
+    sparse_threshold = 5
+    consecutive_sparse = 0
+    max_consecutive_sparse = 20
+    
     try:
-        total_pages = get_pages_count_with_driver(driver)
-        logger.info(f"Total pages detected: {total_pages}")
+        # Сначала попробуем получить все данные за один запрос
+        logger.info(f"[{thread_name}] Пробуем bulk запрос для получения всех данных...")
+        bulk_products = try_bulk_data_fetch(driver)
         
-        # Rate limiting protection: optimized for 10-hour completion
-        pages_per_session = 20  # Increased from 5 to process more pages per session
+        if bulk_products and len(bulk_products) > 100:
+            logger.info(f"[{thread_name}] ✅ Bulk запрос успешен! Получено {len(bulk_products)} товаров")
+            append_to_excel(OUTPUT_FILE, bulk_products)
+            append_to_csv(CSV_FILE, bulk_products)
+            total_collected = len(bulk_products)
+            logger.info(f"[{thread_name}] Все товары получены за один запрос!")
+            return total_collected
+        
+        # Если bulk не сработал, используем обычный парсинг
+        logger.info(f"[{thread_name}] Bulk запрос не сработал, переходим к обычному парсингу...")
+        total_pages = get_pages_count_with_driver(driver)
+        logger.info(f"[{thread_name}] Total pages to parse: {total_pages}")
+        
+        # Session-based parsing for rate limiting
+        pages_per_session = 20  # Увеличили для оптимизации
         sessions_needed = (total_pages + pages_per_session - 1) // pages_per_session
         
-        logger.info(f"Server specs: 2 cores, 4GB RAM - optimized for 10-hour completion")
-        logger.info(f"Estimated total products: ~{total_pages * 16}")
-        logger.info(f"Expected available products: ~{int(total_pages * 16 * 0.4)} (40% in stock)")
-        logger.info(f"Estimated total time: ~{sessions_needed * 0.5} hours (optimized)")
+        logger.info(f"[{thread_name}] Will parse in {sessions_needed} sessions of {pages_per_session} pages each")
         
         for session in range(sessions_needed):
-            start_page = session * pages_per_session + 1
-            end_page = min(start_page + pages_per_session - 1, total_pages)
+            session_start_page = session * pages_per_session + 1
+            session_end_page = min((session + 1) * pages_per_session, total_pages)
             
-            logger.info(f"[{thread_name}] Session {session + 1}/{sessions_needed}: pages {start_page}-{end_page}")
-            logger.info(f"[{thread_name}] Current proxy: {current_proxy}")
+            logger.info(f"[{thread_name}] Session {session + 1}/{sessions_needed}: pages {session_start_page}-{session_end_page}")
             
-            for page_num in range(start_page, end_page + 1):
-                page_url = f"https://trast-zapchast.ru/shop/?_paged={page_num}"
-                logger.info(f"[{thread_name}] Parsing page {page_num}/{total_pages}")
-                
+            for page_num in range(session_start_page, session_end_page + 1):
                 try:
-                    # Try to access main page first if this is the first page of a session
-                    if page_num == start_page:
-                        logger.info(f"[{thread_name}] Establishing session for page {page_num}")
-                        try:
-                            driver.get("https://trast-zapchast.ru/")
-                            time.sleep(2)
-                        except Exception as e:
-                            logger.warning(f"Error accessing main page: {e}")
+                    url = f"https://trast-zapchast.ru/shop/?_paged={page_num}"
+                    logger.info(f"[{thread_name}] Parsing page {page_num}/{total_pages}")
                     
-                    driver.get(page_url)
+                    # Используем механизм повторных попыток
+                    success, driver, current_proxy = fetch_page_with_retry(driver, url, current_proxy)
                     
-                    # Check if we got blocked
-                    if "blocked" in driver.page_source.lower() or "captcha" in driver.page_source.lower():
-                        logger.error(f"[{thread_name}] Page {page_num}: Blocked or CAPTCHA detected!")
+                    if not success:
+                        logger.error(f"[{thread_name}] Failed to load page {page_num} after retries")
                         proxy_failures += 1
-                        break
+                        continue
                     
-                    # Scroll to trigger lazy loading
-                    driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
-                    time.sleep(1)
-                    
-                    # Wait for products - optimized timeout
-                    try:
-                        WebDriverWait(driver, 10).until(  # Reduced from 15 to 10 seconds
-                            EC.presence_of_element_located((By.CSS_SELECTOR, "div.product.product-plate"))
-                        )
-                        time.sleep(2)  # Reduced from 3 to 2 seconds
-                    except Exception as e:
-                        logger.error(f"[{thread_name}] Page {page_num}: timeout - {e}")
-                        proxy_failures += 1
-                        with open(os.path.join(LOG_DIR, f"debug_page_{page_num}.html"), "w", encoding="utf-8") as f:
-                            f.write(driver.page_source)
-                    
-                    soup = BeautifulSoup(driver.page_source, "html.parser")
+                    # Парсим продукты
+                    soup = BeautifulSoup(driver.page_source, 'html.parser')
                     products = get_products_from_page_soup(soup)
                     
                     if products:
+                        logger.info(f"[{thread_name}] Page {page_num}: found {len(products)} products")
                         append_to_excel(OUTPUT_FILE, products)
                         append_to_csv(CSV_FILE, products)
-                        logger.info(f"[{thread_name}] Page {page_num}/{total_pages}: added {len(products)} products")
                         total_collected += len(products)
-                        proxy_failures = 0  # Reset failure counter on success
-                        
-                        # Reset empty pages counter on successful page
                         empty_pages_count = 0
                         last_productive_page = page_num
+                        
+                        # Сброс счетчика разреженных страниц
+                        if len(products) >= sparse_threshold:
+                            consecutive_sparse = 0
+                        else:
+                            consecutive_sparse += 1
                     else:
-                        logger.warning(f"[{thread_name}] Page {page_num}/{total_pages}: no products found")
-                        proxy_failures += 1
-                        
-                        # Track empty pages for early exit optimization
+                        logger.warning(f"[{thread_name}] Page {page_num}: no products found")
                         empty_pages_count += 1
-                        logger.info(f"[{thread_name}] Empty pages in a row: {empty_pages_count}/{max_empty_pages}")
-                        
-                        # Early exit if too many empty pages
-                        if empty_pages_count >= max_empty_pages:
-                            logger.info(f"[{thread_name}] 🛑 EARLY EXIT: {max_empty_pages} consecutive empty pages detected")
-                            logger.info(f"[{thread_name}] Last productive page: {last_productive_page}")
-                            logger.info(f"[{thread_name}] Stopping parsing to save time...")
-                            break
+                        consecutive_sparse += 1
                     
-                    # Progress logging every 10 pages
-                    if page_num % 10 == 0:
-                        progress_percent = (page_num / total_pages) * 100
-                        logger.info(f"[PROGRESS] {page_num}/{total_pages} pages ({progress_percent:.1f}%) - {total_collected} products collected")
+                    # Проверка на ранний выход
+                    if empty_pages_count >= max_empty_pages:
+                        logger.warning(f"[{thread_name}] Stopping early: {empty_pages_count} consecutive empty pages")
+                        break
                     
-                    # Random delay between pages (optimized for speed)
-                    time.sleep(random.uniform(3, 6))
+                    if consecutive_sparse >= max_consecutive_sparse:
+                        logger.warning(f"[{thread_name}] Stopping early: {consecutive_sparse} consecutive sparse pages")
+                        break
+                    
+                    # Умные задержки
+                    smart_delay(page_num, had_error=False)
+                    
+                    # Сохраняем куки каждые 50 страниц
+                    if page_num % 50 == 0:
+                        save_session_cookies(driver)
                     
                 except Exception as e:
-                    logger.error(f"[{thread_name}] Page {page_num}: Error - {e}")
+                    logger.error(f"[{thread_name}] Error on page {page_num}: {e}")
                     proxy_failures += 1
-                    # If we get blocked, break the session
-                    if "blocked" in str(e).lower() or "forbidden" in str(e).lower():
-                        logger.error(f"[{thread_name}] Session terminated due to blocking")
-                        break
-                
-                # Check if we need to switch proxy
-                if proxy_failures >= max_proxy_failures:
-                    logger.warning(f"[{thread_name}] Too many failures ({proxy_failures}), switching proxy...")
-                    driver.quit()
-                    # Try to recreate with Tor if available
-                    if check_tor_connection():
-                        logger.info("🔄 Recreating Chrome with Tor...")
-                        driver = create_chrome_with_tor()
-                        if driver:
-                            current_proxy = "Tor (SOCKS5)"
-                        else:
-                            driver, current_proxy = create_driver_with_proxy()
-                    else:
-                        driver, current_proxy = create_driver_with_proxy()
-                    proxy_failures = 0
-                    time.sleep(random.uniform(30, 60))  # Wait before continuing
-            
-            # Check if we had early exit from inner loop
-            if empty_pages_count >= max_empty_pages:
-                logger.info(f"[{thread_name}] 🛑 EARLY EXIT from session {session + 1}")
-                break
+                    smart_delay(page_num, had_error=True)
+                    
+                    # Check if we need to switch proxy
+                    if proxy_failures >= max_proxy_failures:
+                        logger.warning(f"[{thread_name}] Too many failures ({proxy_failures}), switching proxy...")
+                        driver.quit()
+                        logger.info("🔄 Recreating Chrome with new proxy...")
+                        current_proxy, current_protocol = get_next_working_proxy()
+                        driver = create_stealth_driver(current_proxy, current_protocol)
+                        proxy_failures = 0
+                        time.sleep(random.uniform(30, 60))  # Wait before continuing
             
             # Session break: restart driver to avoid rate limiting
             if session < sessions_needed - 1:  # Not the last session
@@ -785,36 +710,24 @@ def producer():
                 logger.info(f"[{thread_name}] Restarting driver to avoid rate limiting...")
                 driver.quit()
                 time.sleep(random.uniform(30, 60))  # Wait 30-60 seconds between sessions (optimized)
-                # Try to recreate with Tor if available
-                if check_tor_connection():
-                    logger.info("🔄 Recreating Chrome with Tor for new session...")
-                    driver = create_chrome_with_tor()
-                    if driver:
-                        current_proxy = "Tor (SOCKS5)"
-                    else:
-                        driver, current_proxy = create_driver_with_proxy()
-                else:
-                    driver, current_proxy = create_driver_with_proxy()
+                logger.info("🔄 Recreating Chrome with proxy for new session...")
+                current_proxy, current_protocol = get_next_working_proxy()
+                driver = create_stealth_driver(current_proxy, current_protocol)
                 
+                # Инкрементный бэкап после каждой сессии
+                incremental_backup(session + 1, total_collected, page_num)
+        
+        logger.info(f"[{thread_name}] Parsing completed. Total products collected: {total_collected}")
+        logger.info(f"[{thread_name}] Last productive page: {last_productive_page}")
+        logger.info(f"[{thread_name}] Empty pages count: {empty_pages_count}")
+        logger.info(f"[{thread_name}] Consecutive sparse pages: {consecutive_sparse}")
+        
     except Exception as e:
         logger.error(f"[{thread_name}] Critical error in producer: {e}")
         logger.error(f"[{thread_name}] Traceback: {traceback.format_exc()}")
         
     finally:
         driver.quit()
-        # Tor is managed by systemd service, no need to stop it
-    
-    logger.info(f"[{thread_name}] FINAL STATS:")
-    logger.info(f"[{thread_name}] Total pages processed: {total_pages}")
-    logger.info(f"[{thread_name}] Total products collected: {total_collected}")
-    logger.info(f"[{thread_name}] Average products per page: {total_collected/total_pages:.1f}")
-    
-    # Early exit statistics
-    if empty_pages_count >= max_empty_pages:
-        logger.info(f"[{thread_name}] 🎯 EARLY EXIT OPTIMIZATION:")
-        logger.info(f"[{thread_name}] Last productive page: {last_productive_page}")
-        logger.info(f"[{thread_name}] Empty pages before exit: {empty_pages_count}")
-        logger.info(f"[{thread_name}] Time saved by early exit: ~{(total_pages - last_productive_page) * 0.5:.1f} hours")
     
     return total_collected
 
@@ -835,51 +748,44 @@ if __name__ == "__main__":
     start_time = datetime.now()
     set_script_start(script_name)
 
-    # Try Tor first, then fallback to proxies
-    logger.info("=== CONNECTION TESTING PHASE ===")
-    
-    # Test Tor connection first
-    if check_tor_connection():
-        logger.info("✅ Tor is available")
-        TelegramNotifier.notify("✅ Using Tor + Chrome")
-    else:
-        logger.info("⚠️ Tor not available, testing proxies...")
-        working_proxies = test_all_proxies()
-        
-        if not working_proxies:
-            logger.warning("⚠️ No working proxies found, using direct connection...")
-            TelegramNotifier.notify("⚠️ Using direct connection (no proxies)")
-        else:
-            logger.info(f"✅ Found {len(working_proxies)} working proxies")
-            TelegramNotifier.notify("✅ Proxy connection established")
+    logger.info("=== ФАЗА ИНИЦИАЛИЗАЦИИ ===")
+    logger.info(f"Загружено {len(PROXY_LIST)} прокси")
+    logger.info(f"Бэкапы: {BACKUP_DIR}")
 
     create_new_excel(OUTPUT_FILE)
     create_new_csv(CSV_FILE)
 
     logger.info("Запуск парсинга в однопоточном режиме")
-    total_products = producer()  # 👈 теперь просто вызываем функцию
-
-    status = 'done'
-    try:
-        # Simple threshold - any products collected is success
-        if total_products > 0:
-            logger.info(f"✅ Собрано {total_products} товаров")
-            create_backup()
+    total_products = producer()
+    
+    # Создать финальный бэкап если есть товары
+    if total_products > 0:
+        create_backup_with_metadata(OUTPUT_FILE, CSV_FILE, total_products, 0)
+        
+        # Умное восстановление
+        if not smart_restore(total_products, threshold_percent=80):
+            logger.info("Текущий результат приемлем, восстановление не требуется")
+    
+    end_time = datetime.now()
+    duration = end_time - start_time
+    
+    logger.info(f"Парсинг завершен за {duration}")
+    logger.info(f"Всего товаров: {total_products}")
+    
+    if total_products > 0:
+        logger.info("✅ Парсинг успешен")
+        TelegramNotifier.notify(f"✅ Trast parsing completed\nТоваров: {total_products}\nВремя: {duration}")
+        set_script_end(script_name, "completed")
         else:
-            logger.critical(f"❗ Недостаточно данных: {total_products} товаров")
-            status = 'insufficient_data'
+        logger.error("❌ Недостаточно данных: 0 товаров")
+        TelegramNotifier.notify("❌ Trast parsing failed: 0 товаров")
+        set_script_end(script_name, "insufficient_data")
+        
+        # Попытка восстановления из бэкапа
             if os.path.exists(BACKUP_FILE):
                 shutil.copy2(BACKUP_FILE, OUTPUT_FILE)
                 logger.info("Excel восстановлен из бэкапа")
             if os.path.exists(BACKUP_CSV):
                 shutil.copy2(BACKUP_CSV, CSV_FILE)
                 logger.info("CSV восстановлен из бэкапа")
-    except Exception as e:
-        logger.exception(f"Ошибка при создании бэкапа: {e}")
-        status = 'error'
-
-    duration = (datetime.now() - start_time).total_seconds()
-    set_script_end(script_name, status=status)
-
-    logger.info(f"Завершено за {round(duration, 2)} секунд.")
     TelegramNotifier.notify(f"✅ Trast parsing completed. Total: {total_products} items")
