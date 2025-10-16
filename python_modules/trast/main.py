@@ -25,6 +25,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
+import undetected_chromedriver as uc
 import csv
 from bz_telebot.database_manager import set_script_start, set_script_end
 
@@ -109,23 +110,29 @@ proxy_success_count = {}
 def get_next_working_proxy():
     global current_proxy_index
     attempts = 0
-    max_attempts = min(50, len(PROXY_LIST))
+    max_attempts = min(200, len(PROXY_LIST))  # Увеличили с 50 до 200
     
-    while attempts < max_attempts:
-        proxy = PROXY_LIST[current_proxy_index]
-        current_proxy_index = (current_proxy_index + 1) % len(PROXY_LIST)
+    # Случайная выборка для лучшего покрытия
+    random_indices = random.sample(range(len(PROXY_LIST)), min(200, len(PROXY_LIST)))
+    
+    for idx in random_indices:
+        proxy = PROXY_LIST[idx]
         
         if proxy in failed_proxies:
             attempts += 1
             continue
         
+        logger.info(f"Проверяем прокси {attempts+1}/{max_attempts}: {proxy}")
         success, protocol = test_proxy_quick(proxy)
         if success:
-            logger.info(f"Используем прокси: {proxy} (протокол: {protocol})")
+            logger.info(f"✅ Используем прокси: {proxy} (протокол: {protocol})")
             return proxy, protocol
         else:
             failed_proxies.add(proxy)
             attempts += 1
+            
+        if attempts >= max_attempts:
+            break
     
     logger.warning("Рабочие прокси не найдены, прямое подключение")
     return None, None
@@ -188,6 +195,93 @@ USER_AGENTS = [
 def get_random_user_agent():
     return random.choice(USER_AGENTS)
 
+# Человеческое поведение для обхода Cloudflare
+def human_like_behavior(driver):
+    """Имитирует человеческое поведение"""
+    try:
+        # Случайные движения мыши и скролл
+        scroll_amount = random.randint(100, 800)
+        driver.execute_script(f"window.scrollTo(0, {scroll_amount});")
+        time.sleep(random.uniform(1, 3))
+        
+        # Случайные клики
+        if random.random() < 0.3:  # 30% шанс клика
+            driver.execute_script("document.body.click();")
+            time.sleep(random.uniform(0.5, 1.5))
+        
+        # Имитация чтения
+        reading_time = random.uniform(2, 5)
+        logger.debug(f"Имитация чтения: {reading_time:.1f}с")
+        time.sleep(reading_time)
+        
+    except Exception as e:
+        logger.debug(f"Ошибка в human_like_behavior: {e}")
+
+# Детекция CAPTCHA и Cloudflare
+def check_for_captcha(driver):
+    """Проверяет наличие CAPTCHA или Cloudflare защиты"""
+    try:
+        captcha_indicators = [
+            "captcha", "cloudflare", "challenge", "verification",
+            "robot", "bot", "security check", "checking your browser",
+            "ddos protection", "access denied", "blocked"
+        ]
+        
+        page_source = driver.page_source.lower()
+        page_title = driver.title.lower()
+        
+        for indicator in captcha_indicators:
+            if indicator in page_source or indicator in page_title:
+                logger.warning(f"🛡️ Обнаружена защита: {indicator}")
+                return True
+                
+        return False
+        
+    except Exception as e:
+        logger.debug(f"Ошибка проверки CAPTCHA: {e}")
+        return False
+
+# Cloudflare-safe задержки
+def cloudflare_safe_delay():
+    """Задержки специально для Cloudflare"""
+    base_delay = random.uniform(15, 45)  # 15-45 секунд
+    extra_delay = random.uniform(5, 15)   # Дополнительная пауза
+    
+    total_delay = base_delay + extra_delay
+    logger.info(f"🛡️ Cloudflare-safe задержка: {total_delay:.1f}с")
+    time.sleep(total_delay)
+
+# Сессионная стратегия
+def establish_legitimate_session(driver):
+    """Устанавливает легитимную сессию для обхода Cloudflare"""
+    try:
+        logger.info("🏠 Заходим на главную страницу для установки сессии...")
+        driver.get("https://trast-zapchast.ru/")
+        human_like_behavior(driver)
+        
+        # Ждем загрузки Cloudflare
+        time.sleep(random.uniform(5, 10))
+        
+        # Проверяем на CAPTCHA
+        if check_for_captcha(driver):
+            logger.warning("🛡️ Обнаружена CAPTCHA, ждем...")
+            time.sleep(random.uniform(30, 60))
+            
+            # Повторная проверка
+            if check_for_captcha(driver):
+                logger.error("🛡️ CAPTCHA не исчезла, возможно блокировка")
+                return False
+        
+        logger.info("✅ Сессия установлена, переходим в магазин...")
+        driver.get("https://trast-zapchast.ru/shop/")
+        human_like_behavior(driver)
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Ошибка установки сессии: {e}")
+        return False
+
 # Сохранение куков между сессиями
 def save_session_cookies(driver):
     try:
@@ -213,8 +307,57 @@ def load_session_cookies(driver):
     except Exception as e:
         logger.error(f"Ошибка загрузки куков: {e}")
 
-# Stealth драйвер с прокси
+# Stealth драйвер с прокси (использует undetected-chromedriver)
 def create_stealth_driver(proxy=None, protocol=None):
+    """Создает stealth драйвер с undetected-chromedriver для обхода Cloudflare"""
+    try:
+        options = uc.ChromeOptions()
+        options.add_argument("--headless")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-gpu")
+        
+        if proxy and protocol:
+            if protocol.startswith('socks'):
+                options.add_argument(f"--proxy-server={protocol}://{proxy}")
+            else:
+                options.add_argument(f"--proxy-server={protocol}://{proxy}")
+            logger.info(f"🔗 Настроен прокси: {protocol}://{proxy}")
+        
+        user_agent = get_random_user_agent()
+        options.add_argument(f"user-agent={user_agent}")
+        
+        width = random.randint(1366, 1920)
+        height = random.randint(768, 1080)
+        options.add_argument(f"--window-size={width},{height}")
+        
+        # Дополнительные anti-detection меры
+        options.add_argument("--disable-images")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-extensions")
+        options.add_argument("--disable-plugins")
+        options.add_argument("--disable-web-security")
+        options.add_argument("--disable-features=VizDisplayCompositor")
+        options.add_argument("--memory-pressure-off")
+        options.add_argument("--disable-background-timer-throttling")
+        options.add_argument("--disable-backgrounding-occluded-windows")
+        options.add_argument("--disable-renderer-backgrounding")
+        options.add_argument("--disable-background-networking")
+        options.add_argument("--aggressive-cache-discard")
+        
+        # Используем undetected-chromedriver
+        driver = uc.Chrome(options=options)
+        
+        logger.info("✅ Undetected Chrome драйвер создан успешно")
+        return driver
+        
+    except Exception as e:
+        logger.error(f"Ошибка создания stealth драйвера: {e}")
+        # Fallback на обычный Chrome
+        logger.info("🔄 Fallback на обычный Chrome...")
+        return create_fallback_driver(proxy, protocol)
+
+def create_fallback_driver(proxy=None, protocol=None):
+    """Fallback драйвер если undetected-chromedriver не работает"""
     options = Options()
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
@@ -225,7 +368,6 @@ def create_stealth_driver(proxy=None, protocol=None):
             options.add_argument(f"--proxy-server={protocol}://{proxy}")
         else:
             options.add_argument(f"--proxy-server={protocol}://{proxy}")
-        logger.info(f"Настроен прокси: {protocol}://{proxy}")
     
     user_agent = get_random_user_agent()
     options.add_argument(f"user-agent={user_agent}")
@@ -267,27 +409,63 @@ def smart_delay(page_num, had_error=False):
     logger.debug(f"Задержка {delay:.1f}с перед следующим запросом")
     time.sleep(delay)
 
-# Механизм повторных попыток
+# Механизм повторных попыток с человеческим поведением
 def fetch_page_with_retry(driver, url, current_proxy, max_retries=3):
     for attempt in range(max_retries):
         try:
+            logger.info(f"🌐 Загружаем страницу: {url}")
             driver.get(url)
-            WebDriverWait(driver, 15).until(
+            
+            # Человеческое поведение после загрузки
+            human_like_behavior(driver)
+            
+            # Проверяем на CAPTCHA
+            if check_for_captcha(driver):
+                logger.warning("🛡️ Обнаружена CAPTCHA, ждем...")
+                cloudflare_safe_delay()
+                
+                # Повторная проверка
+                if check_for_captcha(driver):
+                    logger.error("🛡️ CAPTCHA не исчезла, переключаем прокси")
+                    mark_proxy_failure(current_proxy)
+                    driver.quit()
+                    new_proxy, new_protocol = get_next_working_proxy()
+                    driver = create_stealth_driver(new_proxy, new_protocol)
+                    current_proxy = new_proxy
+                    continue
+            
+            # Ждем загрузки продуктов
+            WebDriverWait(driver, 20).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "div.product.product-plate"))
             )
+            
+            # Дополнительное человеческое поведение
+            human_like_behavior(driver)
+            
             mark_proxy_success(current_proxy)
+            logger.info("✅ Страница загружена успешно")
             return True, driver, current_proxy
+            
         except Exception as e:
-            wait_time = (2 ** attempt) * 5
-            logger.warning(f"Попытка {attempt+1}/{max_retries} неудачна, ждем {wait_time}с")
-            time.sleep(wait_time)
+            wait_time = (2 ** attempt) * 10  # Увеличили базовое время
+            logger.warning(f"❌ Попытка {attempt+1}/{max_retries} неудачна: {e}")
+            logger.warning(f"⏳ Ждем {wait_time}с перед следующей попыткой")
+            
+            # Cloudflare-safe задержка при ошибках
+            cloudflare_safe_delay()
             
             if attempt < max_retries - 1:
                 mark_proxy_failure(current_proxy)
                 driver.quit()
+                logger.info("🔄 Переключаем прокси...")
                 new_proxy, new_protocol = get_next_working_proxy()
                 driver = create_stealth_driver(new_proxy, new_protocol)
                 current_proxy = new_proxy
+                
+                # Устанавливаем новую сессию
+                if not establish_legitimate_session(driver):
+                    logger.error("🛡️ Не удалось установить новую сессию")
+                    continue
     
     return False, driver, current_proxy
 
@@ -491,9 +669,20 @@ def try_bulk_data_fetch(driver):
         
         for bulk_url in bulk_urls:
             try:
-                logger.info(f"Пробуем bulk запрос: {bulk_url}")
+                logger.info(f"🚀 Пробуем bulk запрос: {bulk_url}")
                 driver.get(bulk_url)
-                time.sleep(5)  # Даем время на загрузку
+                
+                # Человеческое поведение
+                human_like_behavior(driver)
+                
+                # Проверяем на CAPTCHA
+                if check_for_captcha(driver):
+                    logger.warning("🛡️ CAPTCHA в bulk запросе, ждем...")
+                    cloudflare_safe_delay()
+                    continue
+                
+                # Дополнительная пауза для загрузки
+                time.sleep(random.uniform(8, 15))
                 
                 soup = BeautifulSoup(driver.page_source, 'html.parser')
                 products = get_products_from_page_soup(soup)
@@ -501,6 +690,8 @@ def try_bulk_data_fetch(driver):
                 if len(products) > 100:  # Если получили много товаров
                     logger.info(f"✅ Bulk запрос успешен! Получено {len(products)} товаров")
                     return products
+                else:
+                    logger.debug(f"Bulk запрос {bulk_url} дал только {len(products)} товаров")
                     
             except Exception as e:
                 logger.debug(f"Bulk запрос {bulk_url} не сработал: {e}")
@@ -587,9 +778,16 @@ def producer():
     thread_name = "MainThread"
     logger.info(f"[{thread_name}] Starting producer")
     
-    logger.info("=== STEALTH MODE (прокси + анти-детект) ===")
+    logger.info("=== STEALTH MODE (undetected-chrome + прокси + анти-детект) ===")
     current_proxy, current_protocol = get_next_working_proxy()
     driver = create_stealth_driver(current_proxy, current_protocol)
+    
+    # Устанавливаем легитимную сессию для обхода Cloudflare
+    if not establish_legitimate_session(driver):
+        logger.error("🛡️ Не удалось установить сессию, возможно блокировка")
+        driver.quit()
+        return 0
+    
     load_session_cookies(driver)
     
     total_collected = 0
@@ -680,8 +878,15 @@ def producer():
                         logger.warning(f"[{thread_name}] Stopping early: {consecutive_sparse} consecutive sparse pages")
                         break
                     
-                    # Умные задержки
-                    smart_delay(page_num, had_error=False)
+                    # Cloudflare-safe задержки
+                    if page_num % 20 == 0:
+                        logger.info("🛡️ Длинная пауза для Cloudflare...")
+                        cloudflare_safe_delay()
+                    else:
+                        # Обычные задержки с человеческим поведением
+                        delay = random.uniform(8, 15)
+                        logger.debug(f"⏳ Пауза {delay:.1f}с")
+                        time.sleep(delay)
                     
                     # Сохраняем куки каждые 50 страниц
                     if page_num % 50 == 0:
@@ -690,7 +895,10 @@ def producer():
                 except Exception as e:
                     logger.error(f"[{thread_name}] Error on page {page_num}: {e}")
                     proxy_failures += 1
-                    smart_delay(page_num, had_error=True)
+                    
+                    # Cloudflare-safe задержка при ошибках
+                    logger.warning("🛡️ Ошибка, применяем Cloudflare-safe задержку...")
+                    cloudflare_safe_delay()
                     
                     # Check if we need to switch proxy
                     if proxy_failures >= max_proxy_failures:
@@ -699,8 +907,14 @@ def producer():
                         logger.info("🔄 Recreating Chrome with new proxy...")
                         current_proxy, current_protocol = get_next_working_proxy()
                         driver = create_stealth_driver(current_proxy, current_protocol)
+                        
+                        # Устанавливаем новую сессию
+                        if not establish_legitimate_session(driver):
+                            logger.error("🛡️ Не удалось установить новую сессию")
+                            continue
+                        
                         proxy_failures = 0
-                        time.sleep(random.uniform(30, 60))  # Wait before continuing
+                        cloudflare_safe_delay()  # Длинная пауза после смены прокси
             
             # Session break: restart driver to avoid rate limiting
             if session < sessions_needed - 1:  # Not the last session
@@ -709,10 +923,19 @@ def producer():
                 logger.info(f"[{thread_name}] Total collected so far: {total_collected} products")
                 logger.info(f"[{thread_name}] Restarting driver to avoid rate limiting...")
                 driver.quit()
-                time.sleep(random.uniform(30, 60))  # Wait 30-60 seconds between sessions (optimized)
+                
+                # Cloudflare-safe пауза между сессиями
+                logger.info("🛡️ Длинная пауза между сессиями для Cloudflare...")
+                cloudflare_safe_delay()
+                
                 logger.info("🔄 Recreating Chrome with proxy for new session...")
                 current_proxy, current_protocol = get_next_working_proxy()
                 driver = create_stealth_driver(current_proxy, current_protocol)
+                
+                # Устанавливаем новую сессию
+                if not establish_legitimate_session(driver):
+                    logger.error("🛡️ Не удалось установить новую сессию")
+                    continue
                 
                 # Инкрементный бэкап после каждой сессии
                 incremental_backup(session + 1, total_collected, page_num)
