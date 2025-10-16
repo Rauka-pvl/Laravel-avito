@@ -42,14 +42,76 @@ class BrowserFactory:
             # Anti-detection configuration
             BrowserFactory._configure_anti_detection(options)
             
-            # Create browser
-            driver = uc.Chrome(options=options, version_main=None)
+            # Create browser with auto-detection
+            try:
+                # Попробуем автоматическое определение версии
+                driver = uc.Chrome(options=options, version_main=None)
+            except Exception as e:
+                logger.warning(f"Auto-detection failed: {e}")
+                try:
+                    # Попробуем с версией 134 (текущая версия Chrome)
+                    driver = uc.Chrome(options=options, version_main=134)
+                except Exception as e2:
+                    logger.warning(f"Version 134 failed: {e2}")
+                    try:
+                        # Попробуем с версией 141 (требуемая версия)
+                        driver = uc.Chrome(options=options, version_main=141)
+                    except Exception as e3:
+                        logger.error(f"All ChromeDriver versions failed: {e3}")
+                        raise e3
             
             logger.info("✅ Stealth browser created successfully")
             return driver
             
         except Exception as e:
             logger.error(f"❌ Error creating stealth browser: {e}")
+            
+            # Попробуем создать браузер без undetected_chromedriver
+            try:
+                logger.info("🔄 Trying fallback browser creation...")
+                return BrowserFactory._create_fallback_browser(proxy, proxy_config, headless)
+            except Exception as e2:
+                logger.error(f"❌ Fallback browser creation failed: {e2}")
+                return None
+    
+    @staticmethod
+    def _create_fallback_browser(proxy: Optional[Proxy] = None, 
+                               proxy_config: Optional[Dict] = None,
+                               headless: bool = True):
+        """Create fallback browser using selenium directly."""
+        try:
+            from selenium import webdriver
+            from selenium.webdriver.chrome.options import Options
+            
+            options = Options()
+            
+            # Basic configuration
+            if headless:
+                options.add_argument("--headless")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-blink-features=AutomationControlled")
+            options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            options.add_experimental_option('useAutomationExtension', False)
+            
+            # Apply proxy configuration
+            if proxy:
+                BrowserFactory._apply_proxy_to_options(options, proxy)
+            elif proxy_config:
+                BrowserFactory._apply_proxy_config_to_options(options, proxy_config)
+            
+            # Create browser
+            driver = webdriver.Chrome(options=options)
+            
+            # Execute script to remove webdriver property
+            driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            
+            logger.info("✅ Fallback browser created successfully")
+            return driver
+            
+        except Exception as e:
+            logger.error(f"❌ Fallback browser creation failed: {e}")
             return None
     
     @staticmethod

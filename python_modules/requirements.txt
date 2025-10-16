@@ -3,7 +3,7 @@ beautifulsoup4
 openpyxl
 mysql-connector-python
 selenium>=4.0.0
-webdriver-manager
+webdriver-manager>=4.0.0
 aiogram==3.4.1
 python-dotenv
 psutil
