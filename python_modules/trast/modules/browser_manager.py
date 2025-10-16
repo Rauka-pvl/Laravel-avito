@@ -5,18 +5,32 @@ Handles Firefox browser creation, session management, and anti-detection measure
 """
 
 import os
+import platform
 import logging
 import random
 import time
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from selenium import webdriver
-from selenium.webdriver.firefox.options import Options as FirefoxOptions
-from selenium.webdriver.firefox.service import Service as FirefoxService
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, WebDriverException
+
+# Import browser-specific modules
+try:
+    from selenium.webdriver.firefox.options import Options as FirefoxOptions
+    from selenium.webdriver.firefox.service import Service as FirefoxService
+    FIREFOX_AVAILABLE = True
+except ImportError:
+    FIREFOX_AVAILABLE = False
+
+try:
+    from selenium.webdriver.chrome.options import Options as ChromeOptions
+    from selenium.webdriver.chrome.service import Service as ChromeService
+    CHROME_AVAILABLE = True
+except ImportError:
+    CHROME_AVAILABLE = False
 
 from .config import TrastConfig
 from .proxy_manager import Proxy
@@ -25,13 +39,68 @@ logger = logging.getLogger("trast.browser_manager")
 
 
 class BrowserFactory:
-    """Factory for creating configured Firefox browser instances."""
+    """Factory for creating configured browser instances (Firefox on Linux, Chrome on Windows)."""
     
     @staticmethod
     def create_stealth_browser(proxy: Optional[Proxy] = None, 
                              proxy_config: Optional[Dict] = None,
-                             headless: bool = True) -> Optional[webdriver.Firefox]:
-        """Create stealth Firefox browser with anti-detection measures."""
+                             headless: bool = True) -> Optional[webdriver.Remote]:
+        """Create stealth browser with anti-detection measures."""
+        try:
+            # Determine best browser for current OS
+            browser_type = BrowserFactory._get_best_browser()
+            
+            if browser_type == "firefox":
+                return BrowserFactory._create_firefox_browser(proxy, proxy_config, headless)
+            elif browser_type == "chrome":
+                return BrowserFactory._create_chrome_browser(proxy, proxy_config, headless)
+            else:
+                logger.error("❌ No suitable browser available")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Error creating browser: {e}")
+            return None
+    
+    @staticmethod
+    def _get_best_browser() -> str:
+        """Determine the best browser for current OS."""
+        system = platform.system().lower()
+        
+        # Linux: prefer Firefox (better Tor/WARP compatibility)
+        if system == "linux":
+            if FIREFOX_AVAILABLE:
+                return "firefox"
+            elif CHROME_AVAILABLE:
+                return "chrome"
+        
+        # Windows: prefer Chrome (more stable on Windows)
+        elif system == "windows":
+            if CHROME_AVAILABLE:
+                return "chrome"
+            elif FIREFOX_AVAILABLE:
+                return "firefox"
+        
+        # macOS: prefer Firefox
+        elif system == "darwin":
+            if FIREFOX_AVAILABLE:
+                return "firefox"
+            elif CHROME_AVAILABLE:
+                return "chrome"
+        
+        # Fallback
+        if CHROME_AVAILABLE:
+            return "chrome"
+        elif FIREFOX_AVAILABLE:
+            return "firefox"
+        
+        return "none"
+    
+    @staticmethod
+    def _create_firefox_browser(proxy: Optional[Proxy] = None, 
+                              proxy_config: Optional[Dict] = None,
+                              headless: bool = True) -> Optional[webdriver.Firefox]:
+        """Create Firefox browser."""
         try:
             options = FirefoxOptions()
             
@@ -41,12 +110,12 @@ class BrowserFactory:
             
             # Apply proxy configuration
             if proxy:
-                BrowserFactory._apply_proxy_to_options(options, proxy)
+                BrowserFactory._apply_proxy_to_firefox_options(options, proxy)
             elif proxy_config:
-                BrowserFactory._apply_proxy_config_to_options(options, proxy_config)
+                BrowserFactory._apply_proxy_config_to_firefox_options(options, proxy_config)
             
             # Anti-detection configuration
-            BrowserFactory._configure_anti_detection(options)
+            BrowserFactory._configure_firefox_anti_detection(options)
             
             # Create Firefox browser
             driver = webdriver.Firefox(options=options)
@@ -59,7 +128,41 @@ class BrowserFactory:
             return None
     
     @staticmethod
-    def _apply_proxy_to_options(options: FirefoxOptions, proxy: Proxy):
+    def _create_chrome_browser(proxy: Optional[Proxy] = None, 
+                             proxy_config: Optional[Dict] = None,
+                             headless: bool = True) -> Optional[webdriver.Chrome]:
+        """Create Chrome browser."""
+        try:
+            options = ChromeOptions()
+            
+            # Basic configuration
+            if headless:
+                options.add_argument("--headless")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--disable-dev-shm-usage")
+            
+            # Apply proxy configuration
+            if proxy:
+                BrowserFactory._apply_proxy_to_chrome_options(options, proxy)
+            elif proxy_config:
+                BrowserFactory._apply_proxy_config_to_chrome_options(options, proxy_config)
+            
+            # Anti-detection configuration
+            BrowserFactory._configure_chrome_anti_detection(options)
+            
+            # Create Chrome browser
+            driver = webdriver.Chrome(options=options)
+            
+            logger.info("✅ Chrome stealth browser created successfully")
+            return driver
+            
+        except Exception as e:
+            logger.error(f"❌ Error creating Chrome browser: {e}")
+            return None
+    
+    @staticmethod
+    def _apply_proxy_to_firefox_options(options: FirefoxOptions, proxy: Proxy):
         """Apply proxy configuration to Firefox options."""
         if proxy.protocol.startswith('socks'):
             # SOCKS5 proxy configuration for Firefox
@@ -79,7 +182,18 @@ class BrowserFactory:
         logger.info(f"🔗 Configured Firefox proxy: {proxy.protocol}://{proxy.full_address}")
     
     @staticmethod
-    def _apply_proxy_config_to_options(options: FirefoxOptions, proxy_config: Dict):
+    def _apply_proxy_to_chrome_options(options: ChromeOptions, proxy: Proxy):
+        """Apply proxy configuration to Chrome options."""
+        if proxy.protocol.startswith('socks'):
+            proxy_url = f"socks5://{proxy.full_address}"
+        else:
+            proxy_url = f"{proxy.protocol}://{proxy.full_address}"
+        
+        options.add_argument(f"--proxy-server={proxy_url}")
+        logger.info(f"🔗 Configured Chrome proxy: {proxy_url}")
+    
+    @staticmethod
+    def _apply_proxy_config_to_firefox_options(options: FirefoxOptions, proxy_config: Dict):
         """Apply proxy configuration dict to Firefox options."""
         # Extract SOCKS5 proxy from config (for Tor/WARP)
         socks_url = proxy_config.get('http', '').replace('socks5://', '')
@@ -93,7 +207,16 @@ class BrowserFactory:
             logger.info(f"🔗 Configured Firefox Tor/WARP proxy: socks5://{socks_url}")
     
     @staticmethod
-    def _configure_anti_detection(options: FirefoxOptions):
+    def _apply_proxy_config_to_chrome_options(options: ChromeOptions, proxy_config: Dict):
+        """Apply proxy configuration dict to Chrome options."""
+        # Extract SOCKS5 proxy from config (for Tor/WARP)
+        socks_url = proxy_config.get('http', '').replace('socks5://', '')
+        if socks_url:
+            options.add_argument(f"--proxy-server=socks5://{socks_url}")
+            logger.info(f"🔗 Configured Chrome Tor/WARP proxy: socks5://{socks_url}")
+    
+    @staticmethod
+    def _configure_firefox_anti_detection(options: FirefoxOptions):
         """Configure anti-detection measures for Firefox."""
         # Random user agent
         user_agent = TrastConfig.get_random_user_agent()
@@ -134,12 +257,48 @@ class BrowserFactory:
             options.set_preference(pref, value)
         
         logger.debug("🛡️ Firefox anti-detection measures configured")
+    
+    @staticmethod
+    def _configure_chrome_anti_detection(options: ChromeOptions):
+        """Configure anti-detection measures for Chrome."""
+        # Random user agent
+        user_agent = TrastConfig.get_random_user_agent()
+        options.add_argument(f"--user-agent={user_agent}")
+        
+        # Random viewport
+        width, height = TrastConfig.get_random_viewport()
+        options.add_argument(f"--window-size={width},{height}")
+        
+        # Additional anti-detection arguments
+        anti_detection_args = [
+            "--disable-images",
+            "--disable-extensions",
+            "--disable-plugins",
+            "--disable-web-security",
+            "--disable-features=VizDisplayCompositor",
+            "--memory-pressure-off",
+            "--disable-background-timer-throttling",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
+            "--disable-background-networking",
+            "--aggressive-cache-discard",
+            "--disable-blink-features=AutomationControlled"
+        ]
+        
+        for arg in anti_detection_args:
+            options.add_argument(arg)
+        
+        # Experimental options
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option('useAutomationExtension', False)
+        
+        logger.debug("🛡️ Chrome anti-detection measures configured")
 
 
 class BrowserSession:
-    """Represents a Firefox browser session with lifecycle management."""
+    """Represents a browser session with lifecycle management."""
     
-    def __init__(self, driver: webdriver.Firefox, proxy: Optional[Proxy] = None, 
+    def __init__(self, driver: webdriver.Remote, proxy: Optional[Proxy] = None, 
                  proxy_config: Optional[Dict] = None):
         self.driver = driver
         self.proxy = proxy
@@ -148,6 +307,7 @@ class BrowserSession:
         self.request_count = 0
         self.last_request_time = None
         self.is_disposed = False
+        self.browser_type = "firefox" if "firefox" in str(type(driver)).lower() else "chrome"
     
     def increment_request_count(self):
         """Increment request counter."""
@@ -171,9 +331,9 @@ class BrowserSession:
             try:
                 self.driver.quit()
                 self.is_disposed = True
-                logger.debug(f"Firefox session disposed after {self.get_session_duration():.1f}s")
+                logger.debug(f"{self.browser_type.title()} session disposed after {self.get_session_duration():.1f}s")
             except Exception as e:
-                logger.warning(f"Error disposing Firefox session: {e}")
+                logger.warning(f"Error disposing {self.browser_type} session: {e}")
     
     def __enter__(self):
         """Context manager entry."""
@@ -190,7 +350,7 @@ class BrowserSession:
 
 
 class DisposableBrowserPool:
-    """Manages disposable Firefox browser instances."""
+    """Manages disposable browser instances."""
     
     def __init__(self, max_sessions: int = 5):
         self.max_sessions = max_sessions
@@ -199,7 +359,7 @@ class DisposableBrowserPool:
     
     def get_browser(self, proxy: Optional[Proxy] = None, 
                    proxy_config: Optional[Dict] = None) -> Optional[BrowserSession]:
-        """Get a new Firefox browser session."""
+        """Get a new browser session."""
         try:
             # Clean up old sessions
             self._cleanup_old_sessions()
@@ -215,24 +375,24 @@ class DisposableBrowserPool:
             self.session_counter += 1
             
             self.active_sessions.append(session)
-            logger.info(f"Created Firefox session {session.session_id}")
+            logger.info(f"Created {session.browser_type.title()} session {session.session_id}")
             
             return session
             
         except Exception as e:
-            logger.error(f"Error creating Firefox session: {e}")
+            logger.error(f"Error creating browser session: {e}")
             return None
     
     def recycle_on_failure(self, session: BrowserSession):
         """Recycle browser session on failure."""
-        logger.warning(f"Recycling Firefox session {session.session_id} due to failure")
+        logger.warning(f"Recycling {session.browser_type.title()} session {session.session_id} due to failure")
         session.dispose()
         if session in self.active_sessions:
             self.active_sessions.remove(session)
     
     def cleanup_all(self):
         """Clean up all active sessions."""
-        logger.info(f"Cleaning up {len(self.active_sessions)} active Firefox sessions")
+        logger.info(f"Cleaning up {len(self.active_sessions)} active browser sessions")
         for session in self.active_sessions[:]:  # Copy list to avoid modification during iteration
             session.dispose()
         self.active_sessions.clear()
@@ -251,7 +411,7 @@ class DisposableBrowserPool:
                 sessions_to_remove.append(session)
         
         for session in sessions_to_remove:
-            logger.debug(f"Cleaning up old Firefox session {session.session_id}")
+            logger.debug(f"Cleaning up old {session.browser_type.title()} session {session.session_id}")
             session.dispose()
             self.active_sessions.remove(session)
     
@@ -260,12 +420,17 @@ class DisposableBrowserPool:
         total_requests = sum(session.request_count for session in self.active_sessions)
         avg_duration = sum(session.get_session_duration() for session in self.active_sessions) / len(self.active_sessions) if self.active_sessions else 0
         
+        # Count browser types
+        browser_types = {}
+        for session in self.active_sessions:
+            browser_types[session.browser_type] = browser_types.get(session.browser_type, 0) + 1
+        
         return {
             'active_sessions': len(self.active_sessions),
             'total_requests': total_requests,
             'average_duration': avg_duration,
             'session_counter': self.session_counter,
-            'browser_type': 'firefox'
+            'browser_types': browser_types
         }
     
     def __del__(self):

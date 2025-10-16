@@ -180,51 +180,51 @@ def test_data_manager():
         return False
 
 def test_firefox_browser():
-    """Test Firefox browser creation and proxy integration."""
-    print("🧪 Testing Firefox browser manager...")
+    """Test browser creation and proxy integration."""
+    print("🧪 Testing browser manager...")
     
     try:
         from modules.browser_manager import BrowserFactory, DisposableBrowserPool
         
-        # Test Firefox browser creation
-        print("  🔥 Testing Firefox browser creation...")
+        # Test browser creation
+        print("  🌐 Testing browser creation...")
         driver = BrowserFactory.create_stealth_browser(headless=True)
         
         if driver:
-            print("  ✅ Firefox browser created successfully")
+            print("  ✅ Browser created successfully")
             
             # Test basic functionality
             driver.get("https://httpbin.org/ip")
             title = driver.title
-            print(f"  ✅ Firefox navigation test passed: {title}")
+            print(f"  ✅ Browser navigation test passed: {title}")
             
             driver.quit()
-            print("  ✅ Firefox browser disposed successfully")
+            print("  ✅ Browser disposed successfully")
         else:
-            print("  ❌ Firefox browser creation failed")
+            print("  ❌ Browser creation failed")
             return False
         
         # Test browser pool
-        print("  🏊 Testing Firefox browser pool...")
+        print("  🏊 Testing browser pool...")
         pool = DisposableBrowserPool(max_sessions=2)
         
         session1 = pool.get_browser()
         if session1:
-            print("  ✅ Firefox session 1 created")
+            print(f"  ✅ {session1.browser_type.title()} session 1 created")
             session1.dispose()
         
         session2 = pool.get_browser()
         if session2:
-            print("  ✅ Firefox session 2 created")
+            print(f"  ✅ {session2.browser_type.title()} session 2 created")
             session2.dispose()
         
         pool.cleanup_all()
-        print("  ✅ Firefox browser pool test passed")
+        print("  ✅ Browser pool test passed")
         
         return True
         
     except Exception as e:
-        print(f"❌ Firefox browser test error: {e}")
+        print(f"❌ Browser test error: {e}")
         return False
 
 def main():
