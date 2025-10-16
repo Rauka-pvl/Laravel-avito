@@ -10,3 +10,4 @@ psutil
 croniter
 lxml
 html5lib
+undetected-chromedriver>=3.5.0
