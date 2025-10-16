@@ -104,15 +104,8 @@ class BrowserFactory:
     @staticmethod
     def _check_firefox_availability() -> bool:
         """Check if Firefox is actually available on the system."""
-        try:
-            import subprocess
-            result = subprocess.run(['firefox', '--version'], 
-                                  capture_output=True, 
-                                  text=True, 
-                                  timeout=5)
-            return result.returncode == 0
-        except Exception:
-            return False
+        # Firefox через snap не работает с Selenium, возвращаем False
+        return False
     
     @staticmethod
     def _check_chrome_availability() -> bool:
