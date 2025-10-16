@@ -30,13 +30,14 @@ class ProductExtractor:
         
         # Try multiple selectors for products
         product_selectors = [
-            "div.product.product-plate",
-            ".product",
-            ".woocommerce-loop-product__link",
-            ".product-item",
-            ".product-card",
-            ".item-product",
-            "[class*='product']"
+            ".woocommerce-loop-product__link",  # WooCommerce product links
+            ".product",                          # Generic product class
+            "article.product",                   # Product articles
+            ".woocommerce ul.products li",       # WooCommerce product list
+            ".products .product",                # Products container
+            "a[href*='/product/']",              # Product links by URL pattern
+            ".woocommerce-loop-product__title",  # Product titles
+            "[class*='product']"                 # Any element with 'product' in class
         ]
         
         cards = []
@@ -54,18 +55,84 @@ class ProductExtractor:
         available_cards = 0
         
         for card in cards:
-            # Check if product is in stock
-            stock_badge = card.select_one("div.product-badge.product-stock.instock")
-            if not stock_badge or "В наличии" not in stock_badge.text.strip():
+            # Check if product is in stock - try multiple selectors
+            stock_selectors = [
+                "div.product-badge.product-stock.instock",
+                ".stock-status",
+                ".availability",
+                "[class*='stock']",
+                "[class*='available']"
+            ]
+            
+            stock_found = False
+            for stock_selector in stock_selectors:
+                stock_badge = card.select_one(stock_selector)
+                if stock_badge and ("В наличии" in stock_badge.text.strip() or "available" in stock_badge.text.strip().lower()):
+                    stock_found = True
+                    break
+            
+            if not stock_found:
                 continue
 
             available_cards += 1
             
-            # Extract product information
-            title_el = card.select_one("a.product-title")
-            article_el = card.select_one("div.product-attributes .item:nth-child(1) .value")
-            manufacturer_el = card.select_one("div.product-attributes .item:nth-child(2) .value")
-            price_el = card.select_one("div.product-price .amount")
+            # Extract product information - try multiple selectors for each field
+            title_selectors = [
+                "a.product-title",
+                ".woocommerce-loop-product__title",
+                "h2",
+                "h3",
+                ".product-title",
+                "a[href*='/product/']"
+            ]
+            
+            article_selectors = [
+                "div.product-attributes .item:nth-child(1) .value",
+                ".product-article",
+                ".article",
+                "[class*='article']",
+                "[class*='sku']"
+            ]
+            
+            manufacturer_selectors = [
+                "div.product-attributes .item:nth-child(2) .value",
+                ".product-manufacturer",
+                ".manufacturer",
+                "[class*='manufacturer']",
+                "[class*='brand']"
+            ]
+            
+            price_selectors = [
+                "div.product-price .amount",
+                ".price",
+                ".woocommerce-Price-amount",
+                "[class*='price']",
+                ".amount"
+            ]
+            
+            title_el = None
+            for selector in title_selectors:
+                title_el = card.select_one(selector)
+                if title_el:
+                    break
+            
+            article_el = None
+            for selector in article_selectors:
+                article_el = card.select_one(selector)
+                if article_el:
+                    break
+            
+            manufacturer_el = None
+            for selector in manufacturer_selectors:
+                manufacturer_el = card.select_one(selector)
+                if manufacturer_el:
+                    break
+            
+            price_el = None
+            for selector in price_selectors:
+                price_el = card.select_one(selector)
+                if price_el:
+                    break
 
             if not (title_el and article_el and manufacturer_el and price_el):
                 continue
@@ -110,13 +177,14 @@ class ProductExtractor:
         
         # Wait for products to load (FacetWP AJAX) - try multiple selectors
         product_selectors = [
-            "div.product.product-plate",
-            ".product",
-            ".woocommerce-loop-product__link",
-            ".product-item",
-            ".product-card",
-            ".item-product",
-            "[class*='product']"
+            ".woocommerce-loop-product__link",  # WooCommerce product links
+            ".product",                          # Generic product class
+            "article.product",                   # Product articles
+            ".woocommerce ul.products li",       # WooCommerce product list
+            ".products .product",                # Products container
+            "a[href*='/product/']",              # Product links by URL pattern
+            ".woocommerce-loop-product__title",  # Product titles
+            "[class*='product']"                 # Any element with 'product' in class
         ]
         
         products_found = False
@@ -297,7 +365,7 @@ class PageFetcher:
                 
                 # Wait for products to load
                 WebDriverWait(driver, 20).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "div.product.product-plate"))
+                    EC.presence_of_element_located((By.CSS_SELECTOR, ".woocommerce-loop-product__link"))
                 )
                 
                 # Additional human behavior
