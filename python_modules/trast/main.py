@@ -776,16 +776,15 @@ if __name__ == "__main__":
         logger.info("✅ Парсинг успешен")
         TelegramNotifier.notify(f"✅ Trast parsing completed\nТоваров: {total_products}\nВремя: {duration}")
         set_script_end(script_name, "completed")
-        else:
+    else:
         logger.error("❌ Недостаточно данных: 0 товаров")
         TelegramNotifier.notify("❌ Trast parsing failed: 0 товаров")
         set_script_end(script_name, "insufficient_data")
         
         # Попытка восстановления из бэкапа
-            if os.path.exists(BACKUP_FILE):
-                shutil.copy2(BACKUP_FILE, OUTPUT_FILE)
-                logger.info("Excel восстановлен из бэкапа")
-            if os.path.exists(BACKUP_CSV):
-                shutil.copy2(BACKUP_CSV, CSV_FILE)
-                logger.info("CSV восстановлен из бэкапа")
-    TelegramNotifier.notify(f"✅ Trast parsing completed. Total: {total_products} items")
+        if os.path.exists(BACKUP_FILE):
+            shutil.copy2(BACKUP_FILE, OUTPUT_FILE)
+            logger.info("Excel восстановлен из бэкапа")
+        if os.path.exists(BACKUP_CSV):
+            shutil.copy2(BACKUP_CSV, CSV_FILE)
+            logger.info("CSV восстановлен из бэкапа")
