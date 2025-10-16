@@ -27,7 +27,29 @@ class ProductExtractor:
     def extract_from_soup(soup: BeautifulSoup) -> List[Dict[str, Any]]:
         """Extract products from BeautifulSoup object."""
         results = []
-        cards = soup.select("div.product.product-plate")
+        
+        # Try multiple selectors for products
+        product_selectors = [
+            "div.product.product-plate",
+            ".product",
+            ".woocommerce-loop-product__link",
+            ".product-item",
+            ".product-card",
+            ".item-product",
+            "[class*='product']"
+        ]
+        
+        cards = []
+        for selector in product_selectors:
+            cards = soup.select(selector)
+            if cards:
+                logger.info(f"✅ Found {len(cards)} products with selector: {selector}")
+                break
+        
+        if not cards:
+            logger.warning("⚠️ No product cards found with any selector")
+            return results
+        
         total_cards = len(cards)
         available_cards = 0
         
@@ -86,17 +108,41 @@ class ProductExtractor:
             logger.warning(f"Error accessing main page: {e}")
             driver.get(url)
         
-        # Wait for products to load (FacetWP AJAX)
-        try:
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "div.product.product-plate"))
-            )
-            time.sleep(2)
-        except Exception as e:
-            logger.warning(f"Timeout waiting for products: {e}")
+        # Wait for products to load (FacetWP AJAX) - try multiple selectors
+        product_selectors = [
+            "div.product.product-plate",
+            ".product",
+            ".woocommerce-loop-product__link",
+            ".product-item",
+            ".product-card",
+            ".item-product",
+            "[class*='product']"
+        ]
+        
+        products_found = False
+        for selector in product_selectors:
+            try:
+                logger.info(f"🔍 Waiting for products with selector: {selector}")
+                WebDriverWait(driver, 15).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                )
+                logger.info(f"✅ Found products with selector: {selector}")
+                products_found = True
+                break
+            except Exception as e:
+                logger.debug(f"Selector {selector} failed: {e}")
+                continue
+        
+        if not products_found:
+            logger.warning("⚠️ No products found with any selector")
             # Save HTML for debugging
-            with open(os.path.join(TrastConfig.LOG_DIR, "debug_page.html"), "w", encoding="utf-8") as f:
+            debug_file = os.path.join(TrastConfig.LOG_DIR, "debug_page.html")
+            with open(debug_file, "w", encoding="utf-8") as f:
                 f.write(driver.page_source)
+            logger.info(f"💾 Saved debug HTML to: {debug_file}")
+        
+        # Additional wait for AJAX
+        time.sleep(5)
         
         soup = BeautifulSoup(driver.page_source, "html.parser")
         
