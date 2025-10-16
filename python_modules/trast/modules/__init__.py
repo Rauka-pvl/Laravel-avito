@@ -22,15 +22,17 @@ from .parser_core import ProductExtractor, PageFetcher, ParsingOrchestrator
 from .data_manager import DataWriter, BackupManager, DataValidator
 from .ip_rotator import IPRotationStrategy, RotationTracker, AdaptiveRotator
 from .adaptive_learning import AdaptiveLearningEngine, StrategyPerformance, IPPerformance
+from .warp_manager import WARPManager
 
 __all__ = [
     'TrastConfig',
-    'ProxyPool', 'TorManager', 'HybridProxyStrategy',
+    'ProxyPool', 'TorManager', 'HybridProxyStrategy', 'WARPManager',
     'BrowserFactory', 'BrowserSession', 'DisposableBrowserPool',
     'BlockDetector', 'HumanBehaviorSimulator', 'DelayStrategy', 
     'SessionEstablisher', 'FingerprintRandomizer',
     'ProductExtractor', 'PageFetcher', 'ParsingOrchestrator',
     'DataWriter', 'BackupManager', 'DataValidator',
     'IPRotationStrategy', 'RotationTracker', 'AdaptiveRotator',
-    'AdaptiveLearningEngine', 'StrategyPerformance', 'IPPerformance'
+    'AdaptiveLearningEngine', 'StrategyPerformance', 'IPPerformance',
+    'WARPManager'
 ]

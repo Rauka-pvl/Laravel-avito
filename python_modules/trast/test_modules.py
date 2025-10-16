@@ -19,6 +19,7 @@ def test_imports():
         print("✅ Config module imported")
         
         from modules.proxy_manager import ProxyPool, TorManager, HybridProxyStrategy, Proxy
+        from modules.warp_manager import WARPManager
         print("✅ Proxy manager module imported")
         
         from modules.browser_manager import BrowserFactory, BrowserSession, DisposableBrowserPool
@@ -80,6 +81,7 @@ def test_proxy_manager():
     
     try:
         from modules.proxy_manager import ProxyPool, TorManager, HybridProxyStrategy, Proxy
+        from modules.warp_manager import WARPManager
         
         # Test proxy pool
         proxy_pool = ProxyPool()
@@ -90,6 +92,11 @@ def test_proxy_manager():
         tor_manager = TorManager()
         tor_available = tor_manager.is_available()
         print(f"✅ Tor available: {tor_available}")
+        
+        # Test WARP manager
+        warp_manager = WARPManager()
+        warp_stats = warp_manager.get_stats()
+        print(f"✅ WARP manager stats: {warp_stats}")
         
         # Test hybrid strategy
         hybrid_strategy = HybridProxyStrategy()

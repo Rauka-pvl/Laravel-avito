@@ -13,6 +13,7 @@ from typing import List, Optional, Tuple, Dict, Union
 from dataclasses import dataclass
 from datetime import datetime
 from .config import TrastConfig
+from .warp_manager import WARPManager
 
 logger = logging.getLogger("trast.proxy_manager")
 
@@ -270,17 +271,29 @@ class TorManager:
 
 
 class HybridProxyStrategy:
-    """Hybrid strategy combining Tor and proxy pool."""
+    """Hybrid strategy combining WARP, Tor and proxy pool."""
     
     def __init__(self):
         self.proxy_pool = ProxyPool()
         self.tor_manager = TorManager()
+        self.warp_manager = WARPManager()
         self.current_connection = None
-        self.connection_type = None  # 'tor' or 'proxy'
+        self.connection_type = None  # 'warp', 'tor', 'proxy', or None
+        self.success_count = 0
+        self.failure_count = 0
     
     def get_connection(self) -> Union[Proxy, Dict]:
-        """Get next connection (Tor or proxy)."""
-        # Try Tor first if available
+        """Get next connection (WARP, Tor, or proxy)."""
+        # Try WARP first if available
+        if self.warp_manager.is_available():
+            proxy_config = self.warp_manager.get_proxy_config()
+            if proxy_config:
+                self.connection_type = 'warp'
+                self.current_connection = proxy_config
+                logger.info("🌐 Using WARP connection")
+                return proxy_config
+        
+        # Try Tor if WARP is not available
         if self.tor_manager.is_available():
             self.connection_type = 'tor'
             self.current_connection = self.tor_manager.get_proxy_config()
@@ -314,7 +327,10 @@ class HybridProxyStrategy:
     
     def rotate_ip(self) -> bool:
         """Force IP rotation."""
-        if self.connection_type == 'tor':
+        if self.connection_type == 'warp':
+            logger.info("🔄 Rotating WARP IP...")
+            return self.warp_manager.rotate_ip()
+        elif self.connection_type == 'tor':
             return self.tor_manager.rotate_circuit()
         elif self.connection_type == 'proxy':
             # Get new proxy
@@ -330,7 +346,11 @@ class HybridProxyStrategy:
             'connection_type': self.connection_type,
             'current_connection': str(self.current_connection) if self.current_connection else None,
             'tor_available': self.tor_manager.is_available(),
-            'tor_ip': self.tor_manager.get_current_ip() if self.tor_manager.is_available() else None
+            'warp_available': self.warp_manager.is_available(),
+            'warp_stats': self.warp_manager.get_stats(),
+            'tor_ip': self.tor_manager.get_current_ip() if self.tor_manager.is_available() else None,
+            'warp_ip': self.warp_manager.get_current_ip() if self.warp_manager.is_available() else None,
+            'success_rate': self.success_count / (self.success_count + self.failure_count) if (self.success_count + self.failure_count) > 0 else 0
         }
         stats.update(self.proxy_pool.get_stats())
         return stats

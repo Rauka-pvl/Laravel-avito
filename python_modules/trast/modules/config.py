@@ -30,6 +30,11 @@ class TrastConfig:
     TOR_DATA_DIR = "/tmp/tor_data"
     TOR_COOKIE_FILE = "/tmp/tor_cookie"
     
+    # WARP configuration
+    WARP_ENABLED = True
+    WARP_PROXY_URL = "socks5://127.0.0.1:40000"  # Default WARP proxy port
+    WARP_ALTERNATIVE_PORTS = [40000, 40001, 40002, 40003, 40004]
+    
     # Parsing parameters
     PAGES_PER_SESSION = 20
     MAX_EMPTY_PAGES = 10
