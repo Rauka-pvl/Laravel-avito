@@ -173,9 +173,9 @@ class BrowserFactory:
         try:
             options = ChromeOptions()
             
-            # Basic configuration
-            if headless:
-                options.add_argument("--headless")
+            # Basic configuration - disable headless for debugging
+            # if headless:
+            #     options.add_argument("--headless")
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-gpu")
             options.add_argument("--disable-dev-shm-usage")
