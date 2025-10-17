@@ -34,12 +34,24 @@ class ProxyManager(LoggerMixin):
     def __init__(self):
         self.working_proxies_file = os.path.join(TrastConfig.SCRIPT_DIR, "working_proxies.json")
         self.proxy_sources = [
+            # API источники (текстовые)
             "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=1500&country=all",
             "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
             "https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-http.txt",
             "https://openproxylist.xyz/http.txt",
             "https://www.proxy-list.download/api/v1/get?type=http",
+            
+            # HTML источники (требуют парсинга)
             "http://spys.me/proxy.txt",
+            "https://free-proxy.cz/en/proxylist/main/1",
+            "https://www.proxy-list.download/HTTP",
+            "https://www.proxynova.com/proxy-server-list/",
+            "https://www.proxyrotator.com/free-proxy-list/",
+            
+            # Дополнительные источники
+            "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
+            "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt",
+            "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
         ]
         self.working_proxies: List[str] = []
         self.load_working_proxies()
@@ -107,21 +119,31 @@ class ProxyManager(LoggerMixin):
                     text = await response.text()
                     
                     # Парсим разные форматы
-                    for line in text.splitlines():
-                        line = line.strip()
-                        if not line or line.startswith('#'):
-                            continue
-                        
-                        # Проверяем формат IP:PORT
-                        if ':' in line and not line.startswith('http'):
-                            parts = line.split(':')
-                            if len(parts) == 2:
-                                try:
-                                    ip, port = parts[0], int(parts[1])
-                                    if 1 <= port <= 65535:
-                                        proxies.add(f"{ip}:{port}")
-                                except ValueError:
-                                    continue
+                    if url.endswith('.txt') or 'displayproxies' in url or 'raw.githubusercontent.com' in url:
+                        # Простой текстовый формат
+                        for line in text.splitlines():
+                            line = line.strip()
+                            if not line or line.startswith('#'):
+                                continue
+                            
+                            # Проверяем формат IP:PORT
+                            if ':' in line and not line.startswith('http'):
+                                parts = line.split(':')
+                                if len(parts) == 2:
+                                    try:
+                                        ip, port = parts[0], int(parts[1])
+                                        if 1 <= port <= 65535:
+                                            proxies.add(f"{ip}:{port}")
+                                    except ValueError:
+                                        continue
+                    
+                    elif 'spys.me' in url or 'free-proxy.cz' in url or 'proxy-list.download' in url or 'proxynova.com' in url or 'proxyrotator.com' in url:
+                        # HTML страницы - парсим с помощью BeautifulSoup
+                        proxies.update(self._parse_html_proxies(text, url))
+                    
+                    else:
+                        # Пробуем общий парсинг
+                        proxies.update(self._parse_general_format(text))
                     
                     self.logger.debug(f"📥 {url}: найдено {len(proxies)} прокси")
                 else:
@@ -131,6 +153,200 @@ class ProxyManager(LoggerMixin):
             self.logger.debug(f"❌ {url}: {e}")
         
         return proxies
+    
+    def _parse_html_proxies(self, html_content: str, url: str = "") -> Set[str]:
+        """Парсит прокси из HTML страниц."""
+        proxies = set()
+        
+        try:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            # Специальный парсинг для разных сайтов
+            if 'spys.me' in url:
+                proxies.update(self._parse_spys_me(soup))
+            elif 'free-proxy.cz' in url:
+                proxies.update(self._parse_free_proxy_cz(soup))
+            elif 'proxy-list.download' in url:
+                proxies.update(self._parse_proxy_list_download(soup))
+            elif 'proxynova.com' in url:
+                proxies.update(self._parse_proxynova(soup))
+            else:
+                # Общий парсинг таблиц
+                proxies.update(self._parse_general_html(soup))
+            
+            # Также ищем в обычном тексте
+            text_content = soup.get_text()
+            proxies.update(self._parse_general_format(text_content))
+            
+        except Exception as e:
+            self.logger.debug(f"Ошибка парсинга HTML: {e}")
+        
+        return proxies
+    
+    def _parse_spys_me(self, soup) -> Set[str]:
+        """Парсит прокси с spys.me."""
+        proxies = set()
+        
+        # Ищем скрипты с прокси
+        scripts = soup.find_all('script')
+        for script in scripts:
+            if script.string:
+                # Ищем IP:PORT в JavaScript коде
+                proxies.update(self._parse_general_format(script.string))
+        
+        return proxies
+    
+    def _parse_free_proxy_cz(self, soup) -> Set[str]:
+        """Парсит прокси с free-proxy.cz."""
+        proxies = set()
+        
+        # Ищем таблицы с прокси
+        tables = soup.find_all('table')
+        for table in tables:
+            rows = table.find_all('tr')
+            for row in rows:
+                cells = row.find_all(['td', 'th'])
+                if len(cells) >= 2:
+                    # Первая ячейка - IP, вторая - порт
+                    ip_text = cells[0].get_text().strip()
+                    port_text = cells[1].get_text().strip()
+                    
+                    if self._is_valid_ip(ip_text):
+                        try:
+                            port = int(port_text)
+                            if 1 <= port <= 65535:
+                                proxies.add(f"{ip_text}:{port}")
+                        except ValueError:
+                            continue
+        
+        return proxies
+    
+    def _parse_proxy_list_download(self, soup) -> Set[str]:
+        """Парсит прокси с proxy-list.download."""
+        proxies = set()
+        
+        # Ищем элементы с прокси
+        proxy_elements = soup.find_all(['div', 'span', 'td'], class_=lambda x: x and 'proxy' in x.lower())
+        for element in proxy_elements:
+            text = element.get_text().strip()
+            proxies.update(self._parse_general_format(text))
+        
+        return proxies
+    
+    def _parse_proxynova(self, soup) -> Set[str]:
+        """Парсит прокси с proxynova.com."""
+        proxies = set()
+        
+        # Ищем таблицы с прокси
+        tables = soup.find_all('table')
+        for table in tables:
+            rows = table.find_all('tr')
+            for row in rows:
+                cells = row.find_all(['td', 'th'])
+                if len(cells) >= 2:
+                    # Ищем IP и порт в ячейках
+                    for i, cell in enumerate(cells):
+                        text = cell.get_text().strip()
+                        
+                        # Проверяем, содержит ли ячейка IP:PORT
+                        if ':' in text and '.' in text:
+                            parts = text.split(':')
+                            if len(parts) == 2:
+                                try:
+                                    ip, port = parts[0].strip(), int(parts[1].strip())
+                                    if self._is_valid_ip_port(ip, port):
+                                        proxies.add(f"{ip}:{port}")
+                                except ValueError:
+                                    continue
+                        
+                        # Или ищем отдельно IP и порт в соседних ячейках
+                        elif self._is_valid_ip(text) and i + 1 < len(cells):
+                            port_text = cells[i + 1].get_text().strip()
+                            try:
+                                port = int(port_text)
+                                if 1 <= port <= 65535:
+                                    proxies.add(f"{text}:{port}")
+                            except ValueError:
+                                continue
+        
+        return proxies
+    
+    def _parse_general_html(self, soup) -> Set[str]:
+        """Общий парсинг HTML таблиц."""
+        proxies = set()
+        
+        # Ищем таблицы с прокси
+        tables = soup.find_all('table')
+        for table in tables:
+            rows = table.find_all('tr')
+            for row in rows:
+                cells = row.find_all(['td', 'th'])
+                if len(cells) >= 2:
+                    # Ищем IP и порт в ячейках
+                    for i, cell in enumerate(cells):
+                        text = cell.get_text().strip()
+                        
+                        # Проверяем, содержит ли ячейка IP:PORT
+                        if ':' in text and '.' in text:
+                            parts = text.split(':')
+                            if len(parts) == 2:
+                                try:
+                                    ip, port = parts[0].strip(), int(parts[1].strip())
+                                    if self._is_valid_ip_port(ip, port):
+                                        proxies.add(f"{ip}:{port}")
+                                except ValueError:
+                                    continue
+                        
+                        # Или ищем отдельно IP и порт в соседних ячейках
+                        elif self._is_valid_ip(text) and i + 1 < len(cells):
+                            port_text = cells[i + 1].get_text().strip()
+                            try:
+                                port = int(port_text)
+                                if 1 <= port <= 65535:
+                                    proxies.add(f"{text}:{port}")
+                            except ValueError:
+                                continue
+        
+        return proxies
+    
+    def _parse_general_format(self, text: str) -> Set[str]:
+        """Общий парсинг текста на предмет прокси."""
+        proxies = set()
+        
+        import re
+        
+        # Регулярное выражение для поиска IP:PORT
+        ip_port_pattern = r'\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?):(?:[0-9]{1,5})\b'
+        
+        matches = re.findall(ip_port_pattern, text)
+        for match in matches:
+            try:
+                ip, port = match.split(':')
+                port = int(port)
+                if self._is_valid_ip_port(ip, port):
+                    proxies.add(f"{ip}:{port}")
+            except ValueError:
+                continue
+        
+        return proxies
+    
+    def _is_valid_ip(self, ip: str) -> bool:
+        """Проверяет, является ли строка валидным IP адресом."""
+        try:
+            parts = ip.split('.')
+            if len(parts) != 4:
+                return False
+            for part in parts:
+                if not 0 <= int(part) <= 255:
+                    return False
+            return True
+        except ValueError:
+            return False
+    
+    def _is_valid_ip_port(self, ip: str, port: int) -> bool:
+        """Проверяет валидность IP и порта."""
+        return self._is_valid_ip(ip) and 1 <= port <= 65535
     
     async def test_proxy(self, proxy: str) -> ProxyResult:
         """Тестирует один прокси."""
