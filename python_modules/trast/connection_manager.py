@@ -15,6 +15,7 @@ import aiohttp
 import httpx
 from config import TrastConfig
 from logger_setup import LoggerMixin
+from proxy_manager import ProxyManager
 
 
 @dataclass
@@ -136,111 +137,100 @@ class ProxyConnection(LoggerMixin):
     """Manages proxy connection testing."""
     
     def __init__(self):
-        self.proxies = self._load_proxies()
+        self.proxy_manager = ProxyManager()
+        self.proxies = self.proxy_manager.working_proxies.copy()
         self.tested_proxies = set()
     
-    def _load_proxies(self) -> List[Dict[str, Union[str, int]]]:
-        """Load proxies from files."""
-        proxies = []
+    def _load_proxies(self) -> List[str]:
+        """Load proxies from files and update working proxies."""
+        # Обновляем список рабочих прокси
+        self.proxy_manager.load_working_proxies()
+        self.proxies = self.proxy_manager.working_proxies.copy()
         
-        for file_path in TrastConfig.PROXY_FILES:
-            if not os.path.exists(file_path):
-                self.logger.warning(f"Proxy file not found: {file_path}")
-                continue
-            
-            try:
-                if file_path.endswith('.json'):
-                    proxies.extend(self._load_json_proxies(file_path))
-                elif file_path.endswith('.txt'):
-                    proxies.extend(self._load_txt_proxies(file_path))
-            except Exception as e:
-                self.logger.error(f"Error loading proxies from {file_path}: {e}")
+        # Также загружаем из старых файлов для совместимости
+        additional_proxies = []
         
-        self.logger.info(f"Loaded {len(proxies)} proxies from files")
-        return proxies
-    
-    def _load_json_proxies(self, file_path: str) -> List[Dict[str, Union[str, int]]]:
-        """Load proxies from JSON file."""
-        proxies = []
-        with open(file_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            for item in data:
-                if 'ip_address' in item and 'port' in item:
-                    proxies.append({
-                        'address': item['ip_address'],
-                        'port': int(item['port']),
-                        'protocol': 'http'
-                    })
-        return proxies
-    
-    def _load_txt_proxies(self, file_path: str) -> List[Dict[str, Union[str, int]]]:
-        """Load proxies from TXT file."""
-        proxies = []
-        with open(file_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if ':' in line:
-                    try:
-                        address, port = line.split(':', 1)
-                        proxies.append({
-                            'address': address.strip(),
-                            'port': int(port.strip()),
-                            'protocol': 'http'
-                        })
-                    except ValueError:
-                        continue
-        return proxies
-    
-    def _get_random_proxies(self, count: int = 10) -> List[Dict[str, Union[str, int]]]:
-        """Get random untested proxies."""
-        untested = [p for p in self.proxies if f"{p['address']}:{p['port']}" not in self.tested_proxies]
-        if not untested:
-            # Reset tested proxies if all have been tested
-            self.tested_proxies.clear()
-            untested = self.proxies
+        for proxy_file in TrastConfig.PROXY_FILES:
+            if os.path.exists(proxy_file):
+                try:
+                    with open(proxy_file, 'r', encoding='utf-8') as f:
+                        if proxy_file.endswith('.json'):
+                            data = json.load(f)
+                            if isinstance(data, list):
+                                additional_proxies.extend(data)
+                            elif isinstance(data, dict) and 'proxies' in data:
+                                additional_proxies.extend(data['proxies'])
+                        else:
+                            for line in f:
+                                line = line.strip()
+                                if line and not line.startswith('#'):
+                                    additional_proxies.append(line)
+                    
+                    self.logger.info(f"Loaded {len(additional_proxies)} additional proxies from {proxy_file}")
+                except Exception as e:
+                    self.logger.warning(f"Failed to load proxies from {proxy_file}: {e}")
+            else:
+                self.logger.warning(f"Proxy file not found: {proxy_file}")
         
-        return random.sample(untested, min(count, len(untested)))
+        # Объединяем все прокси
+        all_proxies = list(set(self.proxies + additional_proxies))
+        self.logger.info(f"Total proxies available: {len(all_proxies)}")
+        
+        return all_proxies
     
     async def test_connection(self) -> ConnectionResult:
-        """Test proxy connections."""
+        """Test proxy connection."""
         start_time = time.time()
-        test_proxies = self._get_random_proxies(10)
         
-        for proxy_info in test_proxies:
-            proxy_key = f"{proxy_info['address']}:{proxy_info['port']}"
-            self.tested_proxies.add(proxy_key)
-            
-            proxy_url = f"http://{proxy_info['address']}:{proxy_info['port']}"
-            
+        # Обновляем список прокси
+        self.proxies = self._load_proxies()
+        
+        if not self.proxies:
+            return ConnectionResult(
+                connection_type="proxy",
+                success=False,
+                response_time=time.time() - start_time,
+                error="No proxies available"
+            )
+        
+        # Тестируем несколько случайных прокси
+        test_proxies = random.sample(self.proxies, min(5, len(self.proxies)))
+        
+        for proxy in test_proxies:
             try:
-                async with aiohttp.ClientSession(
-                    timeout=aiohttp.ClientTimeout(total=TrastConfig.CONNECTION_TIMEOUT)
-                ) as session:
-                    async with session.get(
+                proxy_url = f"http://{proxy}"
+                
+                async with httpx.AsyncClient(
+                    proxy=proxy_url,
+                    timeout=TrastConfig.CONNECTION_TIMEOUT
+                ) as client:
+                    response = await client.get(
                         TrastConfig.TEST_URL,
-                        proxy=proxy_url,
                         headers=TrastConfig.get_headers_with_user_agent()
-                    ) as response:
-                        if response.status == 200:
-                            data = await response.json()
-                            ip_address = data.get('origin', 'unknown')
-                            response_time = time.time() - start_time
-                            
-                            self.logger.info(f"Proxy connection successful: {proxy_key} -> {ip_address} ({response_time:.3f}s)")
-                            
-                            return ConnectionResult(
-                                connection_type="proxy",
-                                success=True,
-                                response_time=response_time,
-                                proxy_config={"http": proxy_url, "https": proxy_url},
-                                ip_address=ip_address
-                            )
+                    )
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        ip_address = data.get('origin', 'unknown')
+                        response_time = time.time() - start_time
+                        
+                        self.logger.info(f"Proxy connection successful: {proxy} -> {ip_address} ({response_time:.3f}s)")
+                        
+                        return ConnectionResult(
+                            connection_type="proxy",
+                            success=True,
+                            response_time=response_time,
+                            proxy_config={"http": proxy_url, "https": proxy_url},
+                            ip_address=ip_address
+                        )
+                        
             except Exception as e:
-                self.logger.debug(f"Proxy {proxy_key} failed: {e}")
+                self.logger.debug(f"Proxy {proxy} failed: {e}")
                 continue
         
+        # Если все прокси не сработали
         response_time = time.time() - start_time
-        self.logger.warning(f"All proxy connections failed after {response_time:.3f}s")
+        self.logger.warning(f"All tested proxies failed after {response_time:.3f}s")
         
         return ConnectionResult(
             connection_type="proxy",

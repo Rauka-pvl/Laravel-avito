@@ -17,6 +17,7 @@ from config import TrastConfig
 from logger_setup import setup_logger
 from connection_manager import ConnectionManager, ConnectionResult
 from parser import TrastParser
+from proxy_manager import ProxyManager
 
 
 class TrastMain:
@@ -26,6 +27,7 @@ class TrastMain:
         self.logger = setup_logger("trast_main")
         self.connection_manager = ConnectionManager()
         self.parser = TrastParser()
+        self.proxy_manager = ProxyManager()
         self.start_time = datetime.now()
     
     async def run(self) -> bool:
@@ -35,31 +37,36 @@ class TrastMain:
             self.logger.info(f"Target URL: {TrastConfig.FIRST_PAGE_URL}")
             self.logger.info(f"Start time: {self.start_time}")
             
-            # Step 1: Test all connections in parallel
-            self.logger.info("Step 1: Testing connections...")
+            # Step 1: Update proxy list
+            self.logger.info("Step 1: Updating proxy list...")
+            proxy_count = await self.proxy_manager.update_working_proxies(max_proxies=50)
+            self.logger.info(f"📊 Рабочих прокси: {proxy_count}")
+            
+            # Step 2: Test all connections in parallel
+            self.logger.info("Step 2: Testing connections...")
             connection_results = await self.connection_manager.test_all_connections()
             
-            # Step 2: Select best connection
-            self.logger.info("Step 2: Selecting best connection...")
+            # Step 3: Select best connection
+            self.logger.info("Step 3: Selecting best connection...")
             best_connection = self.connection_manager.get_best_connection(connection_results)
             
             if not best_connection:
                 self.logger.error("No working connections found. Exiting.")
                 return False
             
-            # Step 3: Parse first page
-            self.logger.info("Step 3: Parsing first page...")
+            # Step 4: Parse first page
+            self.logger.info("Step 4: Parsing first page...")
             success, page_count, content = self.parser.parse_first_page(best_connection)
             
             if not success:
                 self.logger.error("Failed to parse first page. Exiting.")
                 return False
             
-            # Step 4: Log results
-            self.logger.info("Step 4: Logging results...")
+            # Step 5: Log results
+            self.logger.info("Step 5: Logging results...")
             self._log_results(best_connection, page_count, content)
             
-            # Step 5: Success summary
+            # Step 6: Success summary
             self._log_success_summary(best_connection, page_count)
             
             return True

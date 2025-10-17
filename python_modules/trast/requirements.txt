@@ -32,3 +32,6 @@ psutil
 
 # Excel support (if needed for data export)
 openpyxl
+
+# Proxy management
+socksio>=1.0.0
