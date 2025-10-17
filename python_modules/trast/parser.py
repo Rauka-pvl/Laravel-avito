@@ -134,14 +134,65 @@ class PageFetcher(LoggerMixin):
             return False, "", 0
     
     def _create_selenium_driver(self, connection_result: ConnectionResult) -> Optional[webdriver.Remote]:
-        """Create Selenium WebDriver with proxy configuration."""
+        """Create Selenium WebDriver with undetected-chromedriver for Cloudflare bypass."""
         try:
-            # Попробуем Firefox сначала (лучше для серверов)
+            # Используем undetected-chromedriver для обхода Cloudflare
+            self.logger.info("Creating undetected Chrome driver for Cloudflare bypass...")
+            
+            import undetected_chromedriver as uc
+            
+            # Настройки для undetected-chromedriver
+            options = uc.ChromeOptions()
+            
+            # Основные настройки
+            if TrastConfig.SELENIUM_HEADLESS:
+                options.add_argument("--headless")
+            
+            # Антидетект настройки
+            options.add_argument("--disable-blink-features=AutomationControlled")
+            options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--disable-extensions")
+            options.add_argument("--disable-plugins")
+            # options.add_argument("--disable-images")  # Может мешать загрузке контента
+            # options.add_argument("--disable-javascript")  # Отключаем JS для ускорения - НЕ ОТКЛЮЧАЕМ!
+            
+            # User agent
+            user_agent = TrastConfig.get_random_user_agent()
+            options.add_argument(f"--user-agent={user_agent}")
+            
+            # Настройки окна
+            options.add_argument("--window-size=1920,1080")
+            options.add_argument("--start-maximized")
+            
+            # Configure proxy
+            if connection_result and connection_result.success:
+                proxy_url = connection_result.proxy_config.get('http', '') if connection_result.proxy_config else None
+                if proxy_url:
+                    options.add_argument(f"--proxy-server={proxy_url}")
+                    self.logger.debug(f"Using proxy for Chrome: {proxy_url}")
+            
+            # Создаем undetected Chrome driver
+            driver = uc.Chrome(options=options)
+            
+            # Дополнительные настройки для маскировки
+            driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            
+            self.logger.info("✅ Undetected Chrome WebDriver created successfully")
+            return driver
+            
+        except Exception as chrome_error:
+            self.logger.warning(f"❌ Undetected Chrome failed: {chrome_error}")
+            self.logger.info("Trying Firefox with selenium-stealth as fallback...")
+            
+            # Fallback to Firefox with selenium-stealth
             try:
                 from selenium.webdriver.firefox.options import Options as FirefoxOptions
                 from selenium.webdriver.firefox.service import Service as FirefoxService
+                from selenium_stealth import stealth
                 
-                self.logger.info("Attempting to create Firefox driver...")
+                self.logger.info("Attempting to create Firefox driver with stealth...")
                 
                 options = FirefoxOptions()
                 
@@ -185,13 +236,25 @@ class PageFetcher(LoggerMixin):
                 
                 # Create Firefox driver
                 driver = webdriver.Firefox(options=options, service=service)
-                self.logger.info("✅ Firefox WebDriver created successfully")
+                
+                # Применяем stealth
+                stealth(driver,
+                    languages=["en-US", "en"],
+                    vendor="Google Inc.",
+                    platform="Linux x86_64",
+                    webgl_vendor="Intel Inc.",
+                    renderer="Intel Iris OpenGL Engine",
+                    fix_hairline=True,
+                )
+                
+                self.logger.info("✅ Firefox WebDriver with stealth created successfully")
+                return driver
                 
             except Exception as firefox_error:
-                self.logger.warning(f"❌ Firefox failed: {firefox_error}")
-                self.logger.info("Trying Chrome as fallback...")
+                self.logger.warning(f"❌ Firefox with stealth failed: {firefox_error}")
+                self.logger.info("Trying regular Chrome as last resort...")
                 
-                # Fallback to Chrome
+                # Last resort: regular Chrome
                 try:
                     from selenium.webdriver.chrome.service import Service as ChromeService
                     
@@ -220,12 +283,13 @@ class PageFetcher(LoggerMixin):
                     
                     # Create Chrome driver
                     driver = webdriver.Chrome(options=options, service=service)
-                    self.logger.info("✅ Chrome WebDriver created successfully")
+                    self.logger.info("✅ Regular Chrome WebDriver created successfully")
                     
                 except Exception as chrome_error:
-                    self.logger.error(f"❌ Chrome also failed: {chrome_error}")
-                    raise Exception(f"Both Firefox and Chrome failed. Firefox: {firefox_error}, Chrome: {chrome_error}")
+                    self.logger.error(f"❌ All drivers failed: {chrome_error}")
+                    return None
             
+            # Настройки таймаутов для любого драйвера
             driver.set_page_load_timeout(TrastConfig.SELENIUM_PAGE_LOAD_TIMEOUT)
             driver.implicitly_wait(TrastConfig.SELENIUM_IMPLICIT_WAIT)
             
@@ -318,53 +382,73 @@ class PageFetcher(LoggerMixin):
                             driver.refresh()
                             time.sleep(random.uniform(5, 10))
             
-            # Try to wait for specific elements with multiple strategies
+            # Улучшенная стратегия ожидания элементов
             try:
-                self.logger.info("Waiting for page content...")
+                self.logger.info("Waiting for page content with improved strategy...")
                 
-                # Стратегия 1: Ждем body
-                WebDriverWait(driver, 30).until(
+                # Стратегия 1: Ждем body (быстро)
+                WebDriverWait(driver, 10).until(
                     EC.presence_of_element_located((By.TAG_NAME, "body"))
                 )
                 self.logger.info("✅ Body element found")
                 
-                # Стратегия 2: Ждем конкретные элементы сайта
-                try:
-                    # Пробуем найти элементы пагинации или продуктов
-                    pagination_selectors = [
-                        "a.facetwp-page.last",
-                        ".facetwp-pager",
-                        ".pagination",
-                        "[data-page]"
-                    ]
-                    
-                    for selector in pagination_selectors:
-                        try:
-                            WebDriverWait(driver, 10).until(
-                                EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-                            )
-                            self.logger.info(f"✅ Found pagination element: {selector}")
-                            break
-                        except TimeoutException:
-                            continue
-                    
-                except Exception as e:
-                    self.logger.debug(f"Pagination elements not found: {e}")
+                # Стратегия 2: Ждем конкретные элементы сайта (приоритет)
+                content_found = False
+                content_selectors = [
+                    # Элементы пагинации (высокий приоритет)
+                    "a.facetwp-page.last",
+                    ".facetwp-pager",
+                    ".pagination",
+                    "[data-page]",
+                    # Элементы продуктов (средний приоритет)
+                    ".product",
+                    ".woocommerce-loop-product",
+                    ".product-item",
+                    # Общие элементы контента (низкий приоритет)
+                    ".content",
+                    ".main-content",
+                    ".shop-content"
+                ]
                 
-                # Стратегия 3: Ждем достаточный контент
-                WebDriverWait(driver, 20).until(
-                    lambda d: len(d.page_source) > 2000
-                )
-                self.logger.info("✅ Sufficient content loaded")
+                for selector in content_selectors:
+                    try:
+                        WebDriverWait(driver, 5).until(
+                            EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                        )
+                        self.logger.info(f"✅ Found content element: {selector}")
+                        content_found = True
+                        break
+                    except TimeoutException:
+                        continue
+                
+                if not content_found:
+                    self.logger.warning("No specific content elements found, checking page length...")
+                
+                # Стратегия 3: Ждем достаточного количества контента
+                try:
+                    WebDriverWait(driver, 15).until(
+                        lambda d: len(d.page_source) > 5000  # Увеличили минимальную длину
+                    )
+                    self.logger.info("✅ Sufficient content loaded (>5000 chars)")
+                except TimeoutException:
+                    # Проверяем промежуточную длину
+                    current_length = len(driver.page_source)
+                    if current_length > 2000:
+                        self.logger.warning(f"⚠️ Content length {current_length} chars (expected >5000)")
+                    else:
+                        self.logger.warning(f"❌ Content too short: {current_length} chars")
+                
+                # Стратегия 4: Проверяем отсутствие Cloudflare индикаторов
+                page_source = driver.page_source.lower()
+                cloudflare_indicators = ['checking your browser', 'ddos protection', 'cloudflare', 'ray id']
+                for indicator in cloudflare_indicators:
+                    if indicator in page_source:
+                        self.logger.warning(f"⚠️ Cloudflare indicator found: {indicator}")
                 
             except TimeoutException:
                 self.logger.warning("Timeout waiting for page elements")
-                
-                # Попробуем получить контент даже если таймаут
                 current_source = driver.page_source
                 self.logger.info(f"Current page source length: {len(current_source)}")
-                
-                # Если контент есть, но короткий - возможно это Cloudflare
                 if len(current_source) < 2000:
                     self.logger.warning("Page content is too short, might be Cloudflare challenge")
             
