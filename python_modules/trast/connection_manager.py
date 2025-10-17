@@ -195,8 +195,8 @@ class ProxyConnection(LoggerMixin):
         
         self.logger.info(f"🧪 Тестируем {len(self.proxies)} прокси агрессивно...")
         
-        # Тестируем больше прокси (до 50 вместо 5)
-        test_count = min(50, len(self.proxies))
+        # Тестируем ВСЕ прокси (до 124 вместо 50)
+        test_count = min(124, len(self.proxies))
         test_proxies = random.sample(self.proxies, test_count)
         
         self.logger.info(f"🎲 Тестируем {test_count} случайных прокси")
