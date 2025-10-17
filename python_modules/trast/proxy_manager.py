@@ -349,30 +349,44 @@ class ProxyManager(LoggerMixin):
         return self._is_valid_ip(ip) and 1 <= port <= 65535
     
     async def test_proxy(self, proxy: str) -> ProxyResult:
-        """Тестирует один прокси."""
+        """Тестирует один прокси с более мягкими настройками."""
         start_time = time.time()
         
         try:
             proxy_url = f"http://{proxy}"
             
+            # Более мягкие настройки для тестирования
             async with httpx.AsyncClient(
                 proxy=proxy_url,
-                timeout=10,
-                headers=TrastConfig.get_headers_with_user_agent()
+                timeout=httpx.Timeout(5.0, connect=3.0),  # Уменьшили таймауты
+                headers=TrastConfig.get_headers_with_user_agent(),
+                follow_redirects=True,
+                verify=False  # Отключаем проверку SSL для тестирования
             ) as client:
-                response = await client.get(TrastConfig.TEST_URL)
+                # Пробуем простой GET запрос
+                response = await client.get("http://httpbin.org/ip")
                 
                 if response.status_code == 200:
-                    data = response.json()
-                    ip_address = data.get('origin', 'unknown')
-                    response_time = time.time() - start_time
-                    
-                    return ProxyResult(
-                        proxy=proxy,
-                        success=True,
-                        response_time=response_time,
-                        ip_address=ip_address
-                    )
+                    try:
+                        data = response.json()
+                        ip_address = data.get('origin', 'unknown')
+                        response_time = time.time() - start_time
+                        
+                        return ProxyResult(
+                            proxy=proxy,
+                            success=True,
+                            response_time=response_time,
+                            ip_address=ip_address
+                        )
+                    except Exception as json_error:
+                        # Если JSON не парсится, но статус 200 - считаем успешным
+                        response_time = time.time() - start_time
+                        return ProxyResult(
+                            proxy=proxy,
+                            success=True,
+                            response_time=response_time,
+                            ip_address="unknown"
+                        )
                 else:
                     return ProxyResult(
                         proxy=proxy,
@@ -389,29 +403,45 @@ class ProxyManager(LoggerMixin):
                 error=str(e)
             )
     
-    async def test_proxies_batch(self, proxies: List[str], batch_size: int = 50) -> List[ProxyResult]:
-        """Тестирует прокси батчами."""
+    async def test_proxies_batch(self, proxies: List[str], batch_size: int = 100) -> List[ProxyResult]:
+        """Тестирует прокси батчами с улучшенной стратегией."""
         self.logger.info(f"🧪 Тестируем {len(proxies)} прокси батчами по {batch_size}...")
         
         all_results = []
+        successful_count = 0
         
         for i in range(0, len(proxies), batch_size):
             batch = proxies[i:i + batch_size]
-            self.logger.info(f"📦 Тестируем батч {i//batch_size + 1}/{(len(proxies) + batch_size - 1)//batch_size} ({len(batch)} прокси)")
+            batch_num = i//batch_size + 1
+            total_batches = (len(proxies) + batch_size - 1)//batch_size
+            
+            self.logger.info(f"📦 Тестируем батч {batch_num}/{total_batches} ({len(batch)} прокси)")
             
             tasks = [self.test_proxy(proxy) for proxy in batch]
             batch_results = await asyncio.gather(*tasks, return_exceptions=True)
             
+            batch_successful = 0
             for result in batch_results:
                 if isinstance(result, Exception):
-                    self.logger.warning(f"❌ Ошибка тестирования прокси: {result}")
+                    self.logger.debug(f"❌ Ошибка тестирования прокси: {result}")
                 else:
                     all_results.append(result)
+                    if result.success:
+                        batch_successful += 1
+                        successful_count += 1
+            
+            self.logger.info(f"✅ Батч {batch_num}: {batch_successful}/{len(batch)} рабочих прокси")
+            
+            # Если нашли достаточно рабочих прокси, можно остановиться
+            if successful_count >= 20:
+                self.logger.info(f"🎯 Найдено {successful_count} рабочих прокси, останавливаем тестирование")
+                break
             
             # Небольшая пауза между батчами
             if i + batch_size < len(proxies):
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.5)
         
+        self.logger.info(f"📊 Всего найдено {successful_count} рабочих прокси из {len(all_results)} протестированных")
         return all_results
     
     async def update_working_proxies(self, max_proxies: int = 100) -> int:
@@ -433,8 +463,8 @@ class ProxyManager(LoggerMixin):
         random.shuffle(proxies_list)
         
         # Ограничиваем количество для тестирования
-        if len(proxies_list) > max_proxies * 2:
-            proxies_list = proxies_list[:max_proxies * 2]
+        if len(proxies_list) > max_proxies * 5:
+            proxies_list = proxies_list[:max_proxies * 5]
             self.logger.info(f"📊 Ограничили тестирование до {len(proxies_list)} прокси")
         
         # Тестируем прокси
