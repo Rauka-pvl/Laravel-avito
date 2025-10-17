@@ -74,7 +74,8 @@ class TrastConfig:
     SELENIUM_TIMEOUT = 30
     SELENIUM_IMPLICIT_WAIT = 10
     SELENIUM_PAGE_LOAD_TIMEOUT = 30
-    SELENIUM_HEADLESS = True
+    SELENIUM_HEADLESS = True  # Установите False для отладки
+    SELENIUM_DEBUG_MODE = False  # Включить для детальной отладки
     
     # Browser options
     CHROME_OPTIONS = [

@@ -147,7 +147,12 @@ class PageFetcher(LoggerMixin):
                 
                 # Firefox options
                 for option in TrastConfig.FIREFOX_OPTIONS:
-                    options.add_argument(option)
+                    if TrastConfig.SELENIUM_HEADLESS and option == '--headless':
+                        options.add_argument(option)
+                    elif not TrastConfig.SELENIUM_HEADLESS and option == '--headless':
+                        continue  # Пропускаем headless если отключен
+                    else:
+                        options.add_argument(option)
                 
                 # Add random user agent
                 user_agent = TrastConfig.get_random_user_agent()
@@ -313,20 +318,55 @@ class PageFetcher(LoggerMixin):
                             driver.refresh()
                             time.sleep(random.uniform(5, 10))
             
-            # Try to wait for specific elements
+            # Try to wait for specific elements with multiple strategies
             try:
                 self.logger.info("Waiting for page content...")
+                
+                # Стратегия 1: Ждем body
                 WebDriverWait(driver, 30).until(
                     EC.presence_of_element_located((By.TAG_NAME, "body"))
                 )
+                self.logger.info("✅ Body element found")
                 
-                # Дополнительная проверка на наличие контента
-                WebDriverWait(driver, 10).until(
-                    lambda d: len(d.page_source) > 1000
+                # Стратегия 2: Ждем конкретные элементы сайта
+                try:
+                    # Пробуем найти элементы пагинации или продуктов
+                    pagination_selectors = [
+                        "a.facetwp-page.last",
+                        ".facetwp-pager",
+                        ".pagination",
+                        "[data-page]"
+                    ]
+                    
+                    for selector in pagination_selectors:
+                        try:
+                            WebDriverWait(driver, 10).until(
+                                EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                            )
+                            self.logger.info(f"✅ Found pagination element: {selector}")
+                            break
+                        except TimeoutException:
+                            continue
+                    
+                except Exception as e:
+                    self.logger.debug(f"Pagination elements not found: {e}")
+                
+                # Стратегия 3: Ждем достаточный контент
+                WebDriverWait(driver, 20).until(
+                    lambda d: len(d.page_source) > 2000
                 )
+                self.logger.info("✅ Sufficient content loaded")
                 
             except TimeoutException:
                 self.logger.warning("Timeout waiting for page elements")
+                
+                # Попробуем получить контент даже если таймаут
+                current_source = driver.page_source
+                self.logger.info(f"Current page source length: {len(current_source)}")
+                
+                # Если контент есть, но короткий - возможно это Cloudflare
+                if len(current_source) < 2000:
+                    self.logger.warning("Page content is too short, might be Cloudflare challenge")
             
             response_time = time.time() - start_time
             page_source = driver.page_source

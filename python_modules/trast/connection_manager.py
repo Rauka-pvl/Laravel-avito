@@ -91,31 +91,35 @@ class TORConnection(LoggerMixin):
         start_time = time.time()
         
         try:
-            async with aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=TrastConfig.CONNECTION_TIMEOUT)
-            ) as session:
-                async with session.get(
+            # Используем httpx для TOR, так как он поддерживает SOCKS5
+            import httpx
+            
+            async with httpx.AsyncClient(
+                proxy=TrastConfig.TOR_PROXY_URL,
+                timeout=TrastConfig.CONNECTION_TIMEOUT
+            ) as client:
+                response = await client.get(
                     TrastConfig.TEST_URL,
-                    proxy=self.proxy_url,
                     headers=TrastConfig.get_headers_with_user_agent()
-                ) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        ip_address = data.get('origin', 'unknown')
-                        response_time = time.time() - start_time
-                        
-                        self.logger.info(f"TOR connection successful: {ip_address} ({response_time:.3f}s)")
-                        
-                        return ConnectionResult(
-                            connection_type="tor",
-                            success=True,
-                            response_time=response_time,
-                            proxy_config={"http": self.proxy_url, "https": self.proxy_url},
-                            ip_address=ip_address
-                        )
-                    else:
-                        raise Exception(f"HTTP {response.status}")
-                        
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    ip_address = data.get('origin', 'unknown')
+                    response_time = time.time() - start_time
+                    
+                    self.logger.info(f"TOR connection successful: {ip_address} ({response_time:.3f}s)")
+                    
+                    return ConnectionResult(
+                        connection_type="tor",
+                        success=True,
+                        response_time=response_time,
+                        proxy_config={"http": TrastConfig.TOR_PROXY_URL, "https": TrastConfig.TOR_PROXY_URL},
+                        ip_address=ip_address
+                    )
+                else:
+                    raise Exception(f"HTTP {response.status_code}")
+                    
         except Exception as e:
             response_time = time.time() - start_time
             self.logger.warning(f"TOR connection failed after {response_time:.3f}s: {e}")
