@@ -60,16 +60,17 @@ class PageFetcher(LoggerMixin):
     
     def _create_httpx_client(self, connection_result: ConnectionResult) -> httpx.Client:
         """Create httpx client with proxy configuration."""
-        proxies = {}
+        proxy_url = None
         
         if connection_result and connection_result.success:
             proxy_config = connection_result.proxy_config
             if proxy_config:
-                proxies = proxy_config
-                self.logger.debug(f"Using proxy for httpx: {proxy_config}")
+                # httpx использует proxy_url вместо proxies
+                proxy_url = proxy_config.get('http') or proxy_config.get('https')
+                self.logger.debug(f"Using proxy for httpx: {proxy_url}")
         
         return httpx.Client(
-            proxies=proxies,
+            proxy=proxy_url,
             headers=TrastConfig.get_headers_with_user_agent(),
             timeout=TrastConfig.REQUEST_TIMEOUT,
             follow_redirects=True
@@ -132,35 +133,72 @@ class PageFetcher(LoggerMixin):
             self.logger.error(f"httpx fetch failed: {e}")
             return False, "", 0
     
-    def _create_selenium_driver(self, connection_result: ConnectionResult) -> Optional[webdriver.Chrome]:
+    def _create_selenium_driver(self, connection_result: ConnectionResult) -> Optional[webdriver.Remote]:
         """Create Selenium WebDriver with proxy configuration."""
         try:
-            options = ChromeOptions()
+            # Попробуем Firefox сначала (лучше для серверов)
+            try:
+                from selenium.webdriver.firefox.options import Options as FirefoxOptions
+                options = FirefoxOptions()
+                
+                # Firefox options
+                for option in TrastConfig.FIREFOX_OPTIONS:
+                    options.add_argument(option)
+                
+                # Add random user agent
+                user_agent = TrastConfig.get_random_user_agent()
+                options.set_preference("general.useragent.override", user_agent)
+                
+                # Configure proxy
+                if connection_result and connection_result.success:
+                    proxy_url = connection_result.proxy_config.get('http', '') if connection_result.proxy_config else None
+                    if proxy_url:
+                        if proxy_url.startswith('socks5://'):
+                            options.set_preference("network.proxy.type", 1)
+                            options.set_preference("network.proxy.socks", "127.0.0.1")
+                            options.set_preference("network.proxy.socks_port", 40000)
+                            options.set_preference("network.proxy.socks_version", 5)
+                        elif proxy_url.startswith('http://'):
+                            options.set_preference("network.proxy.type", 1)
+                            options.set_preference("network.proxy.http", "127.0.0.1")
+                            options.set_preference("network.proxy.http_port", 40000)
+                        self.logger.debug(f"Using proxy for Firefox: {proxy_url}")
+                
+                # Create Firefox driver
+                driver = webdriver.Firefox(options=options)
+                self.logger.info("Firefox WebDriver created successfully")
+                
+            except Exception as firefox_error:
+                self.logger.warning(f"Firefox failed: {firefox_error}, trying Chrome...")
+                
+                # Fallback to Chrome
+                options = ChromeOptions()
+                
+                # Add Chrome options
+                for option in TrastConfig.CHROME_OPTIONS:
+                    options.add_argument(option)
+                
+                # Add random user agent
+                user_agent = TrastConfig.get_random_user_agent()
+                options.add_argument(f"--user-agent={user_agent}")
+                
+                # Configure proxy
+                if connection_result and connection_result.success:
+                    proxy_url = connection_result.proxy_config.get('http', '') if connection_result.proxy_config else None
+                    if proxy_url:
+                        if proxy_url.startswith('socks5://'):
+                            options.add_argument(f"--proxy-server={proxy_url}")
+                        elif proxy_url.startswith('http://'):
+                            options.add_argument(f"--proxy-server={proxy_url}")
+                        self.logger.debug(f"Using proxy for Chrome: {proxy_url}")
+                
+                # Create Chrome driver
+                driver = webdriver.Chrome(options=options)
+                self.logger.info("Chrome WebDriver created successfully")
             
-            # Add Chrome options
-            for option in TrastConfig.CHROME_OPTIONS:
-                options.add_argument(option)
-            
-            # Add random user agent
-            user_agent = TrastConfig.get_random_user_agent()
-            options.add_argument(f"--user-agent={user_agent}")
-            
-            # Configure proxy
-            if connection_result and connection_result.success:
-                proxy_url = connection_result.proxy_config.get('http', '') if connection_result.proxy_config else None
-                if proxy_url:
-                    if proxy_url.startswith('socks5://'):
-                        options.add_argument(f"--proxy-server={proxy_url}")
-                    elif proxy_url.startswith('http://'):
-                        options.add_argument(f"--proxy-server={proxy_url}")
-                    self.logger.debug(f"Using proxy for Selenium: {proxy_url}")
-            
-            # Create driver
-            driver = webdriver.Chrome(options=options)
             driver.set_page_load_timeout(TrastConfig.SELENIUM_PAGE_LOAD_TIMEOUT)
             driver.implicitly_wait(TrastConfig.SELENIUM_IMPLICIT_WAIT)
             
-            self.logger.info("Selenium WebDriver created successfully")
             return driver
             
         except Exception as e:
@@ -179,35 +217,105 @@ class PageFetcher(LoggerMixin):
             self.logger.info(f"Fetching {url} with Selenium...")
             start_time = time.time()
             
-            # Navigate to page
+            # Сначала идем на главную страницу для установки сессии
+            try:
+                self.logger.info("Establishing session on main page...")
+                driver.get(TrastConfig.BASE_URL)
+                time.sleep(random.uniform(3, 6))
+                
+                # Симулируем человеческое поведение
+                driver.execute_script("window.scrollTo(0, 100);")
+                time.sleep(random.uniform(1, 3))
+                driver.execute_script("window.scrollTo(0, 0);")
+                time.sleep(random.uniform(1, 2))
+                
+            except Exception as e:
+                self.logger.warning(f"Session establishment failed: {e}")
+            
+            # Navigate to target page
+            self.logger.info(f"Navigating to target page: {url}")
             driver.get(url)
             
-            # Wait for page to load
-            wait_time = random.uniform(TrastConfig.CLOUDFLARE_WAIT_MIN, TrastConfig.CLOUDFLARE_WAIT_MAX)
-            self.logger.info(f"Waiting {wait_time:.1f}s for page to load...")
-            time.sleep(wait_time)
+            # Wait for page to load with progressive delays
+            initial_wait = random.uniform(5, 10)
+            self.logger.info(f"Initial wait: {initial_wait:.1f}s...")
+            time.sleep(initial_wait)
             
             # Check for Cloudflare challenge
             page_source = driver.page_source
             if self._detect_cloudflare(page_source, 200):
-                self.logger.info("Cloudflare challenge detected, waiting longer...")
-                additional_wait = random.uniform(10, 20)
-                time.sleep(additional_wait)
+                self.logger.info("Cloudflare challenge detected, applying bypass strategy...")
                 
-                # Try to wait for specific elements
-                try:
-                    WebDriverWait(driver, 30).until(
-                        EC.presence_of_element_located((By.TAG_NAME, "body"))
-                    )
-                except TimeoutException:
-                    self.logger.warning("Timeout waiting for page elements")
+                # Стратегия обхода Cloudflare
+                bypass_attempts = 0
+                max_bypass_attempts = 3
+                
+                while bypass_attempts < max_bypass_attempts:
+                    bypass_attempts += 1
+                    self.logger.info(f"Cloudflare bypass attempt {bypass_attempts}/{max_bypass_attempts}")
+                    
+                    # Дополнительное ожидание
+                    additional_wait = random.uniform(15, 30)
+                    self.logger.info(f"Extended wait: {additional_wait:.1f}s...")
+                    time.sleep(additional_wait)
+                    
+                    # Симулируем активность пользователя
+                    try:
+                        # Скроллинг
+                        driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
+                        time.sleep(random.uniform(2, 4))
+                        driver.execute_script("window.scrollTo(0, 0);")
+                        time.sleep(random.uniform(1, 2))
+                        
+                        # Клик по пустому месту
+                        driver.execute_script("document.body.click();")
+                        time.sleep(random.uniform(1, 2))
+                        
+                    except Exception as e:
+                        self.logger.debug(f"User simulation error: {e}")
+                    
+                    # Проверяем результат
+                    page_source = driver.page_source
+                    if not self._detect_cloudflare(page_source, 200):
+                        self.logger.info("Cloudflare bypass successful!")
+                        break
+                    else:
+                        self.logger.warning(f"Cloudflare still present after attempt {bypass_attempts}")
+                        
+                        if bypass_attempts < max_bypass_attempts:
+                            # Попробуем обновить страницу
+                            self.logger.info("Refreshing page...")
+                            driver.refresh()
+                            time.sleep(random.uniform(5, 10))
+            
+            # Try to wait for specific elements
+            try:
+                self.logger.info("Waiting for page content...")
+                WebDriverWait(driver, 30).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "body"))
+                )
+                
+                # Дополнительная проверка на наличие контента
+                WebDriverWait(driver, 10).until(
+                    lambda d: len(d.page_source) > 1000
+                )
+                
+            except TimeoutException:
+                self.logger.warning("Timeout waiting for page elements")
             
             response_time = time.time() - start_time
             page_source = driver.page_source
             
             self.logger.info(f"Selenium fetch completed ({response_time:.2f}s)")
+            self.logger.info(f"Page source length: {len(page_source)} characters")
             
-            if page_source and len(page_source) > 1000:  # Basic content check
+            # Более детальная проверка контента
+            if page_source and len(page_source) > 1000:
+                # Проверяем, что это не страница ошибки
+                if any(indicator in page_source.lower() for indicator in ['error', 'not found', 'access denied', 'blocked']):
+                    self.logger.warning("Page appears to be an error page")
+                    return False, page_source, 0
+                
                 self.logger.info("Page fetched successfully with Selenium")
                 return True, page_source, 200
             else:
