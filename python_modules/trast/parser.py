@@ -139,6 +139,10 @@ class PageFetcher(LoggerMixin):
             # Попробуем Firefox сначала (лучше для серверов)
             try:
                 from selenium.webdriver.firefox.options import Options as FirefoxOptions
+                from selenium.webdriver.firefox.service import Service as FirefoxService
+                
+                self.logger.info("Attempting to create Firefox driver...")
+                
                 options = FirefoxOptions()
                 
                 # Firefox options
@@ -148,6 +152,13 @@ class PageFetcher(LoggerMixin):
                 # Add random user agent
                 user_agent = TrastConfig.get_random_user_agent()
                 options.set_preference("general.useragent.override", user_agent)
+                
+                # Дополнительные настройки для обхода блокировок
+                options.set_preference("dom.webdriver.enabled", False)
+                options.set_preference("useAutomationExtension", False)
+                options.set_preference("general.platform.override", "Linux x86_64")
+                options.set_preference("general.appversion.override", "5.0 (X11)")
+                options.set_preference("general.oscpu.override", "Linux x86_64")
                 
                 # Configure proxy
                 if connection_result and connection_result.success:
@@ -164,37 +175,51 @@ class PageFetcher(LoggerMixin):
                             options.set_preference("network.proxy.http_port", 40000)
                         self.logger.debug(f"Using proxy for Firefox: {proxy_url}")
                 
+                # Создаем сервис с явным указанием пути к geckodriver
+                service = FirefoxService()
+                
                 # Create Firefox driver
-                driver = webdriver.Firefox(options=options)
-                self.logger.info("Firefox WebDriver created successfully")
+                driver = webdriver.Firefox(options=options, service=service)
+                self.logger.info("✅ Firefox WebDriver created successfully")
                 
             except Exception as firefox_error:
-                self.logger.warning(f"Firefox failed: {firefox_error}, trying Chrome...")
+                self.logger.warning(f"❌ Firefox failed: {firefox_error}")
+                self.logger.info("Trying Chrome as fallback...")
                 
                 # Fallback to Chrome
-                options = ChromeOptions()
-                
-                # Add Chrome options
-                for option in TrastConfig.CHROME_OPTIONS:
-                    options.add_argument(option)
-                
-                # Add random user agent
-                user_agent = TrastConfig.get_random_user_agent()
-                options.add_argument(f"--user-agent={user_agent}")
-                
-                # Configure proxy
-                if connection_result and connection_result.success:
-                    proxy_url = connection_result.proxy_config.get('http', '') if connection_result.proxy_config else None
-                    if proxy_url:
-                        if proxy_url.startswith('socks5://'):
-                            options.add_argument(f"--proxy-server={proxy_url}")
-                        elif proxy_url.startswith('http://'):
-                            options.add_argument(f"--proxy-server={proxy_url}")
-                        self.logger.debug(f"Using proxy for Chrome: {proxy_url}")
-                
-                # Create Chrome driver
-                driver = webdriver.Chrome(options=options)
-                self.logger.info("Chrome WebDriver created successfully")
+                try:
+                    from selenium.webdriver.chrome.service import Service as ChromeService
+                    
+                    options = ChromeOptions()
+                    
+                    # Add Chrome options
+                    for option in TrastConfig.CHROME_OPTIONS:
+                        options.add_argument(option)
+                    
+                    # Add random user agent
+                    user_agent = TrastConfig.get_random_user_agent()
+                    options.add_argument(f"--user-agent={user_agent}")
+                    
+                    # Configure proxy
+                    if connection_result and connection_result.success:
+                        proxy_url = connection_result.proxy_config.get('http', '') if connection_result.proxy_config else None
+                        if proxy_url:
+                            if proxy_url.startswith('socks5://'):
+                                options.add_argument(f"--proxy-server={proxy_url}")
+                            elif proxy_url.startswith('http://'):
+                                options.add_argument(f"--proxy-server={proxy_url}")
+                            self.logger.debug(f"Using proxy for Chrome: {proxy_url}")
+                    
+                    # Создаем сервис для Chrome
+                    service = ChromeService()
+                    
+                    # Create Chrome driver
+                    driver = webdriver.Chrome(options=options, service=service)
+                    self.logger.info("✅ Chrome WebDriver created successfully")
+                    
+                except Exception as chrome_error:
+                    self.logger.error(f"❌ Chrome also failed: {chrome_error}")
+                    raise Exception(f"Both Firefox and Chrome failed. Firefox: {firefox_error}, Chrome: {chrome_error}")
             
             driver.set_page_load_timeout(TrastConfig.SELENIUM_PAGE_LOAD_TIMEOUT)
             driver.implicitly_wait(TrastConfig.SELENIUM_IMPLICIT_WAIT)
@@ -202,7 +227,7 @@ class PageFetcher(LoggerMixin):
             return driver
             
         except Exception as e:
-            self.logger.error(f"Failed to create Selenium driver: {e}")
+            self.logger.error(f"❌ Failed to create any Selenium driver: {e}")
             return None
     
     def fetch_with_selenium(self, url: str, connection_result: ConnectionResult) -> Tuple[bool, str, int]:
