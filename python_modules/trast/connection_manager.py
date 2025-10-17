@@ -179,7 +179,7 @@ class ProxyConnection(LoggerMixin):
         return all_proxies
     
     async def test_connection(self) -> ConnectionResult:
-        """Test proxy connection."""
+        """Test proxy connection with aggressive testing."""
         start_time = time.time()
         
         # Обновляем список прокси
@@ -193,51 +193,129 @@ class ProxyConnection(LoggerMixin):
                 error="No proxies available"
             )
         
-        # Тестируем несколько случайных прокси
-        test_proxies = random.sample(self.proxies, min(5, len(self.proxies)))
+        self.logger.info(f"🧪 Тестируем {len(self.proxies)} прокси агрессивно...")
         
-        for proxy in test_proxies:
-            try:
-                proxy_url = f"http://{proxy}"
+        # Тестируем больше прокси (до 50 вместо 5)
+        test_count = min(50, len(self.proxies))
+        test_proxies = random.sample(self.proxies, test_count)
+        
+        self.logger.info(f"🎲 Тестируем {test_count} случайных прокси")
+        
+        # Тестируем прокси параллельно батчами
+        batch_size = 10
+        working_proxy = None
+        
+        for i in range(0, len(test_proxies), batch_size):
+            batch = test_proxies[i:i + batch_size]
+            batch_num = i // batch_size + 1
+            total_batches = (len(test_proxies) + batch_size - 1) // batch_size
+            
+            self.logger.info(f"📦 Батч {batch_num}/{total_batches}: тестируем {len(batch)} прокси")
+            
+            # Тестируем батч параллельно
+            tasks = [self._test_single_proxy(proxy) for proxy in batch]
+            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Ищем рабочий прокси в батче
+            for j, result in enumerate(batch_results):
+                proxy = batch[j]
                 
-                async with httpx.AsyncClient(
-                    proxy=proxy_url,
-                    timeout=TrastConfig.CONNECTION_TIMEOUT
-                ) as client:
-                    response = await client.get(
-                        TrastConfig.TEST_URL,
-                        headers=TrastConfig.get_headers_with_user_agent()
-                    )
+                if isinstance(result, Exception):
+                    self.logger.debug(f"Прокси {proxy} не работает: {result}")
+                    continue
+                
+                if result['success']:
+                    working_proxy = result
+                    self.logger.info(f"✅ НАЙДЕН РАБОЧИЙ ПРОКСИ: {proxy} ({result['response_time']:.3f}s)")
+                    break
+            
+            # Если нашли рабочий прокси, останавливаемся
+            if working_proxy:
+                break
+            
+            # Пауза между батчами
+            if i + batch_size < len(test_proxies):
+                await asyncio.sleep(0.5)
+        
+        if working_proxy:
+            return ConnectionResult(
+                connection_type="proxy",
+                success=True,
+                response_time=working_proxy['response_time'],
+                proxy_config={"http": working_proxy['proxy_url'], "https": working_proxy['proxy_url']},
+                ip_address=working_proxy['ip_address']
+            )
+        else:
+            # Если все прокси не сработали
+            response_time = time.time() - start_time
+            self.logger.warning(f"❌ Все {test_count} прокси не сработали за {response_time:.3f}s")
+            
+            return ConnectionResult(
+                connection_type="proxy",
+                success=False,
+                response_time=response_time,
+                error=f"All {test_count} tested proxies failed"
+            )
+    
+    async def _test_single_proxy(self, proxy: str) -> Dict:
+        """Тестирует один прокси."""
+        try:
+            proxy_url = f"http://{proxy}"
+            
+            async with httpx.AsyncClient(
+                proxy=proxy_url,
+                timeout=httpx.Timeout(5.0, connect=3.0),
+                headers=TrastConfig.get_headers_with_user_agent(),
+                verify=False
+            ) as client:
+                start_time = time.time()
+                
+                # Тестируем против целевого сайта
+                response = await client.get(TrastConfig.SHOP_URL)
+                response_time = time.time() - start_time
+                
+                if response.status_code == 200:
+                    # Проверяем, что это не Cloudflare
+                    content = response.text.lower()
+                    cloudflare_indicators = ['checking your browser', 'ddos protection', 'cloudflare', 'ray id']
                     
-                    if response.status_code == 200:
-                        data = response.json()
-                        ip_address = data.get('origin', 'unknown')
-                        response_time = time.time() - start_time
+                    if not any(indicator in content for indicator in cloudflare_indicators):
+                        # Получаем IP адрес
+                        try:
+                            ip_response = await client.get("http://httpbin.org/ip")
+                            if ip_response.status_code == 200:
+                                ip_data = ip_response.json()
+                                ip_address = ip_data.get('origin', 'unknown')
+                            else:
+                                ip_address = 'unknown'
+                        except:
+                            ip_address = 'unknown'
                         
-                        self.logger.info(f"Proxy connection successful: {proxy} -> {ip_address} ({response_time:.3f}s)")
-                        
-                        return ConnectionResult(
-                            connection_type="proxy",
-                            success=True,
-                            response_time=response_time,
-                            proxy_config={"http": proxy_url, "https": proxy_url},
-                            ip_address=ip_address
-                        )
-                        
-            except Exception as e:
-                self.logger.debug(f"Proxy {proxy} failed: {e}")
-                continue
-        
-        # Если все прокси не сработали
-        response_time = time.time() - start_time
-        self.logger.warning(f"All tested proxies failed after {response_time:.3f}s")
-        
-        return ConnectionResult(
-            connection_type="proxy",
-            success=False,
-            response_time=response_time,
-            error="All tested proxies failed"
-        )
+                        return {
+                            'success': True,
+                            'response_time': response_time,
+                            'proxy_url': proxy_url,
+                            'ip_address': ip_address
+                        }
+                    else:
+                        return {
+                            'success': False,
+                            'response_time': response_time,
+                            'error': 'Cloudflare detected'
+                        }
+                else:
+                    return {
+                        'success': False,
+                        'response_time': response_time,
+                        'error': f'HTTP {response.status_code}'
+                    }
+                    
+        except Exception as e:
+            return {
+                'success': False,
+                'response_time': 0,
+                'error': str(e)
+            }
 
 
 class ConnectionManager(LoggerMixin):
