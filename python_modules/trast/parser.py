@@ -186,13 +186,12 @@ class PageFetcher(LoggerMixin):
             self.logger.warning(f"❌ Undetected Chrome failed: {chrome_error}")
             self.logger.info("Trying Firefox with selenium-stealth as fallback...")
             
-            # Fallback to Firefox with selenium-stealth
+            # Fallback to Firefox (без stealth, так как он работает только с Chrome)
             try:
                 from selenium.webdriver.firefox.options import Options as FirefoxOptions
                 from selenium.webdriver.firefox.service import Service as FirefoxService
-                from selenium_stealth import stealth
                 
-                self.logger.info("Attempting to create Firefox driver with stealth...")
+                self.logger.info("Attempting to create Firefox driver...")
                 
                 options = FirefoxOptions()
                 
@@ -237,21 +236,11 @@ class PageFetcher(LoggerMixin):
                 # Create Firefox driver
                 driver = webdriver.Firefox(options=options, service=service)
                 
-                # Применяем stealth
-                stealth(driver,
-                    languages=["en-US", "en"],
-                    vendor="Google Inc.",
-                    platform="Linux x86_64",
-                    webgl_vendor="Intel Inc.",
-                    renderer="Intel Iris OpenGL Engine",
-                    fix_hairline=True,
-                )
-                
-                self.logger.info("✅ Firefox WebDriver with stealth created successfully")
+                self.logger.info("✅ Firefox WebDriver created successfully")
                 return driver
                 
             except Exception as firefox_error:
-                self.logger.warning(f"❌ Firefox with stealth failed: {firefox_error}")
+                self.logger.warning(f"❌ Firefox failed: {firefox_error}")
                 self.logger.info("Trying regular Chrome as last resort...")
                 
                 # Last resort: regular Chrome

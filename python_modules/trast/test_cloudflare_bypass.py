@@ -14,7 +14,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from config import TrastConfig
 from logger_setup import setup_logger
 from connection_manager import ConnectionManager, ConnectionResult
-from parser import PageFetcher
+from parser import PageFetcher, TrastParser
 
 class CloudflareTester:
     """Тестер обхода Cloudflare."""
@@ -22,6 +22,7 @@ class CloudflareTester:
     def __init__(self):
         self.logger = setup_logger("cloudflare_tester")
         self.page_fetcher = PageFetcher()
+        self.trast_parser = TrastParser()
     
     def test_undetected_chrome(self):
         """Тестирует undetected-chromedriver."""
@@ -134,28 +135,27 @@ class CloudflareTester:
             return False
     
     def test_selenium_stealth(self):
-        """Тестирует selenium-stealth с Firefox."""
-        self.logger.info("🧪 Тестируем selenium-stealth с Firefox...")
+        """Тестирует selenium-stealth с Chrome."""
+        self.logger.info("🧪 Тестируем selenium-stealth с Chrome...")
         
         try:
             from selenium import webdriver
-            from selenium.webdriver.firefox.options import Options as FirefoxOptions
-            from selenium.webdriver.firefox.service import Service as FirefoxService
+            from selenium.webdriver.chrome.options import Options as ChromeOptions
+            from selenium.webdriver.chrome.service import Service as ChromeService
             from selenium_stealth import stealth
             
-            options = FirefoxOptions()
+            options = ChromeOptions()
             options.add_argument("--headless")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-gpu")
             
             # User agent
             user_agent = TrastConfig.get_random_user_agent()
-            options.set_preference("general.useragent.override", user_agent)
+            options.add_argument(f"--user-agent={user_agent}")
             
-            # Дополнительные настройки для обхода блокировок
-            options.set_preference("dom.webdriver.enabled", False)
-            options.set_preference("useAutomationExtension", False)
-            
-            service = FirefoxService()
-            driver = webdriver.Firefox(options=options, service=service)
+            service = ChromeService()
+            driver = webdriver.Chrome(options=options, service=service)
             
             # Применяем stealth
             stealth(driver,
@@ -167,7 +167,7 @@ class CloudflareTester:
                 fix_hairline=True,
             )
             
-            self.logger.info("✅ Firefox с stealth создан успешно")
+            self.logger.info("✅ Chrome с stealth создан успешно")
             
             # Тестируем на целевом сайте
             test_url = TrastConfig.FIRST_PAGE_URL
@@ -185,7 +185,7 @@ class CloudflareTester:
             driver.quit()
             
             if page_length > 5000:
-                self.logger.info("🎉 ТЕСТ ПРОЙДЕН! Firefox с stealth работает!")
+                self.logger.info("🎉 ТЕСТ ПРОЙДЕН! Chrome с stealth работает!")
                 return True
             else:
                 self.logger.warning("❌ ТЕСТ НЕ ПРОЙДЕН. Страница слишком короткая.")
@@ -212,7 +212,7 @@ class CloudflareTester:
             self.logger.info(f"✅ Используем подключение: {best_connection.connection_type}")
             
             # Тестируем парсинг первой страницы
-            success, page_count, content = self.page_fetcher.parse_first_page(best_connection)
+            success, page_count, content = self.trast_parser.parse_first_page(best_connection)
             
             if success:
                 self.logger.info(f"🎉 ПАРСИНГ УСПЕШЕН! Найдено {page_count} страниц")
