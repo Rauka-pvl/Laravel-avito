@@ -14,18 +14,30 @@ def check_firefox():
     """Проверяем Firefox."""
     print("🦊 Проверка Firefox:")
     
-    try:
-        # Проверяем версию Firefox
-        result = subprocess.run(['firefox', '--version'], 
-                              capture_output=True, text=True, timeout=5)
-        if result.returncode == 0:
-            print(f"✅ Firefox: {result.stdout.strip()}")
-        else:
-            print("❌ Firefox не найден")
-            return False
-    except Exception as e:
-        print(f"❌ Firefox ошибка: {e}")
-        return False
+    # Проверяем разные пути Firefox
+    firefox_paths = [
+        'firefox',
+        'firefox-esr', 
+        '/usr/bin/firefox',
+        '/usr/bin/firefox-esr',
+        '/snap/bin/firefox'
+    ]
+    
+    firefox_found = False
+    for path in firefox_paths:
+        try:
+            result = subprocess.run([path, '--version'], 
+                                  capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                print(f"✅ Firefox: {result.stdout.strip()} (at {path})")
+                firefox_found = True
+                break
+        except Exception:
+            continue
+    
+    if not firefox_found:
+        print("❌ Firefox не найден в стандартных путях")
+        print("💡 Но Selenium может найти его автоматически")
     
     try:
         # Проверяем geckodriver
@@ -40,7 +52,7 @@ def check_firefox():
         print(f"❌ Geckodriver ошибка: {e}")
         return False
     
-    return True
+    return True  # Возвращаем True, так как Selenium может найти Firefox
 
 def check_chrome():
     """Проверяем Chrome."""
@@ -77,9 +89,19 @@ def test_selenium():
             print("🦊 Тестируем Firefox...")
             options = FirefoxOptions()
             options.add_argument('--headless')
+            
+            # Получаем информацию о Firefox
             driver = webdriver.Firefox(options=options)
+            firefox_version = driver.capabilities.get('browserVersion', 'Unknown')
+            print(f"✅ Firefox работает! Версия: {firefox_version}")
+            
             driver.get("https://httpbin.org/ip")
-            print(f"✅ Firefox работает! IP: {driver.page_source[:100]}...")
+            page_content = driver.page_source
+            if "origin" in page_content:
+                print(f"✅ Firefox IP тест успешен")
+            else:
+                print(f"⚠️ Firefox IP тест: {page_content[:100]}...")
+            
             driver.quit()
             return True
         except Exception as e:
