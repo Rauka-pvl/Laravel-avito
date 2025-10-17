@@ -511,6 +511,11 @@ class ProxyManager(LoggerMixin):
         """Обновляет список рабочих прокси."""
         self.logger.info("🔄 Обновляем список рабочих прокси...")
         
+        # Если уже есть достаточно рабочих прокси, не перезаписываем их
+        if len(self.working_proxies) >= 20:
+            self.logger.info(f"✅ Уже есть {len(self.working_proxies)} рабочих прокси, пропускаем обновление")
+            return len(self.working_proxies)
+        
         # Получаем прокси из источников
         all_proxies = await self.fetch_proxies_from_sources()
         
@@ -518,7 +523,7 @@ class ProxyManager(LoggerMixin):
             self.logger.warning("⚠️ Не удалось получить прокси из источников")
             return len(self.working_proxies)
         
-        # Добавляем уже рабочие прокси
+        # Добавляем уже рабочие прокси к новым для тестирования
         all_proxies.update(self.working_proxies)
         
         # Конвертируем в список и перемешиваем
@@ -539,24 +544,39 @@ class ProxyManager(LoggerMixin):
         # Сортируем по времени отклика
         working_results.sort(key=lambda x: x.response_time)
         
-        # Обновляем список рабочих прокси
-        self.working_proxies = [r.proxy for r in working_results[:max_proxies]]
+        # Берем только новые прокси (не перезаписываем существующие)
+        existing_proxies = set(self.working_proxies)
+        new_working_proxies = []
+        
+        for result in working_results:
+            if result.proxy not in existing_proxies:
+                new_working_proxies.append(result.proxy)
+        
+        # Добавляем новые прокси к существующим
+        self.working_proxies.extend(new_working_proxies)
+        
+        # Ограничиваем общее количество
+        if len(self.working_proxies) > max_proxies:
+            self.working_proxies = self.working_proxies[:max_proxies]
         
         # Сохраняем в файл
         self.save_working_proxies()
         
-        self.logger.info(f"✅ Обновлено {len(self.working_proxies)} рабочих прокси")
+        self.logger.info(f"✅ Добавлено {len(new_working_proxies)} новых прокси")
+        self.logger.info(f"📊 Всего рабочих прокси: {len(self.working_proxies)}")
         
-        # Выводим статистику
-        if working_results:
-            fastest = working_results[0]
-            slowest = working_results[-1]
-            avg_time = sum(r.response_time for r in working_results) / len(working_results)
-            
-            self.logger.info(f"📊 Статистика рабочих прокси:")
-            self.logger.info(f"   🏃 Самый быстрый: {fastest.proxy} ({fastest.response_time:.3f}s)")
-            self.logger.info(f"   🐌 Самый медленный: {slowest.proxy} ({slowest.response_time:.3f}s)")
-            self.logger.info(f"   ⚡ Среднее время: {avg_time:.3f}s")
+        # Выводим статистику только для новых прокси
+        if new_working_proxies:
+            new_results = [r for r in working_results if r.proxy in new_working_proxies]
+            if new_results:
+                fastest = min(new_results, key=lambda x: x.response_time)
+                slowest = max(new_results, key=lambda x: x.response_time)
+                avg_time = sum(r.response_time for r in new_results) / len(new_results)
+                
+                self.logger.info(f"📊 Статистика новых прокси:")
+                self.logger.info(f"   🏃 Самый быстрый: {fastest.proxy} ({fastest.response_time:.3f}s)")
+                self.logger.info(f"   🐌 Самый медленный: {slowest.proxy} ({slowest.response_time:.3f}s)")
+                self.logger.info(f"   ⚡ Среднее время: {avg_time:.3f}s")
         
         return len(self.working_proxies)
     
