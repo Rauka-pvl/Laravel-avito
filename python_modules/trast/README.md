@@ -1,179 +1,177 @@
-# Trast Parser - Modular Web Scraper
+# Trast Parser
 
-A robust, modular web scraper designed for server environments with advanced proxy rotation, anti-detection measures, and adaptive learning capabilities.
+A modular, robust parser for trast-zapchast.ru with automatic connection testing and Cloudflare bypass capabilities.
 
 ## Features
 
-- **Firefox-based scraping** - Uses Firefox with geckodriver for better Tor/WARP compatibility
-- **Multi-proxy support** - WARP → Tor → Proxy pool fallback chain
-- **Anti-detection measures** - Stealth browsing with fingerprint randomization
-- **Adaptive learning** - Learns from successful strategies and IP performance
-- **Session management** - Disposable browser pool with automatic cleanup
-- **Data validation** - Comprehensive data quality checks and backup management
+- **Parallel Connection Testing**: Tests WARP, TOR, and public proxies simultaneously
+- **Smart Fallback**: Uses httpx → requests → Selenium for maximum compatibility
+- **Cloudflare Bypass**: Automatic detection and Selenium fallback
+- **Comprehensive Logging**: Detailed logs with timestamps and connection info
+- **Modular Architecture**: Clean separation of concerns for easy maintenance
 
-## Installation
+## Quick Start
 
-### Prerequisites
+### Local Development
 
-```bash
-# Install Firefox and geckodriver
-sudo apt update
-sudo apt install firefox firefox-geckodriver
-
-# Install Python dependencies
-pip install selenium requests beautifulsoup4 openpyxl pandas
-```
-
-### Proxy Setup
-
-#### WARP (Recommended)
-```bash
-sudo ./install_warp.sh
-```
-
-#### Tor
-```bash
-sudo ./install_tor.sh
-```
-
-#### Proxy Pool
-Place proxy files in the root directory:
-- `proxies (1).json` - JSON format proxy list
-- `68f0af05c9bf6.txt` - Text format proxy list (IP:PORT)
-
-## Configuration
-
-Edit `modules/config.py` to customize:
-
-```python
-# Browser settings
-BROWSER_TYPE = "firefox"
-HEADLESS = True
-
-# Proxy priorities
-WARP_ENABLED = True
-TOR_SOCKS_PORT = 9050
-WARP_PROXY_URL = "socks5://127.0.0.1:40000"
-
-# Parsing parameters
-PAGES_PER_SESSION = 20
-MAX_EMPTY_PAGES = 10
-```
-
-## Usage
-
-### Basic Usage
 ```bash
 cd python_modules/trast
+pip install -r requirements.txt
+python test_parser.py
 python main.py
 ```
 
-### Testing
+### Server Deployment
+
+#### Option 1: Quick Start (Python)
 ```bash
-python test_modules.py
+cd python_modules/trast
+python quick_start.py
+```
+
+#### Option 2: Full Setup (Bash)
+```bash
+cd python_modules/trast
+chmod +x server_setup.sh
+./server_setup.sh
+```
+
+#### Option 3: Manual Installation
+```bash
+cd python_modules/trast
+python install.py
+python main.py
+```
+
+### Test Components
+
+```bash
+python test_parser.py
 ```
 
 ## Architecture
 
-### Core Modules
-
-- **browser_manager.py** - Firefox browser creation and session management
-- **proxy_manager.py** - Hybrid proxy strategy (WARP/Tor/Proxy pool)
-- **warp_manager.py** - Cloudflare WARP integration
-- **anti_block.py** - Anti-detection and session establishment
-- **parser_core.py** - Product extraction and page parsing
-- **data_manager.py** - Data writing, validation, and backup
-- **adaptive_learning.py** - Strategy optimization and IP tracking
-- **ip_rotator.py** - Intelligent IP rotation strategies
-
-### Proxy Strategy
-
-1. **WARP** (Primary) - Cloudflare WARP proxy for speed and reliability
-2. **Tor** (Fallback) - Tor network for maximum anonymity
-3. **Proxy Pool** (Last resort) - Rotating proxy servers
-
-### Anti-Detection Features
-
-- Random user agents (Firefox-based)
-- Dynamic viewport sizes
-- Human-like behavior simulation
-- Session establishment with cookies
-- Request rate limiting
-- IP rotation on failures
-
-## File Structure
-
 ```
 python_modules/trast/
-├── main.py                 # Main entry point
-├── modules/               # Core modules
-│   ├── browser_manager.py # Firefox browser management
-│   ├── proxy_manager.py   # Proxy strategy management
-│   ├── warp_manager.py    # WARP integration
-│   ├── config.py          # Configuration
-│   └── ...
-├── install_warp.sh        # WARP installation script
-├── install_tor.sh         # Tor installation script
-├── test_modules.py        # Module testing
-└── learning_data.json    # Adaptive learning data
+├── main.py                 # Entry point
+├── config.py               # Configuration
+├── logger_setup.py         # Logging setup
+├── connection_manager.py    # Connection testing
+├── parser.py               # Page parsing
+├── requirements.txt        # Dependencies
+├── test_parser.py          # Test script
+└── README.md              # This file
 ```
+
+## Connection Strategy
+
+The parser tests connections in this order of preference:
+
+1. **WARP** (Cloudflare) - Fastest if available
+2. **TOR** - Reliable anonymity
+3. **Public Proxies** - Fallback option
+
+All connections are tested in parallel, and the first successful one is used.
+
+## Configuration
+
+Key settings in `config.py`:
+
+- **Target URL**: `https://trast-zapchast.ru/shop/`
+- **TOR**: SOCKS5 on `127.0.0.1:9050`
+- **WARP**: SOCKS5 on `127.0.0.1:40000`
+- **Proxy Files**: `68f0af05c9bf6.txt`, `proxies (1).json`
+- **Timeouts**: 5s connection, 30s request
+- **Logs**: `storage/app/public/output/logs-trast/`
+
+## Parsing Strategy
+
+1. **Stage 1**: Try httpx (fastest)
+2. **Stage 2**: Fallback to requests
+3. **Stage 3**: Use Selenium for Cloudflare bypass
+
+## Output
+
+The parser extracts:
+- Total page count from pagination
+- First page content for analysis
+- Connection details and performance metrics
+
+## Logging
+
+Logs are written to:
+- Console (INFO level)
+- File: `storage/app/public/output/logs-trast/trast_YYYYMMDD_HHMMSS.log` (DEBUG level)
+
+## Error Handling
+
+- Automatic retries with exponential backoff
+- Connection switching on failure
+- Detailed error logging with context
+- Graceful degradation through fallback strategies
+
+## Requirements
+
+- Python 3.8+
+- Chrome/Firefox browser (for Selenium fallback)
+- TOR (optional, for anonymity)
+- WARP (optional, for Cloudflare integration)
+
+## Dependencies
+
+- `httpx` - Modern HTTP client
+- `aiohttp` - Async HTTP client
+- `requests` - Traditional HTTP client
+- `beautifulsoup4` - HTML parsing
+- `selenium` - Web automation
+- `stem` - TOR control
+- `tenacity` - Retry logic
+
+## Usage Examples
+
+### Basic Usage
+```bash
+python main.py
+```
+
+### Test Components
+```bash
+python test_parser.py
+```
+
+### Custom Configuration
+Edit `config.py` to modify:
+- URLs and timeouts
+- Proxy file paths
+- User agents and headers
+- Logging settings
 
 ## Troubleshooting
 
-### Firefox Issues
-```bash
-# Check Firefox installation
-firefox --version
+### No Working Connections
+- Check if TOR is running: `tor-parser status`
+- Check if WARP is connected: `warp-parser status`
+- Verify proxy files exist and contain valid proxies
 
-# Check geckodriver
-geckodriver --version
+### Cloudflare Detection
+- Parser automatically switches to Selenium
+- Ensure Chrome/Firefox is installed
+- Check logs for Cloudflare indicators
 
-# Install missing dependencies
-sudo apt install firefox-geckodriver
-```
+### Import Errors
+- Run `python test_parser.py` to verify imports
+- Check Python path and module structure
+- Install missing dependencies
 
-### WARP Issues
-```bash
-# Check WARP status
-warp-cli status
+## Development
 
-# Restart WARP
-warp-cli disconnect
-warp-cli connect
-```
+The parser is designed to be modular and extensible:
 
-### Tor Issues
-```bash
-# Check Tor service
-systemctl status tor-parser
-
-# Restart Tor
-sudo systemctl restart tor-parser
-```
-
-## Performance Optimization
-
-- **Session pooling** - Reuses browser sessions efficiently
-- **Smart IP rotation** - Rotates based on success rates and timing
-- **Adaptive delays** - Adjusts delays based on response times
-- **Bulk fetching** - Attempts to fetch all data in single request
-- **Backup management** - Automatic backup creation and restoration
-
-## Security Notes
-
-- WARP runs in proxy-only mode to avoid SSH blocking
-- Tor uses isolated data directory for security
-- All proxy credentials are handled securely
-- Browser sessions are properly disposed after use
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
+- Add new connection types in `connection_manager.py`
+- Extend parsing logic in `parser.py`
+- Modify configuration in `config.py`
+- Add new logging features in `logger_setup.py`
 
 ## License
 
-This project is for educational and research purposes only. Please respect website terms of service and robots.txt files.
+This parser is for educational and research purposes only. Please respect the website's terms of service and robots.txt.
