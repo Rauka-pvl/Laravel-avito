@@ -65,9 +65,72 @@ class ProxyManager(LoggerMixin):
                     self.working_proxies = data.get('proxies', [])
                     self.logger.info(f"📁 Загружено {len(self.working_proxies)} рабочих прокси из файла")
             else:
-                self.logger.info("📁 Файл с рабочими прокси не найден, начнем с пустого списка")
+                self.logger.info("📁 Файл working_proxies.json не найден, ищем другие файлы...")
+                # Ищем другие файлы с прокси
+                self._load_from_other_files()
         except Exception as e:
             self.logger.warning(f"⚠️ Ошибка загрузки рабочих прокси: {e}")
+            self.working_proxies = []
+    
+    def _load_from_other_files(self):
+        """Загружает прокси из других файлов."""
+        import glob
+        
+        patterns = [
+            "working_proxies_*.json",
+            "proxies_for_server_*.txt", 
+            "working_russian_proxies_*.json",
+            "verified_proxies_*.txt"
+        ]
+        
+        all_proxies = set()
+        
+        for pattern in patterns:
+            files = glob.glob(pattern)
+            if files:
+                # Берем самый новый файл
+                latest_file = max(files, key=os.path.getmtime)
+                self.logger.info(f"📁 Найден файл: {latest_file}")
+                
+                try:
+                    if latest_file.endswith('.json'):
+                        with open(latest_file, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                            
+                            if isinstance(data, list):
+                                for item in data:
+                                    if isinstance(item, str):
+                                        all_proxies.add(item)
+                                    elif isinstance(item, dict) and 'proxy' in item:
+                                        all_proxies.add(item['proxy'])
+                            elif isinstance(data, dict):
+                                if 'proxies' in data:
+                                    all_proxies.update(data['proxies'])
+                                elif 'russian_proxies' in data:
+                                    for item in data['russian_proxies']:
+                                        if isinstance(item, dict) and 'proxy' in item:
+                                            all_proxies.add(item['proxy'])
+                    
+                    elif latest_file.endswith('.txt'):
+                        with open(latest_file, 'r', encoding='utf-8') as f:
+                            for line in f:
+                                line = line.strip()
+                                if line and ':' in line and not line.startswith('#'):
+                                    all_proxies.add(line)
+                    
+                    self.logger.info(f"✅ Загружено {len(all_proxies)} прокси из {latest_file}")
+                    
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Ошибка загрузки {latest_file}: {e}")
+        
+        if all_proxies:
+            self.working_proxies = list(all_proxies)
+            self.logger.info(f"📊 Всего загружено {len(self.working_proxies)} рабочих прокси")
+            
+            # Сохраняем в основной файл для будущего использования
+            self.save_working_proxies()
+        else:
+            self.logger.info("📁 Файлы с рабочими прокси не найдены, начнем с пустого списка")
             self.working_proxies = []
     
     def save_working_proxies(self):
