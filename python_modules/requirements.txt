@@ -1,11 +1,35 @@
+# Web scraping and HTTP requests
 requests
 beautifulsoup4
+certifi
+pysocks  # Для поддержки SOCKS прокси
+
+# Excel and CSV processing
 openpyxl
+pandas
+
+# Database connectivity
 mysql-connector-python
+
+# Web automation
 selenium
 webdriver-manager
+geckodriver-autoinstaller  # Автоматическая установка Firefox драйвера
+
+# Telegram bot
 aiogram==3.4.1
+
+# Environment and configuration
 python-dotenv
+
+# System monitoring
 psutil
-sys
+
+# Scheduling
 croniter
+
+# XML processing
+lxml
+
+# Additional utilities
+pathlib

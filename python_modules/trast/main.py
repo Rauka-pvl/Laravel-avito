@@ -14,12 +14,13 @@ import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from openpyxl import Workbook, load_workbook
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.firefox.service import Service
+from selenium.webdriver.firefox.options import Options
+import geckodriver_autoinstaller
 import sys
 import csv
 from bz_telebot.database_manager import set_script_start, set_script_end
+from proxy_manager import ProxyManager
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from notification.main import TelegramNotifier
