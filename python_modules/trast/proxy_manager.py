@@ -157,6 +157,8 @@ class ProxyManager:
             ip = proxy['ip']
             port = proxy['port']
             
+            logger.info(f"Проверяем прокси {ip}:{port} ({protocol}) на сайте {site_url}")
+            
             if protocol in ['http', 'https']:
                 proxy_url = f"{protocol}://{ip}:{port}"
                 proxies = {
@@ -164,12 +166,14 @@ class ProxyManager:
                     'https': proxy_url
                 }
             elif protocol in ['socks4', 'socks5']:
-                proxy_url = f"{protocol}://{ip}:{port}"
+                # Для SOCKS прокси используем специальный формат
+                proxy_url = f"socks5://{ip}:{port}" if protocol == 'socks5' else f"socks4://{ip}:{port}"
                 proxies = {
                     'http': proxy_url,
                     'https': proxy_url
                 }
             else:
+                logger.info(f"Неподдерживаемый протокол: {protocol}")
                 return False
             
             # Тестируем прокси на целевом сайте
@@ -182,23 +186,25 @@ class ProxyManager:
                 }
             )
             
+            logger.info(f"Прокси {ip}:{port} ({protocol}) - HTTP статус: {response.status_code}")
+            
             if response.status_code == 200:
                 # Проверяем, что это не страница ошибки
                 if "403" in response.text or "Forbidden" in response.text:
-                    logger.debug(f"Прокси {ip}:{port} ({protocol}) заблокирован сайтом (403)")
+                    logger.info(f"Прокси {ip}:{port} ({protocol}) заблокирован сайтом (403)")
                     return False
                 elif "cloudflare" in response.text.lower():
-                    logger.debug(f"Прокси {ip}:{port} ({protocol}) заблокирован Cloudflare")
+                    logger.info(f"Прокси {ip}:{port} ({protocol}) заблокирован Cloudflare")
                     return False
                 else:
-                    logger.debug(f"Прокси {ip}:{port} ({protocol}) работает на сайте")
+                    logger.info(f"Прокси {ip}:{port} ({protocol}) работает на сайте")
                     return True
             else:
-                logger.debug(f"Прокси {ip}:{port} ({protocol}) - HTTP статус {response.status_code}")
+                logger.info(f"Прокси {ip}:{port} ({protocol}) - HTTP статус {response.status_code}")
                 return False
                 
         except Exception as e:
-            logger.debug(f"Прокси {ip}:{port} ({protocol}) - ошибка при проверке сайта: {str(e)}")
+            logger.info(f"Прокси {ip}:{port} ({protocol}) - ошибка при проверке сайта: {str(e)}")
             return False
     
     def validate_proxy_batch(self, proxies_batch):
@@ -208,19 +214,25 @@ class ProxyManager:
         with ThreadPoolExecutor(max_workers=10) as executor:
             future_to_proxy = {executor.submit(self.validate_proxy_for_site, proxy, 10): proxy for proxy in proxies_batch}
             
+            completed_count = 0
             for future in as_completed(future_to_proxy):
                 proxy = future_to_proxy[future]
+                completed_count += 1
                 try:
                     is_working = future.result()
                     if is_working:
-                        logger.info(f"✅ Найден рабочий прокси: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()}) ({proxy.get('country', 'Unknown')})")
+                        logger.info(f"Найден рабочий прокси: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()}) ({proxy.get('country', 'Unknown')})")
                         return proxy  # Возвращаем первый найденный рабочий прокси
                     else:
-                        logger.debug(f"❌ Прокси {proxy['ip']}:{proxy['port']} не работает")
+                        logger.info(f"Прокси {proxy['ip']}:{proxy['port']} не работает")
                         self.failed_proxies.add(f"{proxy['ip']}:{proxy['port']}")
                 except Exception as e:
-                    logger.debug(f"Ошибка при проверке прокси {proxy['ip']}:{proxy['port']}: {e}")
+                    logger.info(f"Ошибка при проверке прокси {proxy['ip']}:{proxy['port']}: {e}")
                     self.failed_proxies.add(f"{proxy['ip']}:{proxy['port']}")
+                
+                # Логируем прогресс каждые 10 прокси
+                if completed_count % 10 == 0:
+                    logger.info(f"Проверено {completed_count}/{len(proxies_batch)} прокси в пакете")
         
         logger.info(f"Пакет из {len(proxies_batch)} прокси проверен, рабочих не найдено")
         return None
