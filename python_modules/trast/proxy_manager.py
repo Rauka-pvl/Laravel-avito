@@ -5,6 +5,7 @@ import requests
 import logging
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger("trast.proxy_manager")
 
@@ -200,8 +201,29 @@ class ProxyManager:
             logger.debug(f"Прокси {ip}:{port} ({protocol}) - ошибка при проверке сайта: {str(e)}")
             return False
     
-    def get_first_working_proxy(self, max_attempts=100):
-        """Находит первый рабочий прокси для быстрого старта"""
+    def validate_proxy_batch(self, proxies_batch):
+        """Проверяет пакет прокси параллельно"""
+        results = []
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_proxy = {executor.submit(self.validate_proxy_for_site, proxy, 10): proxy for proxy in proxies_batch}
+            
+            for future in as_completed(future_to_proxy):
+                proxy = future_to_proxy[future]
+                try:
+                    is_working = future.result()
+                    if is_working:
+                        logger.info(f"✅ Найден рабочий прокси: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()}) ({proxy.get('country', 'Unknown')})")
+                        return proxy  # Возвращаем первый найденный рабочий прокси
+                    else:
+                        self.failed_proxies.add(f"{proxy['ip']}:{proxy['port']}")
+                except Exception as e:
+                    logger.debug(f"Ошибка при проверке прокси {proxy['ip']}:{proxy['port']}: {e}")
+                    self.failed_proxies.add(f"{proxy['ip']}:{proxy['port']}")
+        
+        return None
+
+    def get_first_working_proxy(self, max_attempts=3000):
+        """Находит первый рабочий прокси для быстрого старта с параллельной проверкой"""
         try:
             # Обновляем прокси если нужно
             if self.should_update_proxies():
@@ -231,22 +253,24 @@ class ProxyManager:
             
             # Статистика по протоколам
             protocol_stats = {}
-            for proxy in available_proxies:  # Все прокси, не только первые 20
+            for proxy in available_proxies:
                 protocol = proxy.get('protocol', 'http').upper()
                 protocol_stats[protocol] = protocol_stats.get(protocol, 0) + 1
             
             logger.info(f"Статистика прокси: {protocol_stats}")
             logger.info(f"Проверяем первые {max_attempts} прокси из {len(available_proxies)} доступных")
             
-            for i, proxy in enumerate(available_proxies[:max_attempts]):
-                logger.info(f"Проверяем прокси {i+1}/{max_attempts}: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()})")
+            # Проверяем прокси пакетами по 50 штук
+            batch_size = 50
+            proxies_to_check = available_proxies[:max_attempts]
+            
+            for i in range(0, len(proxies_to_check), batch_size):
+                batch = proxies_to_check[i:i + batch_size]
+                logger.info(f"Проверяем пакет {i//batch_size + 1}/{(len(proxies_to_check) + batch_size - 1)//batch_size}: прокси {i+1}-{min(i+batch_size, len(proxies_to_check))}")
                 
-                if self.validate_proxy_for_site(proxy, timeout=10):  # Проверяем на целевом сайте
-                    logger.info(f"Найден первый рабочий прокси: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()}) ({proxy.get('country', 'Unknown')})")
-                    return proxy
-                else:
-                    logger.debug(f"Прокси {proxy['ip']}:{proxy['port']} не работает")
-                    self.failed_proxies.add(f"{proxy['ip']}:{proxy['port']}")
+                working_proxy = self.validate_proxy_batch(batch)
+                if working_proxy:
+                    return working_proxy
             
             logger.warning("Не удалось найти рабочий прокси")
             return None
@@ -255,7 +279,7 @@ class ProxyManager:
             logger.error(f"Ошибка при поиске первого прокси: {e}")
             return None
     
-    def get_next_working_proxy(self, start_from_index=0, max_attempts=50):
+    def get_next_working_proxy(self, start_from_index=0, max_attempts=500):
         """Получает следующий рабочий прокси начиная с определенного индекса"""
         try:
             if not os.path.exists(self.proxies_file):
