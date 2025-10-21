@@ -12,4 +12,5 @@ yarn-error.log
 /.idea
 /.vscode
 /python_modules/price_photo_update/.wdm
+/venv/
 /.venv/
