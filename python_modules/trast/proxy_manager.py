@@ -3,9 +3,13 @@ import json
 import random
 import requests
 import logging
+import urllib3
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# Отключаем SSL warnings для прокси
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger("trast.proxy_manager")
 
@@ -153,7 +157,44 @@ class ProxyManager:
             logger.debug(f"Прокси {ip}:{port} ({protocol}) - неизвестная ошибка: {str(e)}")
             return False
     
-    def validate_proxy_for_site(self, proxy: Dict, site_url: str = "https://trast-zapchast.ru/shop/", timeout: int = 10) -> bool:
+    def get_external_ip(self, proxies: dict = None, timeout: int = 10) -> str:
+        """Получает внешний IP через прокси"""
+        try:
+            # Пробуем несколько сервисов для получения IP
+            ip_services = [
+                "https://2ip.ru",
+                "https://api.ipify.org",
+                "https://httpbin.org/ip"
+            ]
+            
+            for service in ip_services:
+                try:
+                    response = requests.get(service, proxies=proxies, timeout=timeout, verify=False)
+                    if response.status_code == 200:
+                        if service == "https://2ip.ru":
+                            # 2ip.ru возвращает HTML, нужно извлечь IP
+                            import re
+                            ip_match = re.search(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', response.text)
+                            if ip_match:
+                                return ip_match.group(1)
+                        elif service == "https://api.ipify.org":
+                            # ipify возвращает чистый IP
+                            return response.text.strip()
+                        elif service == "https://httpbin.org/ip":
+                            # httpbin возвращает JSON
+                            data = response.json()
+                            return data.get('origin', '').split(',')[0].strip()
+                except Exception as e:
+                    logger.debug(f"Не удалось получить IP с {service}: {e}")
+                    continue
+            
+            return "Не удалось определить"
+            
+        except Exception as e:
+            logger.debug(f"Ошибка при получении внешнего IP: {e}")
+            return "Ошибка"
+    
+    def validate_proxy_for_site(self, proxy: Dict, site_url: str = "https://trast-zapchast.ru/shop/", timeout: int = 20) -> bool:
         """Проверяет прокси на конкретном сайте"""
         try:
             protocol = proxy.get('protocol', 'http').lower()
@@ -169,8 +210,9 @@ class ProxyManager:
                     'https': proxy_url
                 }
             elif protocol in ['socks4', 'socks5']:
-                # Для SOCKS прокси используем специальный формат
-                proxy_url = f"socks5://{ip}:{port}" if protocol == 'socks5' else f"socks4://{ip}:{port}"
+                # Для SOCKS прокси используем правильный формат с PySocks
+                # socks5h:// означает SOCKS5 с DNS через прокси
+                proxy_url = f"socks5h://{ip}:{port}" if protocol == 'socks5' else f"socks4://{ip}:{port}"
                 proxies = {
                     'http': proxy_url,
                     'https': proxy_url
@@ -195,11 +237,17 @@ class ProxyManager:
                 'Cache-Control': 'max-age=0'
             }
             
+            # Проверяем внешний IP через прокси
+            logger.info(f"Проверяем внешний IP через прокси {ip}:{port}...")
+            external_ip = self.get_external_ip(proxies, timeout=10)
+            logger.info(f"Внешний IP через прокси: {external_ip}")
+            
             response = requests.get(
                 site_url,
                 proxies=proxies,
                 timeout=timeout,
-                headers=headers
+                headers=headers,
+                verify=False  # Отключаем SSL верификацию для прокси
             )
             
             logger.info(f"Прокси {ip}:{port} ({protocol}) - HTTP статус: {response.status_code}")
@@ -215,6 +263,17 @@ class ProxyManager:
                 else:
                     logger.info(f"Прокси {ip}:{port} ({protocol}) работает на сайте")
                     return True
+            elif protocol in ['socks4', 'socks5'] and site_url.startswith('https://'):
+                # Попробуем HTTP вместо HTTPS для SOCKS прокси
+                logger.info(f"Прокси {ip}:{port} ({protocol}) не работает с HTTPS, пробуем HTTP...")
+                http_url = site_url.replace('https://', 'http://')
+                try:
+                    response = requests.get(http_url, proxies=proxies, timeout=timeout, headers=headers, verify=False)
+                    if response.status_code == 200:
+                        logger.info(f"Прокси {ip}:{port} ({protocol}) работает через HTTP")
+                        return True
+                except Exception as e:
+                    logger.info(f"Прокси {ip}:{port} ({protocol}) - ошибка при проверке HTTP: {str(e)}")
             else:
                 logger.info(f"Прокси {ip}:{port} ({protocol}) - HTTP статус {response.status_code}")
                 return False
@@ -228,7 +287,7 @@ class ProxyManager:
         logger.info(f"Начинаем проверку пакета из {len(proxies_batch)} прокси...")
         
         with ThreadPoolExecutor(max_workers=10) as executor:
-            future_to_proxy = {executor.submit(self.validate_proxy_for_site, proxy, "https://trast-zapchast.ru/shop/", 10): proxy for proxy in proxies_batch}
+            future_to_proxy = {executor.submit(self.validate_proxy_for_site, proxy, "https://trast-zapchast.ru/shop/", 20): proxy for proxy in proxies_batch}
             
             completed_count = 0
             for future in as_completed(future_to_proxy):
@@ -336,7 +395,7 @@ class ProxyManager:
             for i, proxy in enumerate(proxies_to_check):
                 logger.info(f"Проверяем прокси {i+1}/{len(proxies_to_check)}: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()})")
                 
-                if self.validate_proxy_for_site(proxy, site_url="https://trast-zapchast.ru/shop/", timeout=10):  # Проверяем на целевом сайте
+                if self.validate_proxy_for_site(proxy, site_url="https://trast-zapchast.ru/shop/", timeout=20):  # Проверяем на целевом сайте
                     logger.info(f"Найден рабочий прокси: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()}) ({proxy.get('country', 'Unknown')})")
                     return proxy, start_from_index + i + 1  # Возвращаем прокси и следующий индекс
                 else:
