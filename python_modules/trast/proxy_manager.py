@@ -3,8 +3,11 @@ import json
 import random
 import requests
 import logging
+import urllib3
+import time
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger("trast.proxy_manager")
 
@@ -216,9 +219,19 @@ class ProxyManager:
             external_ip = self.get_external_ip(proxies, timeout=10)
             logger.info(f"Внешний IP через прокси: {external_ip}")
             
+            # Случайный User-Agent для разнообразия
+            user_agents = [
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+                'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            ]
+            
             # Подробные заголовки для имитации реального браузера
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'User-Agent': random.choice(user_agents),
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
                 'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
                 'Accept-Encoding': 'gzip, deflate, br',
@@ -231,21 +244,54 @@ class ProxyManager:
                 'Sec-Fetch-User': '?1',
                 'Cache-Control': 'max-age=0',
                 'Referer': 'https://trast-zapchast.ru/',
-                'Origin': 'https://trast-zapchast.ru'
+                'Origin': 'https://trast-zapchast.ru',
+                # Дополнительные заголовки для обхода блокировок
+                'X-Forwarded-For': ip,
+                'X-Real-IP': ip,
+                'X-Forwarded-Proto': 'https',
+                'X-Forwarded-Host': 'trast-zapchast.ru',
+                'X-Requested-With': 'XMLHttpRequest',
+                'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+                'Sec-Ch-Ua-Mobile': '?0',
+                'Sec-Ch-Ua-Platform': '"Windows"',
+                'Sec-GPC': '1',
+                'Pragma': 'no-cache',
+                'If-Modified-Since': 'Thu, 01 Jan 1970 00:00:00 GMT',
+                'If-None-Match': '*'
             }
             
             # Пробуем получить главную страницу сайта
             site_url = "https://trast-zapchast.ru/shop/"
             
             logger.info(f"Отправляем запрос к {site_url} через прокси {ip}:{port}...")
-            response = requests.get(
-                site_url,
-                proxies=proxies,
-                timeout=timeout,
-                headers=headers,
-                verify=False,
-                allow_redirects=True
-            )
+            
+            # Создаем сессию для сохранения cookies
+            session = requests.Session()
+            session.proxies.update(proxies)
+            session.headers.update(headers)
+            
+            # Дополнительные настройки сессии
+            session.verify = False
+            session.allow_redirects = True
+            
+            # Сначала делаем запрос на главную страницу для получения cookies
+            try:
+                main_page_response = session.get("https://trast-zapchast.ru/", timeout=timeout)
+                logger.info(f"Главная страница: HTTP {main_page_response.status_code}")
+                
+                # Добавляем cookies к заголовкам
+                if main_page_response.cookies:
+                    cookie_string = "; ".join([f"{name}={value}" for name, value in main_page_response.cookies.items()])
+                    session.headers['Cookie'] = cookie_string
+                    logger.info(f"Добавлены cookies: {cookie_string}")
+            except Exception as e:
+                logger.info(f"Не удалось получить cookies с главной страницы: {e}")
+            
+            # Небольшая задержка между запросами
+            time.sleep(random.uniform(1, 3))
+            
+            # Теперь запрашиваем целевую страницу
+            response = session.get(site_url, timeout=timeout)
             
             logger.info(f"Прокси {ip}:{port} ({protocol}) - HTTP статус: {response.status_code}")
             logger.info(f"Размер ответа: {len(response.text)} байт")
