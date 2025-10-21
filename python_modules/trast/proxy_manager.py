@@ -149,6 +149,169 @@ class ProxyManager:
             logger.debug(f"Прокси {ip}:{port} ({protocol}) - неизвестная ошибка: {str(e)}")
             return False
     
+    def get_external_ip(self, proxies: dict = None, timeout: int = 10) -> str:
+        """Получает внешний IP через прокси"""
+        try:
+            # Пробуем несколько сервисов для получения IP
+            ip_services = [
+                "https://2ip.ru",
+                "https://api.ipify.org",
+                "https://httpbin.org/ip"
+            ]
+            
+            for service in ip_services:
+                try:
+                    response = requests.get(service, proxies=proxies, timeout=timeout, verify=False)
+                    if response.status_code == 200:
+                        if service == "https://2ip.ru":
+                            # 2ip.ru возвращает HTML, нужно извлечь IP
+                            import re
+                            ip_match = re.search(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', response.text)
+                            if ip_match:
+                                return ip_match.group(1)
+                        elif service == "https://api.ipify.org":
+                            # ipify возвращает чистый IP
+                            return response.text.strip()
+                        elif service == "https://httpbin.org/ip":
+                            # httpbin возвращает JSON
+                            data = response.json()
+                            return data.get('origin', '').split(',')[0].strip()
+                except Exception as e:
+                    logger.debug(f"Не удалось получить IP с {service}: {e}")
+                    continue
+            
+            return "Не удалось определить"
+            
+        except Exception as e:
+            logger.debug(f"Ошибка при получении внешнего IP: {e}")
+            return "Ошибка"
+    
+    def validate_proxy_for_trast(self, proxy: Dict, timeout: int = 30) -> bool:
+        """Проверяет прокси ТОЛЬКО если он смог получить количество страниц с trast-zapchast.ru"""
+        try:
+            protocol = proxy.get('protocol', 'http').lower()
+            ip = proxy['ip']
+            port = proxy['port']
+            
+            logger.info(f"Проверяем прокси {ip}:{port} ({protocol}) на получение количества страниц с trast-zapchast.ru")
+            
+            if protocol in ['http', 'https']:
+                proxy_url = f"{protocol}://{ip}:{port}"
+                proxies = {
+                    'http': proxy_url,
+                    'https': proxy_url
+                }
+            elif protocol in ['socks4', 'socks5']:
+                proxy_url = f"socks5h://{ip}:{port}" if protocol == 'socks5' else f"socks4://{ip}:{port}"
+                proxies = {
+                    'http': proxy_url,
+                    'https': proxy_url
+                }
+            else:
+                logger.info(f"Неподдерживаемый протокол: {protocol}")
+                return False
+            
+            # Проверяем внешний IP через прокси
+            logger.info(f"Проверяем внешний IP через прокси {ip}:{port}...")
+            external_ip = self.get_external_ip(proxies, timeout=10)
+            logger.info(f"Внешний IP через прокси: {external_ip}")
+            
+            # Подробные заголовки для имитации реального браузера
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+                'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Sec-Fetch-User': '?1',
+                'Cache-Control': 'max-age=0',
+                'Referer': 'https://trast-zapchast.ru/',
+                'Origin': 'https://trast-zapchast.ru'
+            }
+            
+            # Пробуем получить главную страницу сайта
+            site_url = "https://trast-zapchast.ru/shop/"
+            
+            logger.info(f"Отправляем запрос к {site_url} через прокси {ip}:{port}...")
+            response = requests.get(
+                site_url,
+                proxies=proxies,
+                timeout=timeout,
+                headers=headers,
+                verify=False,
+                allow_redirects=True
+            )
+            
+            logger.info(f"Прокси {ip}:{port} ({protocol}) - HTTP статус: {response.status_code}")
+            logger.info(f"Размер ответа: {len(response.text)} байт")
+            logger.info(f"Заголовки ответа: {dict(response.headers)}")
+            
+            # Подробное логирование содержимого ответа
+            if response.status_code == 200:
+                response_text = response.text.lower()
+                
+                # Проверяем на различные типы блокировок
+                if "403" in response_text or "forbidden" in response_text:
+                    logger.info(f"Прокси {ip}:{port} ({protocol}) заблокирован сайтом (403 Forbidden)")
+                    logger.info(f"Первые 500 символов ответа: {response.text[:500]}")
+                    return False
+                elif "cloudflare" in response_text:
+                    logger.info(f"Прокси {ip}:{port} ({protocol}) заблокирован Cloudflare")
+                    logger.info(f"Первые 500 символов ответа: {response.text[:500]}")
+                    return False
+                elif "blocked" in response_text or "access denied" in response_text:
+                    logger.info(f"Прокси {ip}:{port} ({protocol}) заблокирован (Access Denied)")
+                    logger.info(f"Первые 500 символов ответа: {response.text[:500]}")
+                    return False
+                elif "captcha" in response_text or "challenge" in response_text:
+                    logger.info(f"Прокси {ip}:{port} ({protocol}) требует прохождения капчи")
+                    logger.info(f"Первые 500 символов ответа: {response.text[:500]}")
+                    return False
+                else:
+                    # Проверяем, что это действительно страница с товарами
+                    if "товар" in response_text or "product" in response_text or "каталог" in response_text:
+                        logger.info(f"Прокси {ip}:{port} ({protocol}) УСПЕШНО работает на сайте!")
+                        logger.info(f"Найдены признаки каталога товаров в ответе")
+                        return True
+                    else:
+                        logger.info(f"Прокси {ip}:{port} ({protocol}) получил ответ, но не похож на каталог товаров")
+                        logger.info(f"Первые 500 символов ответа: {response.text[:500]}")
+                        return False
+                        
+            elif response.status_code == 403:
+                logger.info(f"Прокси {ip}:{port} ({protocol}) заблокирован (HTTP 403)")
+                logger.info(f"Первые 500 символов ответа: {response.text[:500]}")
+                return False
+            elif response.status_code == 429:
+                logger.info(f"Прокси {ip}:{port} ({protocol}) получил Rate Limit (HTTP 429)")
+                logger.info(f"Первые 500 символов ответа: {response.text[:500]}")
+                return False
+            else:
+                logger.info(f"Прокси {ip}:{port} ({protocol}) - HTTP статус {response.status_code}")
+                logger.info(f"Первые 500 символов ответа: {response.text[:500]}")
+                return False
+                
+        except requests.exceptions.ConnectTimeout:
+            logger.info(f"Прокси {ip}:{port} ({protocol}) - таймаут подключения")
+            return False
+        except requests.exceptions.ReadTimeout:
+            logger.info(f"Прокси {ip}:{port} ({protocol}) - таймаут чтения")
+            return False
+        except requests.exceptions.ConnectionError as e:
+            logger.info(f"Прокси {ip}:{port} ({protocol}) - ошибка подключения: {str(e)}")
+            return False
+        except requests.exceptions.ProxyError as e:
+            logger.info(f"Прокси {ip}:{port} ({protocol}) - ошибка прокси: {str(e)}")
+            return False
+        except Exception as e:
+            logger.info(f"Прокси {ip}:{port} ({protocol}) - неизвестная ошибка: {str(e)}")
+            return False
+    
     def get_first_working_proxy(self, max_attempts=3000):
         """Находит первый рабочий прокси для быстрого старта"""
         try:
