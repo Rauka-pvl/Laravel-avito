@@ -241,7 +241,7 @@ class ProxyManager:
             for i, proxy in enumerate(available_proxies[:max_attempts]):
                 logger.info(f"Проверяем прокси {i+1}/{max_attempts}: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()})")
                 
-                if self.validate_proxy(proxy, timeout=5):  # Уменьшили timeout
+                if self.validate_proxy_for_site(proxy, timeout=10):  # Проверяем на целевом сайте
                     logger.info(f"Найден первый рабочий прокси: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()}) ({proxy.get('country', 'Unknown')})")
                     return proxy
                 else:
@@ -281,7 +281,7 @@ class ProxyManager:
             for i, proxy in enumerate(proxies_to_check):
                 logger.info(f"Проверяем прокси {i+1}/{len(proxies_to_check)}: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()})")
                 
-                if self.validate_proxy(proxy, timeout=5):
+                if self.validate_proxy_for_site(proxy, timeout=10):  # Проверяем на целевом сайте
                     logger.info(f"Найден рабочий прокси: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()}) ({proxy.get('country', 'Unknown')})")
                     return proxy, start_from_index + i + 1  # Возвращаем прокси и следующий индекс
                 else:

@@ -295,9 +295,7 @@ def producer(proxy_manager, first_proxy=None):
     # Используем уже найденный прокси или ищем новый
     if first_proxy:
         logger.info(f"Используем уже найденный прокси: {first_proxy['ip']}:{first_proxy['port']} ({first_proxy.get('protocol', 'http').upper()})")
-        # Временно отключаем прокси для тестирования
-        # driver = create_driver(first_proxy, proxy_manager)
-        driver = create_driver()  # Без прокси
+        driver = create_driver(first_proxy, proxy_manager)
         start_from_index = 0
     else:
         driver, start_from_index = get_driver_with_working_proxy(proxy_manager)
