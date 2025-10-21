@@ -428,7 +428,7 @@ if __name__ == "__main__":
     
     # Ищем первый рабочий прокси
     logger.info("Ищем первый рабочий прокси для быстрого старта...")
-    first_proxy = proxy_manager.get_first_working_proxy(max_attempts=3000)
+    first_proxy = proxy_manager.get_first_working_proxy()
     
     if not first_proxy:
         logger.error("Не удалось найти рабочий прокси. Завершаем работу.")

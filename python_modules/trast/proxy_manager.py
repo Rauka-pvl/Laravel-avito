@@ -203,7 +203,8 @@ class ProxyManager:
     
     def validate_proxy_batch(self, proxies_batch):
         """Проверяет пакет прокси параллельно"""
-        results = []
+        logger.info(f"Начинаем проверку пакета из {len(proxies_batch)} прокси...")
+        
         with ThreadPoolExecutor(max_workers=10) as executor:
             future_to_proxy = {executor.submit(self.validate_proxy_for_site, proxy, 10): proxy for proxy in proxies_batch}
             
@@ -215,11 +216,13 @@ class ProxyManager:
                         logger.info(f"✅ Найден рабочий прокси: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()}) ({proxy.get('country', 'Unknown')})")
                         return proxy  # Возвращаем первый найденный рабочий прокси
                     else:
+                        logger.debug(f"❌ Прокси {proxy['ip']}:{proxy['port']} не работает")
                         self.failed_proxies.add(f"{proxy['ip']}:{proxy['port']}")
                 except Exception as e:
                     logger.debug(f"Ошибка при проверке прокси {proxy['ip']}:{proxy['port']}: {e}")
                     self.failed_proxies.add(f"{proxy['ip']}:{proxy['port']}")
         
+        logger.info(f"Пакет из {len(proxies_batch)} прокси проверен, рабочих не найдено")
         return None
 
     def get_first_working_proxy(self, max_attempts=3000):
@@ -258,11 +261,11 @@ class ProxyManager:
                 protocol_stats[protocol] = protocol_stats.get(protocol, 0) + 1
             
             logger.info(f"Статистика прокси: {protocol_stats}")
-            logger.info(f"Проверяем первые {max_attempts} прокси из {len(available_proxies)} доступных")
+            logger.info(f"Проверяем ВСЕ {len(available_proxies)} прокси!")
             
             # Проверяем прокси пакетами по 50 штук
             batch_size = 50
-            proxies_to_check = available_proxies[:max_attempts]
+            proxies_to_check = available_proxies  # Проверяем ВСЕ прокси
             
             for i in range(0, len(proxies_to_check), batch_size):
                 batch = proxies_to_check[i:i + batch_size]
