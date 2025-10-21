@@ -228,7 +228,7 @@ class ProxyManager:
         logger.info(f"Начинаем проверку пакета из {len(proxies_batch)} прокси...")
         
         with ThreadPoolExecutor(max_workers=10) as executor:
-            future_to_proxy = {executor.submit(self.validate_proxy_for_site, proxy, 10): proxy for proxy in proxies_batch}
+            future_to_proxy = {executor.submit(self.validate_proxy_for_site, proxy, "https://trast-zapchast.ru/shop/", 10): proxy for proxy in proxies_batch}
             
             completed_count = 0
             for future in as_completed(future_to_proxy):
