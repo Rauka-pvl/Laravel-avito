@@ -194,6 +194,44 @@ class ProxyManager:
             logger.debug(f"Ошибка при получении внешнего IP: {e}")
             return "Ошибка"
     
+    def validate_proxy_basic(self, proxy: Dict, timeout: int = 10) -> bool:
+        """Проверяет базовую работоспособность прокси (может ли показать внешний IP)"""
+        try:
+            protocol = proxy.get('protocol', 'http').lower()
+            ip = proxy['ip']
+            port = proxy['port']
+            
+            if protocol in ['http', 'https']:
+                proxy_url = f"{protocol}://{ip}:{port}"
+                proxies = {'http': proxy_url, 'https': proxy_url}
+            elif protocol in ['socks4', 'socks5']:
+                proxy_url = f"socks5h://{ip}:{port}" if protocol == 'socks5' else f"socks4://{ip}:{port}"
+                proxies = {'http': proxy_url, 'https': proxy_url}
+            else:
+                return False
+            
+            # Проверяем на простом сайте
+            response = requests.get(
+                "http://httpbin.org/ip",
+                proxies=proxies,
+                timeout=timeout,
+                verify=False
+            )
+            
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    external_ip = data.get('origin', '').split(',')[0].strip()
+                    if external_ip and external_ip != ip:  # IP должен отличаться от прокси
+                        return True
+                except:
+                    pass
+            
+            return False
+            
+        except Exception as e:
+            return False
+    
     def validate_proxy_for_site(self, proxy: Dict, site_url: str = "https://trast-zapchast.ru/shop/", timeout: int = 20) -> bool:
         """Проверяет прокси на конкретном сайте"""
         try:
@@ -283,11 +321,15 @@ class ProxyManager:
             return False
     
     def validate_proxy_batch(self, proxies_batch):
-        """Проверяет пакет прокси параллельно"""
+        """Проверяет пакет прокси параллельно - сначала на общую работоспособность, потом на целевом сайте"""
         logger.info(f"Начинаем проверку пакета из {len(proxies_batch)} прокси...")
         
+        # Этап 1: Проверяем общую работоспособность прокси
+        logger.info("Этап 1: Проверяем общую работоспособность прокси...")
+        working_proxies = []
+        
         with ThreadPoolExecutor(max_workers=10) as executor:
-            future_to_proxy = {executor.submit(self.validate_proxy_for_site, proxy, "https://trast-zapchast.ru/shop/", 20): proxy for proxy in proxies_batch}
+            future_to_proxy = {executor.submit(self.validate_proxy_basic, proxy, 15): proxy for proxy in proxies_batch}
             
             completed_count = 0
             for future in as_completed(future_to_proxy):
@@ -296,21 +338,41 @@ class ProxyManager:
                 try:
                     is_working = future.result()
                     if is_working:
-                        logger.info(f"Найден рабочий прокси: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()}) ({proxy.get('country', 'Unknown')})")
-                        return proxy  # Возвращаем первый найденный рабочий прокси
+                        logger.info(f"Прокси {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()}) работает!")
+                        working_proxies.append(proxy)
                     else:
-                        logger.info(f"Прокси {proxy['ip']}:{proxy['port']} не работает")
+                        logger.debug(f"Прокси {proxy['ip']}:{proxy['port']} не работает")
                         self.failed_proxies.add(f"{proxy['ip']}:{proxy['port']}")
                 except Exception as e:
-                    logger.info(f"Ошибка при проверке прокси {proxy['ip']}:{proxy['port']}: {e}")
+                    logger.debug(f"Ошибка при проверке прокси {proxy['ip']}:{proxy['port']}: {e}")
                     self.failed_proxies.add(f"{proxy['ip']}:{proxy['port']}")
                 
                 # Логируем прогресс каждые 10 прокси
                 if completed_count % 10 == 0:
                     logger.info(f"Проверено {completed_count}/{len(proxies_batch)} прокси в пакете")
         
-        logger.info(f"Пакет из {len(proxies_batch)} прокси проверен, рабочих не найдено")
-        return None
+        logger.info(f"Этап 1 завершен: найдено {len(working_proxies)} рабочих прокси из {len(proxies_batch)}")
+        
+        if not working_proxies:
+            logger.info("Нет рабочих прокси в пакете")
+            return None
+        
+        # Этап 2: Проверяем на целевом сайте
+        logger.info("Этап 2: Проверяем на целевом сайте...")
+        for proxy in working_proxies[:5]:  # Проверяем только первые 5 рабочих
+            try:
+                is_working_on_site = self.validate_proxy_for_site(proxy, "https://trast-zapchast.ru/shop/", 20)
+                if is_working_on_site:
+                    logger.info(f"Найден рабочий прокси для сайта: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()})")
+                    return proxy
+                else:
+                    logger.info(f"Прокси {proxy['ip']}:{proxy['port']} работает, но заблокирован сайтом")
+            except Exception as e:
+                logger.info(f"Ошибка при проверке прокси {proxy['ip']}:{proxy['port']} на сайте: {e}")
+        
+        # Если ни один не работает на сайте, возвращаем первый рабочий
+        logger.info("Все прокси заблокированы сайтом, используем первый рабочий прокси")
+        return working_proxies[0]
 
     def get_first_working_proxy(self, max_attempts=3000):
         """Находит первый рабочий прокси для быстрого старта с параллельной проверкой"""
