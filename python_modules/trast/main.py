@@ -98,12 +98,82 @@ def append_to_csv(path, product_list):
     except Exception as e:
         logger.error(f"Error writing to CSV: {e}")
 
-def create_driver():
+def create_driver(proxy=None, proxy_manager=None):
+    """Создает Firefox драйвер с улучшенным обходом Cloudflare"""
+    geckodriver_autoinstaller.install()
+    
     options = Options()
+    
+    # Базовые настройки
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-gpu")
-    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    options.add_argument("--disable-dev-shm-usage")
+    
+    # Обход Cloudflare - отключение автоматизации
+    options.set_preference("dom.webdriver.enabled", False)
+    options.set_preference("useAutomationExtension", False)
+    
+    # Случайный User-Agent
+    user_agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    ]
+    options.set_preference("general.useragent.override", random.choice(user_agents))
+    
+    # Случайные платформы
+    platforms = ["Win32", "MacIntel", "Linux x86_64"]
+    options.set_preference("general.platform.override", random.choice(platforms))
+    
+    # Отключение WebRTC для предотвращения утечек IP
+    options.set_preference("media.peerconnection.enabled", False)
+    options.set_preference("media.navigator.enabled", False)
+    
+    # Увеличенные таймауты
+    options.set_preference("network.http.connection-timeout", 30)
+    options.set_preference("network.http.response.timeout", 30)
+    options.set_preference("network.http.keep-alive.timeout", 30)
+    
+    # Отключение различных функций
+    options.set_preference("dom.disable_beforeunload", True)
+    options.set_preference("dom.disable_window_open_feature", True)
+    options.set_preference("dom.disable_window_move_resize", True)
+    options.set_preference("dom.disable_window_flip", True)
+    options.set_preference("dom.disable_window_crash_reporter", True)
+    
+    # Настройка прокси
+    if proxy:
+        protocol = proxy.get('protocol', 'http').lower()
+        ip = proxy['ip']
+        port = proxy['port']
+        
+        if protocol in ['http', 'https']:
+            options.set_preference("network.proxy.type", 1)
+            options.set_preference("network.proxy.http", ip)
+            options.set_preference("network.proxy.http_port", int(port))
+            options.set_preference("network.proxy.ssl", ip)
+            options.set_preference("network.proxy.ssl_port", int(port))
+            options.set_preference("network.proxy.share_proxy_settings", True)
+        elif protocol in ['socks4', 'socks5']:
+            options.set_preference("network.proxy.type", 1)
+            options.set_preference("network.proxy.socks", ip)
+            options.set_preference("network.proxy.socks_port", int(port))
+            if protocol == 'socks5':
+                options.set_preference("network.proxy.socks_version", 5)
+            else:
+                options.set_preference("network.proxy.socks_version", 4)
+            options.set_preference("network.proxy.socks_remote_dns", True)
+    
+    # Создание драйвера
+    service = Service()
+    driver = webdriver.Firefox(service=service, options=options)
+    
+    # Дополнительные скрипты для обхода
+    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+    
+    return driver
 
 def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
     driver.get(url)
@@ -146,7 +216,164 @@ def get_products_from_page_soup(soup):
         logger.info(f"[Product Added] {product}")
     return results
 
-def producer():
+def get_driver_with_working_proxy(proxy_manager, start_from_index=0):
+    """Получает драйвер с рабочим прокси"""
+    max_attempts = 100
+    attempt = 0
+    
+    while attempt < max_attempts:
+        try:
+            if attempt == 0:
+                # Первая попытка - ищем первый рабочий прокси
+                proxy = proxy_manager.get_first_working_proxy(max_attempts=100)
+            else:
+                # Последующие попытки - ищем следующий рабочий прокси
+                proxy, start_from_index = proxy_manager.get_next_working_proxy(start_from_index, max_attempts=50)
+            
+            if not proxy:
+                logger.error("Не удалось найти рабочий прокси")
+                return None, start_from_index
+            
+            logger.info(f"Создаем драйвер с прокси {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()})")
+            
+            driver = create_driver(proxy, proxy_manager)
+            
+            # Проверяем внешний IP
+            try:
+                driver.get("https://api.ipify.org")
+                time.sleep(2)
+                external_ip = driver.page_source.strip()
+                if external_ip and len(external_ip) < 20:  # Простая проверка IP
+                    logger.info(f"Внешний IP через прокси: {external_ip}")
+                else:
+                    logger.warning(f"Не удалось получить внешний IP: {external_ip}")
+            except Exception as e:
+                logger.warning(f"Не удалось проверить внешний IP: {e}")
+            
+            return driver, start_from_index
+            
+        except Exception as e:
+            logger.error(f"Ошибка при создании драйвера: {e}")
+            attempt += 1
+            if attempt < max_attempts:
+                logger.info(f"Попытка {attempt + 1}/{max_attempts}")
+                time.sleep(2)
+    
+    logger.error("Не удалось создать драйвер после всех попыток")
+    return None, start_from_index
+
+def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
+    """Получает количество страниц с улучшенной обработкой Cloudflare"""
+    try:
+        logger.info("Получаем количество страниц для парсинга...")
+        driver.get(url)
+        time.sleep(5)  # Увеличиваем время ожидания для Cloudflare
+        
+        # Проверяем, не заблокированы ли мы
+        if "cloudflare" in driver.page_source.lower() or "checking your browser" in driver.page_source.lower():
+            logger.warning("Обнаружена страница Cloudflare, ждем...")
+            time.sleep(10)
+        
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+        last_page_el = soup.select_one(".facetwp-pager .facetwp-page.last")
+        if last_page_el and last_page_el.has_attr("data-page"):
+            total_pages = int(last_page_el["data-page"])
+            logger.info(f"Найдено {total_pages} страниц для парсинга")
+            return total_pages
+        else:
+            logger.warning("Не удалось найти информацию о количестве страниц, используем 1")
+            return 1
+    except Exception as e:
+        logger.error(f"Ошибка при получении количества страниц: {e}")
+        raise
+
+def producer(proxy_manager, first_proxy=None):
+    """Основная функция парсинга с поддержкой прокси и умной остановкой"""
+    thread_name = "MainThread"
+    logger.info(f"[{thread_name}] Starting producer with fast proxy search")
+    
+    # Используем уже найденный прокси или ищем новый
+    if first_proxy:
+        logger.info(f"Используем уже найденный прокси: {first_proxy['ip']}:{first_proxy['port']} ({first_proxy.get('protocol', 'http').upper()})")
+        driver = create_driver(first_proxy, proxy_manager)
+        start_from_index = 0
+    else:
+        driver, start_from_index = get_driver_with_working_proxy(proxy_manager)
+        if not driver:
+            logger.error("Не удалось получить драйвер с рабочим прокси")
+            return 0
+    
+    total_collected = 0
+    empty_pages_count = 0
+    max_empty_pages = 3
+    
+    try:
+        logger.info(f"Начинаем парсинг с прокси: {first_proxy['ip'] if first_proxy else 'unknown'}")
+        
+        # Получаем количество страниц
+        total_pages = get_pages_count_with_driver(driver)
+        
+        for page_num in range(1, total_pages + 1):
+            try:
+                page_url = f"https://trast-zapchast.ru/shop/?_paged={page_num}"
+                logger.info(f"[{thread_name}] Parsing page {page_num}/{total_pages}")
+                
+                driver.get(page_url)
+                time.sleep(random.uniform(3, 6))  # Увеличиваем время ожидания
+                
+                # Проверяем на блокировку
+                if "cloudflare" in driver.page_source.lower() or "checking your browser" in driver.page_source.lower():
+                    logger.warning(f"Страница {page_num} заблокирована Cloudflare, пробуем другой прокси...")
+                    driver.quit()
+                    driver, start_from_index = get_driver_with_working_proxy(proxy_manager, start_from_index)
+                    if not driver:
+                        logger.error("Не удалось получить новый драйвер")
+                        break
+                    continue
+                
+                soup = BeautifulSoup(driver.page_source, "html.parser")
+                products = get_products_from_page_soup(soup)
+                
+                if products:
+                    append_to_excel(OUTPUT_FILE, products)
+                    append_to_csv(CSV_FILE, products)
+                    logger.info(f"[{thread_name}] Page {page_num}: added {len(products)} products")
+                    total_collected += len(products)
+                    empty_pages_count = 0  # Сбрасываем счетчик пустых страниц
+                else:
+                    empty_pages_count += 1
+                    logger.warning(f"[{thread_name}] Page {page_num}: no products found (empty pages: {empty_pages_count})")
+                    
+                    # Умная остановка: если 3 страницы подряд пустые
+                    if empty_pages_count >= max_empty_pages:
+                        logger.info(f"Найдено {max_empty_pages} пустых страниц подряд. Останавливаем парсинг.")
+                        break
+                
+                # Случайная пауза между страницами
+                time.sleep(random.uniform(2, 4))
+                
+            except Exception as e:
+                logger.error(f"Ошибка при парсинге страницы {page_num}: {e}")
+                # Пробуем другой прокси при ошибке
+                try:
+                    driver.quit()
+                except:
+                    pass
+                driver, start_from_index = get_driver_with_working_proxy(proxy_manager, start_from_index)
+                if not driver:
+                    logger.error("Не удалось получить новый драйвер после ошибки")
+                    break
+                
+    finally:
+        try:
+            driver.quit()
+        except:
+            pass
+    
+    return total_collected
+
+def producer_old():
+    """Старая функция producer без прокси (для совместимости)"""
     thread_name = "MainThread"
     logger.info(f"[{thread_name}] Starting producer")
     driver = create_driver()
@@ -185,15 +412,35 @@ def create_backup():
 
 if __name__ == "__main__":
     script_name = "trast"
-    TelegramNotifier.notify("🚀 Trast parsing start...")
+    logger.info("=== TRAST PARSER STARTED ===")
+    logger.info(f"Target URL: https://trast-zapchast.ru/shop/?_paged=1")
+    logger.info(f"Start time: {datetime.now()}")
+    
     start_time = datetime.now()
     set_script_start(script_name)
 
     create_new_excel(OUTPUT_FILE)
     create_new_csv(CSV_FILE)
 
-    logger.info("Запуск парсинга в однопоточном режиме")
-    total_products = producer()  # 👈 теперь просто вызываем функцию
+    # Инициализируем прокси менеджер
+    logger.info("Step 1: Updating proxy list...")
+    proxy_manager = ProxyManager()
+    
+    # Ищем первый рабочий прокси
+    logger.info("Ищем первый рабочий прокси для быстрого старта...")
+    first_proxy = proxy_manager.get_first_working_proxy(max_attempts=100)
+    
+    if not first_proxy:
+        logger.error("Не удалось найти рабочий прокси. Завершаем работу.")
+        set_script_end(script_name, status='error')
+        exit(1)
+    
+    logger.info(f"Готовы к быстрому старту парсинга!")
+    logger.info("Запуск парсинга с поддержкой прокси и умной остановкой")
+    logger.info("============================================================")
+    
+    # Запускаем парсинг с прокси
+    total_products = producer(proxy_manager, first_proxy)
 
     status = 'done'
     try:
@@ -216,5 +463,9 @@ if __name__ == "__main__":
     duration = (datetime.now() - start_time).total_seconds()
     set_script_end(script_name, status=status)
 
-    logger.info(f"Завершено за {round(duration, 2)} секунд.")
-    TelegramNotifier.notify(f"✅ Trast parsing completed. Total: {total_products} items")
+    logger.info("============================================================")
+    logger.info(f"Парсинг завершен! Всего собрано товаров: {total_products}")
+    logger.info(f"Время выполнения: {round(duration, 2)} секунд")
+    logger.info(f"Статус: {status}")
+    logger.info(f"Товаров собрано: {total_products}")
+    logger.info("============================================================")
