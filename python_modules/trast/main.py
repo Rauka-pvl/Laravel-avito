@@ -109,6 +109,15 @@ def create_driver(proxy=None, proxy_manager=None):
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-gpu")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--window-size=1920,1080")
+    
+    # DNS настройки - используем Google DNS и Cloudflare DNS
+    options.add_argument("--dns-prefetch-disable")
+    options.set_preference("network.dns.disablePrefetch", True)
+    options.set_preference("network.dns.disablePrefetchFromHTTPS", True)
+    # Принудительно используем Google DNS
+    options.set_preference("network.dns.defaultIPv4", "8.8.8.8")
+    options.set_preference("network.dns.defaultIPv6", "2001:4860:4860::8888")
     
     # Обход Cloudflare - отключение автоматизации
     options.set_preference("dom.webdriver.enabled", False)
@@ -119,9 +128,15 @@ def create_driver(proxy=None, proxy_manager=None):
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/121.0",
+        "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/121.0",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15"
     ]
-    options.set_preference("general.useragent.override", random.choice(user_agents))
+    selected_ua = random.choice(user_agents)
+    options.set_preference("general.useragent.override", selected_ua)
     
     # Случайные платформы
     platforms = ["Win32", "MacIntel", "Linux x86_64"]
@@ -131,17 +146,34 @@ def create_driver(proxy=None, proxy_manager=None):
     options.set_preference("media.peerconnection.enabled", False)
     options.set_preference("media.navigator.enabled", False)
     
-    # Увеличенные таймауты
-    options.set_preference("network.http.connection-timeout", 30)
-    options.set_preference("network.http.response.timeout", 30)
-    options.set_preference("network.http.keep-alive.timeout", 30)
+    # Увеличенные таймауты для медленных прокси
+    options.set_preference("network.http.connection-timeout", 60)
+    options.set_preference("network.http.response.timeout", 60)
+    options.set_preference("network.http.keep-alive.timeout", 60)
+    options.set_preference("network.http.request.timeout", 60)
+    options.set_preference("network.dns.timeout", 30)
     
-    # Отключение различных функций
+    # Отключение различных функций и трекинга
     options.set_preference("dom.disable_beforeunload", True)
     options.set_preference("dom.disable_window_open_feature", True)
     options.set_preference("dom.disable_window_move_resize", True)
     options.set_preference("dom.disable_window_flip", True)
     options.set_preference("dom.disable_window_crash_reporter", True)
+    
+    # Дополнительные настройки обхода детекции
+    options.set_preference("privacy.trackingprotection.enabled", True)
+    options.set_preference("privacy.trackingprotection.pbmode.enabled", True)
+    options.set_preference("browser.safebrowsing.enabled", False)
+    options.set_preference("browser.safebrowsing.malware.enabled", False)
+    options.set_preference("browser.safebrowsing.phishing.enabled", False)
+    options.set_preference("browser.safebrowsing.blockedURIs.enabled", False)
+    
+    # Отключение автоматических обновлений и телеметрии
+    options.set_preference("app.update.enabled", False)
+    options.set_preference("app.update.auto", False)
+    options.set_preference("toolkit.telemetry.enabled", False)
+    options.set_preference("toolkit.telemetry.unified", False)
+    options.set_preference("datareporting.healthreport.uploadEnabled", False)
     
     # Настройка прокси
     if proxy:
@@ -170,8 +202,22 @@ def create_driver(proxy=None, proxy_manager=None):
     service = Service()
     driver = webdriver.Firefox(service=service, options=options)
     
-    # Дополнительные скрипты для обхода
+    # Дополнительные скрипты для обхода детекции Cloudflare
     driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+    driver.execute_script("Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})")
+    driver.execute_script("Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']})")
+    driver.execute_script("Object.defineProperty(navigator, 'permissions', {get: () => ({query: () => Promise.resolve({state: 'granted'})})})")
+    driver.execute_script("Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 4})")
+    driver.execute_script("Object.defineProperty(navigator, 'deviceMemory', {get: () => 8})")
+    driver.execute_script("Object.defineProperty(navigator, 'maxTouchPoints', {get: () => 0})")
+    
+    # Устанавливаем случайные размеры окна
+    width = random.randint(1200, 1920)
+    height = random.randint(800, 1080)
+    driver.set_window_size(width, height)
+    
+    # Добавляем случайную задержку перед началом работы
+    time.sleep(random.uniform(1, 3))
     
     return driver
 
