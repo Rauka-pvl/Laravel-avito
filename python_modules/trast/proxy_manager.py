@@ -149,6 +149,57 @@ class ProxyManager:
             logger.debug(f"Прокси {ip}:{port} ({protocol}) - неизвестная ошибка: {str(e)}")
             return False
     
+    def validate_proxy_for_site(self, proxy: Dict, site_url: str = "https://trast-zapchast.ru/shop/", timeout: int = 10) -> bool:
+        """Проверяет прокси на конкретном сайте"""
+        try:
+            protocol = proxy.get('protocol', 'http').lower()
+            ip = proxy['ip']
+            port = proxy['port']
+            
+            if protocol in ['http', 'https']:
+                proxy_url = f"{protocol}://{ip}:{port}"
+                proxies = {
+                    'http': proxy_url,
+                    'https': proxy_url
+                }
+            elif protocol in ['socks4', 'socks5']:
+                proxy_url = f"{protocol}://{ip}:{port}"
+                proxies = {
+                    'http': proxy_url,
+                    'https': proxy_url
+                }
+            else:
+                return False
+            
+            # Тестируем прокси на целевом сайте
+            response = requests.get(
+                site_url,
+                proxies=proxies,
+                timeout=timeout,
+                headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                }
+            )
+            
+            if response.status_code == 200:
+                # Проверяем, что это не страница ошибки
+                if "403" in response.text or "Forbidden" in response.text:
+                    logger.debug(f"Прокси {ip}:{port} ({protocol}) заблокирован сайтом (403)")
+                    return False
+                elif "cloudflare" in response.text.lower():
+                    logger.debug(f"Прокси {ip}:{port} ({protocol}) заблокирован Cloudflare")
+                    return False
+                else:
+                    logger.debug(f"Прокси {ip}:{port} ({protocol}) работает на сайте")
+                    return True
+            else:
+                logger.debug(f"Прокси {ip}:{port} ({protocol}) - HTTP статус {response.status_code}")
+                return False
+                
+        except Exception as e:
+            logger.debug(f"Прокси {ip}:{port} ({protocol}) - ошибка при проверке сайта: {str(e)}")
+            return False
+    
     def get_first_working_proxy(self, max_attempts=100):
         """Находит первый рабочий прокси для быстрого старта"""
         try:

@@ -195,7 +195,7 @@ def get_products_from_page_soup(soup):
         title_el = card.select_one("a.product-title")
         article_el = card.select_one("div.product-attributes .item:nth-child(1) .value")
         manufacturer_el = card.select_one("div.product-attributes .item:nth-child(2) .value")
-        price_el = card.select_one("div.product-price .amount")
+        price_el = card.select_one("div.product-price .woocommerce-Price-amount.amount")
 
         if not (title_el and article_el and manufacturer_el and price_el):
             continue
@@ -295,7 +295,9 @@ def producer(proxy_manager, first_proxy=None):
     # Используем уже найденный прокси или ищем новый
     if first_proxy:
         logger.info(f"Используем уже найденный прокси: {first_proxy['ip']}:{first_proxy['port']} ({first_proxy.get('protocol', 'http').upper()})")
-        driver = create_driver(first_proxy, proxy_manager)
+        # Временно отключаем прокси для тестирования
+        # driver = create_driver(first_proxy, proxy_manager)
+        driver = create_driver()  # Без прокси
         start_from_index = 0
     else:
         driver, start_from_index = get_driver_with_working_proxy(proxy_manager)
