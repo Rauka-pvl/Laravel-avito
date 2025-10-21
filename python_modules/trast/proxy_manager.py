@@ -67,16 +67,19 @@ class ProxyManager:
         try:
             if not os.path.exists(self.proxies_file):
                 logger.warning("Файл прокси не найден")
+                self.proxies = []
                 return []
             
             with open(self.proxies_file, 'r', encoding='utf-8') as f:
                 proxies = json.load(f)
             
+            self.proxies = proxies  # Сохраняем в self.proxies
             logger.info(f"Загружено {len(proxies)} прокси из кэша")
             return proxies
             
         except Exception as e:
             logger.error(f"Ошибка при загрузке прокси: {e}")
+            self.proxies = []
             return []
     
     def should_update_proxies(self) -> bool:
@@ -177,13 +180,26 @@ class ProxyManager:
                 return False
             
             # Тестируем прокси на целевом сайте
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+                'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Sec-Fetch-User': '?1',
+                'Cache-Control': 'max-age=0'
+            }
+            
             response = requests.get(
                 site_url,
                 proxies=proxies,
                 timeout=timeout,
-                headers={
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                }
+                headers=headers
             )
             
             logger.info(f"Прокси {ip}:{port} ({protocol}) - HTTP статус: {response.status_code}")
