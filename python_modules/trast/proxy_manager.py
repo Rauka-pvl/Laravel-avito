@@ -336,7 +336,7 @@ class ProxyManager:
             for i, proxy in enumerate(proxies_to_check):
                 logger.info(f"Проверяем прокси {i+1}/{len(proxies_to_check)}: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()})")
                 
-                if self.validate_proxy_for_site(proxy, timeout=10):  # Проверяем на целевом сайте
+                if self.validate_proxy_for_site(proxy, site_url="https://trast-zapchast.ru/shop/", timeout=10):  # Проверяем на целевом сайте
                     logger.info(f"Найден рабочий прокси: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()}) ({proxy.get('country', 'Unknown')})")
                     return proxy, start_from_index + i + 1  # Возвращаем прокси и следующий индекс
                 else:
