@@ -333,19 +333,17 @@ def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
         logger.error(f"Ошибка при получении количества страниц: {e}")
         raise
 
-def producer(proxy_manager, fallback_proxy=None):
-    """Основная функция парсинга с гибридной стратегией (прямой доступ + прокси fallback)"""
+def producer(proxy_manager):
+    """Основная функция парсинга ТОЛЬКО через прокси"""
     thread_name = "MainThread"
-    logger.info(f"[{thread_name}] Starting producer with hybrid strategy")
+    logger.info(f"[{thread_name}] Starting producer with PROXY-ONLY strategy")
     
-    # Гибридная стратегия: начинаем БЕЗ прокси
-    logger.info("Этап 1: Пробуем прямой доступ БЕЗ прокси")
-    driver = create_driver(None, proxy_manager)  # БЕЗ прокси
-    start_from_index = 0
+    # Получаем драйвер с рабочим прокси
+    driver, start_from_index = get_driver_with_working_proxy(proxy_manager)
     current_proxy = None
     
     if not driver:
-        logger.error("Не удалось создать драйвер без прокси")
+        logger.error("Не удалось создать драйвер с прокси")
         return 0
     
     total_collected = 0
@@ -353,29 +351,14 @@ def producer(proxy_manager, fallback_proxy=None):
     max_empty_pages = 3
     
     try:
-        logger.info(f"Начинаем парсинг БЕЗ прокси (прямой доступ)")
+        logger.info(f"Начинаем парсинг ТОЛЬКО через прокси")
         
         # Получаем количество страниц
         try:
             total_pages = get_pages_count_with_driver(driver)
         except Exception as e:
-            logger.warning(f"Прямой доступ не работает: {e}")
-            logger.info("Этап 2: Переключаемся на прокси")
-            
-            if fallback_proxy:
-                logger.info(f"Используем fallback прокси: {fallback_proxy['ip']}:{fallback_proxy['port']}")
-                driver.quit()
-                driver = create_driver(fallback_proxy, proxy_manager)
-                current_proxy = fallback_proxy
-                
-                if not driver:
-                    logger.error("Не удалось создать драйвер с fallback прокси")
-                    return 0
-                
-                total_pages = get_pages_count_with_driver(driver)
-            else:
-                logger.error("Нет fallback прокси, завершаем работу")
-                return 0
+            logger.error(f"Не удалось получить количество страниц: {e}")
+            return 0
         
         for page_num in range(1, total_pages + 1):
             try:
@@ -476,7 +459,7 @@ def create_backup():
 
 if __name__ == "__main__":
     script_name = "trast"
-    logger.info("=== TRAST PARSER STARTED ===")
+    logger.info("=== TRAST PARSER STARTED (PROXY-ONLY) ===")
     logger.info(f"Target URL: https://trast-zapchast.ru/shop/?_paged=1")
     logger.info(f"Start time: {datetime.now()}")
     
@@ -490,26 +473,14 @@ if __name__ == "__main__":
     logger.info("Step 1: Updating proxy list...")
     proxy_manager = ProxyManager()
     
-    # Ищем первый рабочий прокси
-    # Гибридная стратегия: начинаем БЕЗ прокси, используем прокси только при блокировке
-    logger.info("Гибридная стратегия: начинаем БЕЗ прокси для максимальной скорости")
-    logger.info("Прокси будут использоваться только при обнаружении блокировки")
+    # Стратегия ТОЛЬКО прокси - никакого прямого доступа
+    logger.info("СТРАТЕГИЯ: ТОЛЬКО ПРОКСИ - никакого прямого доступа!")
+    logger.info("Прокси проверяются ТОЛЬКО на способность получить количество страниц с trast-zapchast.ru")
     
-    # Ищем рабочий прокси как fallback, но не используем его сразу
-    logger.info("Ищем рабочий прокси как fallback...")
-    first_proxy = proxy_manager.get_first_working_proxy()
-    
-    if first_proxy:
-        logger.info(f"Найден fallback прокси: {first_proxy['ip']}:{first_proxy['port']} ({first_proxy.get('protocol', 'http').upper()})")
-    else:
-        logger.warning("Fallback прокси не найден, будем работать только с прямым доступом")
-    
-    logger.info(f"Готовы к быстрому старту парсинга!")
-    logger.info("Запуск парсинга с гибридной стратегией (прямой доступ + прокси fallback)")
     logger.info("============================================================")
     
-    # Запускаем парсинг с гибридной стратегией
-    total_products = producer(proxy_manager, first_proxy)
+    # Запускаем парсинг ТОЛЬКО через прокси
+    total_products = producer(proxy_manager)
 
     status = 'done'
     try:

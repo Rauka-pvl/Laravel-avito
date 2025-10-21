@@ -3,13 +3,8 @@ import json
 import random
 import requests
 import logging
-import urllib3
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-# Отключаем SSL warnings для прокси
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger("trast.proxy_manager")
 
@@ -71,19 +66,16 @@ class ProxyManager:
         try:
             if not os.path.exists(self.proxies_file):
                 logger.warning("Файл прокси не найден")
-                self.proxies = []
                 return []
             
             with open(self.proxies_file, 'r', encoding='utf-8') as f:
                 proxies = json.load(f)
             
-            self.proxies = proxies  # Сохраняем в self.proxies
             logger.info(f"Загружено {len(proxies)} прокси из кэша")
             return proxies
             
         except Exception as e:
             logger.error(f"Ошибка при загрузке прокси: {e}")
-            self.proxies = []
             return []
     
     def should_update_proxies(self) -> bool:
@@ -157,225 +149,8 @@ class ProxyManager:
             logger.debug(f"Прокси {ip}:{port} ({protocol}) - неизвестная ошибка: {str(e)}")
             return False
     
-    def get_external_ip(self, proxies: dict = None, timeout: int = 10) -> str:
-        """Получает внешний IP через прокси"""
-        try:
-            # Пробуем несколько сервисов для получения IP
-            ip_services = [
-                "https://2ip.ru",
-                "https://api.ipify.org",
-                "https://httpbin.org/ip"
-            ]
-            
-            for service in ip_services:
-                try:
-                    response = requests.get(service, proxies=proxies, timeout=timeout, verify=False)
-                    if response.status_code == 200:
-                        if service == "https://2ip.ru":
-                            # 2ip.ru возвращает HTML, нужно извлечь IP
-                            import re
-                            ip_match = re.search(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', response.text)
-                            if ip_match:
-                                return ip_match.group(1)
-                        elif service == "https://api.ipify.org":
-                            # ipify возвращает чистый IP
-                            return response.text.strip()
-                        elif service == "https://httpbin.org/ip":
-                            # httpbin возвращает JSON
-                            data = response.json()
-                            return data.get('origin', '').split(',')[0].strip()
-                except Exception as e:
-                    logger.debug(f"Не удалось получить IP с {service}: {e}")
-                    continue
-            
-            return "Не удалось определить"
-            
-        except Exception as e:
-            logger.debug(f"Ошибка при получении внешнего IP: {e}")
-            return "Ошибка"
-    
-    def validate_proxy_basic(self, proxy: Dict, timeout: int = 10) -> bool:
-        """Проверяет базовую работоспособность прокси (может ли показать внешний IP)"""
-        try:
-            protocol = proxy.get('protocol', 'http').lower()
-            ip = proxy['ip']
-            port = proxy['port']
-            
-            if protocol in ['http', 'https']:
-                proxy_url = f"{protocol}://{ip}:{port}"
-                proxies = {'http': proxy_url, 'https': proxy_url}
-            elif protocol in ['socks4', 'socks5']:
-                proxy_url = f"socks5h://{ip}:{port}" if protocol == 'socks5' else f"socks4://{ip}:{port}"
-                proxies = {'http': proxy_url, 'https': proxy_url}
-            else:
-                return False
-            
-            # Проверяем на простом сайте
-            response = requests.get(
-                "http://httpbin.org/ip",
-                proxies=proxies,
-                timeout=timeout,
-                verify=False
-            )
-            
-            if response.status_code == 200:
-                try:
-                    data = response.json()
-                    external_ip = data.get('origin', '').split(',')[0].strip()
-                    if external_ip and external_ip != ip:  # IP должен отличаться от прокси
-                        return True
-                except:
-                    pass
-            
-            return False
-            
-        except Exception as e:
-            return False
-    
-    def validate_proxy_for_site(self, proxy: Dict, site_url: str = "https://trast-zapchast.ru/shop/", timeout: int = 20) -> bool:
-        """Проверяет прокси на конкретном сайте"""
-        try:
-            protocol = proxy.get('protocol', 'http').lower()
-            ip = proxy['ip']
-            port = proxy['port']
-            
-            logger.info(f"Проверяем прокси {ip}:{port} ({protocol}) на сайте {site_url}")
-            
-            if protocol in ['http', 'https']:
-                proxy_url = f"{protocol}://{ip}:{port}"
-                proxies = {
-                    'http': proxy_url,
-                    'https': proxy_url
-                }
-            elif protocol in ['socks4', 'socks5']:
-                # Для SOCKS прокси используем правильный формат с PySocks
-                # socks5h:// означает SOCKS5 с DNS через прокси
-                proxy_url = f"socks5h://{ip}:{port}" if protocol == 'socks5' else f"socks4://{ip}:{port}"
-                proxies = {
-                    'http': proxy_url,
-                    'https': proxy_url
-                }
-            else:
-                logger.info(f"Неподдерживаемый протокол: {protocol}")
-                return False
-            
-            # Тестируем прокси на целевом сайте
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-                'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'DNT': '1',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-                'Sec-Fetch-Dest': 'document',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'none',
-                'Sec-Fetch-User': '?1',
-                'Cache-Control': 'max-age=0'
-            }
-            
-            # Проверяем внешний IP через прокси
-            logger.info(f"Проверяем внешний IP через прокси {ip}:{port}...")
-            external_ip = self.get_external_ip(proxies, timeout=10)
-            logger.info(f"Внешний IP через прокси: {external_ip}")
-            
-            response = requests.get(
-                site_url,
-                proxies=proxies,
-                timeout=timeout,
-                headers=headers,
-                verify=False  # Отключаем SSL верификацию для прокси
-            )
-            
-            logger.info(f"Прокси {ip}:{port} ({protocol}) - HTTP статус: {response.status_code}")
-            
-            if response.status_code == 200:
-                # Проверяем, что это не страница ошибки
-                if "403" in response.text or "Forbidden" in response.text:
-                    logger.info(f"Прокси {ip}:{port} ({protocol}) заблокирован сайтом (403)")
-                    return False
-                elif "cloudflare" in response.text.lower():
-                    logger.info(f"Прокси {ip}:{port} ({protocol}) заблокирован Cloudflare")
-                    return False
-                else:
-                    logger.info(f"Прокси {ip}:{port} ({protocol}) работает на сайте")
-                    return True
-            elif protocol in ['socks4', 'socks5'] and site_url.startswith('https://'):
-                # Попробуем HTTP вместо HTTPS для SOCKS прокси
-                logger.info(f"Прокси {ip}:{port} ({protocol}) не работает с HTTPS, пробуем HTTP...")
-                http_url = site_url.replace('https://', 'http://')
-                try:
-                    response = requests.get(http_url, proxies=proxies, timeout=timeout, headers=headers, verify=False)
-                    if response.status_code == 200:
-                        logger.info(f"Прокси {ip}:{port} ({protocol}) работает через HTTP")
-                        return True
-                except Exception as e:
-                    logger.info(f"Прокси {ip}:{port} ({protocol}) - ошибка при проверке HTTP: {str(e)}")
-            else:
-                logger.info(f"Прокси {ip}:{port} ({protocol}) - HTTP статус {response.status_code}")
-                return False
-                
-        except Exception as e:
-            logger.info(f"Прокси {ip}:{port} ({protocol}) - ошибка при проверке сайта: {str(e)}")
-            return False
-    
-    def validate_proxy_batch(self, proxies_batch):
-        """Проверяет пакет прокси параллельно - сначала на общую работоспособность, потом на целевом сайте"""
-        logger.info(f"Начинаем проверку пакета из {len(proxies_batch)} прокси...")
-        
-        # Этап 1: Проверяем общую работоспособность прокси
-        logger.info("Этап 1: Проверяем общую работоспособность прокси...")
-        working_proxies = []
-        
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            future_to_proxy = {executor.submit(self.validate_proxy_basic, proxy, 15): proxy for proxy in proxies_batch}
-            
-            completed_count = 0
-            for future in as_completed(future_to_proxy):
-                proxy = future_to_proxy[future]
-                completed_count += 1
-                try:
-                    is_working = future.result()
-                    if is_working:
-                        logger.info(f"Прокси {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()}) работает!")
-                        working_proxies.append(proxy)
-                    else:
-                        logger.debug(f"Прокси {proxy['ip']}:{proxy['port']} не работает")
-                        self.failed_proxies.add(f"{proxy['ip']}:{proxy['port']}")
-                except Exception as e:
-                    logger.debug(f"Ошибка при проверке прокси {proxy['ip']}:{proxy['port']}: {e}")
-                    self.failed_proxies.add(f"{proxy['ip']}:{proxy['port']}")
-                
-                # Логируем прогресс каждые 10 прокси
-                if completed_count % 10 == 0:
-                    logger.info(f"Проверено {completed_count}/{len(proxies_batch)} прокси в пакете")
-        
-        logger.info(f"Этап 1 завершен: найдено {len(working_proxies)} рабочих прокси из {len(proxies_batch)}")
-        
-        if not working_proxies:
-            logger.info("Нет рабочих прокси в пакете")
-            return None
-        
-        # Этап 2: Проверяем на целевом сайте
-        logger.info("Этап 2: Проверяем на целевом сайте...")
-        for proxy in working_proxies[:5]:  # Проверяем только первые 5 рабочих
-            try:
-                is_working_on_site = self.validate_proxy_for_site(proxy, "https://trast-zapchast.ru/shop/", 20)
-                if is_working_on_site:
-                    logger.info(f"Найден рабочий прокси для сайта: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()})")
-                    return proxy
-                else:
-                    logger.info(f"Прокси {proxy['ip']}:{proxy['port']} работает, но заблокирован сайтом")
-            except Exception as e:
-                logger.info(f"Ошибка при проверке прокси {proxy['ip']}:{proxy['port']} на сайте: {e}")
-        
-        # Если ни один не работает на сайте, возвращаем первый рабочий
-        logger.info("Все прокси заблокированы сайтом, используем первый рабочий прокси")
-        return working_proxies[0]
-
-    def get_first_working_proxy(self, max_attempts=3000):
-        """Находит первый рабочий прокси для быстрого старта с параллельной проверкой"""
+    def get_first_working_proxy(self, max_attempts=100):
+        """Находит первый рабочий прокси для быстрого старта"""
         try:
             # Обновляем прокси если нужно
             if self.should_update_proxies():
@@ -405,24 +180,22 @@ class ProxyManager:
             
             # Статистика по протоколам
             protocol_stats = {}
-            for proxy in available_proxies:
+            for proxy in available_proxies:  # Все прокси, не только первые 20
                 protocol = proxy.get('protocol', 'http').upper()
                 protocol_stats[protocol] = protocol_stats.get(protocol, 0) + 1
             
             logger.info(f"Статистика прокси: {protocol_stats}")
-            logger.info(f"Проверяем ВСЕ {len(available_proxies)} прокси!")
+            logger.info(f"Проверяем первые {max_attempts} прокси из {len(available_proxies)} доступных")
             
-            # Проверяем прокси пакетами по 50 штук
-            batch_size = 50
-            proxies_to_check = available_proxies  # Проверяем ВСЕ прокси
-            
-            for i in range(0, len(proxies_to_check), batch_size):
-                batch = proxies_to_check[i:i + batch_size]
-                logger.info(f"Проверяем пакет {i//batch_size + 1}/{(len(proxies_to_check) + batch_size - 1)//batch_size}: прокси {i+1}-{min(i+batch_size, len(proxies_to_check))}")
+            for i, proxy in enumerate(available_proxies[:max_attempts]):
+                logger.info(f"Проверяем прокси {i+1}/{max_attempts}: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()})")
                 
-                working_proxy = self.validate_proxy_batch(batch)
-                if working_proxy:
-                    return working_proxy
+                if self.validate_proxy(proxy, timeout=5):  # Уменьшили timeout
+                    logger.info(f"Найден первый рабочий прокси: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()}) ({proxy.get('country', 'Unknown')})")
+                    return proxy
+                else:
+                    logger.debug(f"Прокси {proxy['ip']}:{proxy['port']} не работает")
+                    self.failed_proxies.add(f"{proxy['ip']}:{proxy['port']}")
             
             logger.warning("Не удалось найти рабочий прокси")
             return None
@@ -431,7 +204,7 @@ class ProxyManager:
             logger.error(f"Ошибка при поиске первого прокси: {e}")
             return None
     
-    def get_next_working_proxy(self, start_from_index=0, max_attempts=500):
+    def get_next_working_proxy(self, start_from_index=0, max_attempts=50):
         """Получает следующий рабочий прокси начиная с определенного индекса"""
         try:
             if not os.path.exists(self.proxies_file):
@@ -457,7 +230,7 @@ class ProxyManager:
             for i, proxy in enumerate(proxies_to_check):
                 logger.info(f"Проверяем прокси {i+1}/{len(proxies_to_check)}: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()})")
                 
-                if self.validate_proxy_for_site(proxy, site_url="https://trast-zapchast.ru/shop/", timeout=20):  # Проверяем на целевом сайте
+                if self.validate_proxy(proxy, timeout=5):
                     logger.info(f"Найден рабочий прокси: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()}) ({proxy.get('country', 'Unknown')})")
                     return proxy, start_from_index + i + 1  # Возвращаем прокси и следующий индекс
                 else:

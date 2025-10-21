@@ -2,7 +2,8 @@
 requests
 beautifulsoup4
 certifi
-pysocks  # Для поддержки SOCKS прокси
+pysocks>=1.7.1  # Для полной поддержки SOCKS
+requests[socks]  # Интеграция requests + socks
 
 # Excel and CSV processing
 openpyxl
