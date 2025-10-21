@@ -175,6 +175,28 @@ def create_driver(proxy=None, proxy_manager=None):
     options.set_preference("toolkit.telemetry.unified", False)
     options.set_preference("datareporting.healthreport.uploadEnabled", False)
     
+    # Настройки SSL/TLS для работы с прокси
+    options.set_preference("security.tls.insecure_fallback_hosts", "trast-zapchast.ru")
+    options.set_preference("security.tls.unrestricted_rc4_fallback", True)
+    options.set_preference("security.tls.version.fallback-limit", 3)
+    options.set_preference("security.tls.version.min", 1)
+    options.set_preference("security.tls.version.max", 4)
+    options.set_preference("security.ssl3.rsa_des_ede3_sha", True)
+    options.set_preference("security.ssl3.rsa_rc4_128_sha", True)
+    options.set_preference("security.ssl3.rsa_rc4_128_md5", True)
+    options.set_preference("security.ssl3.rsa_des_sha", True)
+    options.set_preference("security.ssl3.rsa_3des_ede_sha", True)
+    options.set_preference("security.ssl3.rsa_aes_128_sha", True)
+    options.set_preference("security.ssl3.rsa_aes_256_sha", True)
+    options.set_preference("security.ssl3.rsa_aes_128_gcm_sha256", True)
+    options.set_preference("security.ssl3.rsa_aes_256_gcm_sha384", True)
+    
+    # Дополнительные настройки для обхода SSL проблем
+    options.set_preference("security.cert_pinning.enforcement_level", 0)
+    options.set_preference("security.cert_pinning.process_headers_from_telemetry", False)
+    options.set_preference("security.pki.certificate_transparency.mode", 0)
+    options.set_preference("security.pki.sha1_enforcement_level", 0)
+    
     # Настройка прокси
     if proxy:
         protocol = proxy.get('protocol', 'http').lower()

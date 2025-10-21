@@ -149,7 +149,7 @@ class ProxyManager:
             logger.debug(f"Прокси {ip}:{port} ({protocol}) - неизвестная ошибка: {str(e)}")
             return False
     
-    def get_first_working_proxy(self, max_attempts=100):
+    def get_first_working_proxy(self, max_attempts=3000):
         """Находит первый рабочий прокси для быстрого старта"""
         try:
             # Обновляем прокси если нужно
@@ -190,7 +190,7 @@ class ProxyManager:
             for i, proxy in enumerate(available_proxies[:max_attempts]):
                 logger.info(f"Проверяем прокси {i+1}/{max_attempts}: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()})")
                 
-                if self.validate_proxy(proxy, timeout=5):  # Уменьшили timeout
+                if self.validate_proxy_for_trast(proxy, timeout=30):  # Проверяем ТОЛЬКО на trast-zapchast.ru
                     logger.info(f"Найден первый рабочий прокси: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()}) ({proxy.get('country', 'Unknown')})")
                     return proxy
                 else:
@@ -230,7 +230,7 @@ class ProxyManager:
             for i, proxy in enumerate(proxies_to_check):
                 logger.info(f"Проверяем прокси {i+1}/{len(proxies_to_check)}: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()})")
                 
-                if self.validate_proxy(proxy, timeout=5):
+                if self.validate_proxy_for_trast(proxy, timeout=30):  # Проверяем ТОЛЬКО на trast-zapchast.ru
                     logger.info(f"Найден рабочий прокси: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()}) ({proxy.get('country', 'Unknown')})")
                     return proxy, start_from_index + i + 1  # Возвращаем прокси и следующий индекс
                 else:
