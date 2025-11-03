@@ -5,6 +5,7 @@ import random
 import logging
 import requests
 import shutil
+import traceback
 from datetime import datetime
 from bs4 import BeautifulSoup
 import sys
@@ -881,20 +882,37 @@ if __name__ == "__main__":
     logger.info(f"Target URL: https://trast-zapchast.ru/shop/?_paged=1")
     logger.info(f"Start time: {datetime.now()}")
     
-    start_time = datetime.now()
-    set_script_start(script_name)
+    try:
+        start_time = datetime.now()
+        set_script_start(script_name)
+        logger.info("✅ Database connection successful")
+    except Exception as db_error:
+        logger.warning(f"⚠️  Database connection failed: {db_error}, continuing without DB...")
+        # Продолжаем без БД
+        start_time = datetime.now()
 
     # Создаем временные файлы для записи (основной файл не трогаем)
-    create_new_excel(TEMP_OUTPUT_FILE)
-    create_new_csv(TEMP_CSV_FILE)
-    logger.info("Созданы временные файлы для записи данных")
+    try:
+        create_new_excel(TEMP_OUTPUT_FILE)
+        create_new_csv(TEMP_CSV_FILE)
+        logger.info("✅ Созданы временные файлы для записи данных")
+    except Exception as file_error:
+        logger.error(f"❌ Ошибка при создании временных файлов: {file_error}")
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
+        sys.exit(1)
 
     # Инициализируем прокси менеджер с фильтром по России
     logger.info("Step 1: Updating proxy list...")
     # Страны СНГ: Россия, Беларусь, Казахстан, Армения, Азербайджан, Грузия, Кыргызстан, Молдова, Таджикистан, Туркменистан, Узбекистан, Украина
     CIS_COUNTRIES = ["RU", "BY", "KZ", "AM", "AZ", "GE", "KG", "MD", "TJ", "TM", "UZ", "UA"]
     logger.info(f"Используем прокси из стран СНГ: {', '.join(CIS_COUNTRIES)}")
-    proxy_manager = ProxyManager(country_filter=CIS_COUNTRIES)
+    try:
+        proxy_manager = ProxyManager(country_filter=CIS_COUNTRIES)
+        logger.info("✅ ProxyManager инициализирован")
+    except Exception as pm_error:
+        logger.error(f"❌ Ошибка при инициализации ProxyManager: {pm_error}")
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
+        sys.exit(1)
     
     # Стратегия ТОЛЬКО прокси - никакого прямого доступа
     logger.info("СТРАТЕГИЯ: ТОЛЬКО ПРОКСИ СНГ - никакого прямого доступа!")
@@ -903,7 +921,17 @@ if __name__ == "__main__":
     logger.info("============================================================")
     
     # Запускаем парсинг ТОЛЬКО через прокси
-    total_products = producer(proxy_manager)
+    try:
+        total_products = producer(proxy_manager)
+        logger.info(f"✅ Producer завершился, собрано товаров: {total_products}")
+    except Exception as producer_error:
+        logger.error(f"❌ Критическая ошибка в producer: {producer_error}")
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
+        total_products = 0
+        status = 'error'
+        cleanup_temp_files()
+        set_script_end(script_name, status='error')
+        sys.exit(1)
 
     status = 'done'
     try:
@@ -933,7 +961,10 @@ if __name__ == "__main__":
         logger.info("⚠️  При ошибке временные файлы удалены, основной файл не изменен")
 
     duration = (datetime.now() - start_time).total_seconds()
-    set_script_end(script_name, status=status)
+    try:
+        set_script_end(script_name, status=status)
+    except Exception as db_end_error:
+        logger.warning(f"⚠️  Ошибка при сохранении окончания в БД: {db_end_error}")
 
     logger.info("============================================================")
     logger.info(f"Парсинг завершен! Всего собрано товаров: {total_products}")
