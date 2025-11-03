@@ -325,45 +325,89 @@ class ProxyManager:
             logger.error(f"   ❌ Ошибка при базовой проверке прокси: {e}")
             return False, {}
     
-    def validate_proxy_for_trast_selenium(self, proxy: Dict, timeout: int = 60) -> bool:
-        """Проверяет прокси через Selenium (более эффективный обход Cloudflare)"""
+    def validate_proxy_for_trast_selenium(self, proxy: Dict, timeout: int = 60, use_chrome: bool = False) -> bool:
+        """Проверяет прокси через Selenium (Firefox или Chrome/Chromium)"""
         try:
             from selenium import webdriver
-            from selenium.webdriver.firefox.service import Service
-            from selenium.webdriver.firefox.options import Options
-            import geckodriver_autoinstaller
             from bs4 import BeautifulSoup
             import time
             import random
+            import traceback
+            
+            # Пробуем Chrome, если не получилось - Firefox
+            if use_chrome:
+                try:
+                    return self._validate_with_chrome(proxy, timeout)
+                except Exception as e:
+                    logger.warning(f"  ⚠️  Chrome не доступен: {str(e)[:200]}")
+                    logger.info(f"  Пробуем Firefox...")
+                    # Fallback на Firefox
+            
+            # Используем Firefox
+            try:
+                return self._validate_with_firefox(proxy, timeout)
+            except Exception as e:
+                logger.error(f"  ❌ Ошибка Firefox: {str(e)}")
+                logger.debug(f"  Traceback: {traceback.format_exc()}")
+                # Пробуем Chrome как fallback
+                try:
+                    logger.info(f"  Пробуем Chrome как альтернативу...")
+                    return self._validate_with_chrome(proxy, timeout)
+                except Exception as chrome_error:
+                    logger.error(f"  ❌ Chrome тоже не работает: {str(chrome_error)[:200]}")
+                    logger.debug(f"  Chrome traceback: {traceback.format_exc()}")
+                    return False
+                    
+        except Exception as e:
+            logger.error(f"  ❌ Критическая ошибка Selenium: {str(e)}")
+            logger.debug(f"  Полный traceback: {traceback.format_exc()}")
+            return False
+    
+    def _validate_with_firefox(self, proxy: Dict, timeout: int) -> bool:
+        """Проверка через Firefox"""
+        from selenium.webdriver.firefox.service import Service
+        from selenium.webdriver.firefox.options import Options
+        import geckodriver_autoinstaller
+        from bs4 import BeautifulSoup
+        import time
+        import random
             
             protocol = proxy.get('protocol', 'http').lower()
             ip = proxy['ip']
             port = proxy['port']
             
-            logger.info(f"  [SELENIUM] Проверка прокси {ip}:{port} ({protocol.upper()}) через Selenium...")
+            logger.info(f"  [FIREFOX] Проверка прокси {ip}:{port} ({protocol.upper()})...")
             
             # Устанавливаем geckodriver
-            geckodriver_autoinstaller.install()
+            try:
+                geckodriver_autoinstaller.install()
+            except Exception as e:
+                logger.warning(f"  ⚠️  Ошибка установки geckodriver: {e}")
             
             options = Options()
             options.add_argument("--headless")
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-gpu")
+            options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--window-size=1920,1080")
             
             # Обход Cloudflare - отключаем автоматизацию ПЕРЕД созданием драйвера
             options.set_preference("dom.webdriver.enabled", False)
             options.set_preference("useAutomationExtension", False)
-            options.set_preference("marionette.logging", "FATAL")  # Меньше логов
+            options.set_preference("marionette.logging", "FATAL")
             
-            # Случайный User-Agent
+            # Случайный User-Agent (реалистичные)
             user_agents = [
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+                "Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0",
             ]
-            options.set_preference("general.useragent.override", random.choice(user_agents))
+            selected_ua = random.choice(user_agents)
+            options.set_preference("general.useragent.override", selected_ua)
+            logger.debug(f"  User-Agent: {selected_ua}")
             
-            # Настройка прокси
+            # Настройка прокси - ВАЖНО для обхода блокировок
+            logger.debug(f"  Настраиваем прокси {ip}:{port} ({protocol.upper()}) в Firefox...")
             if protocol in ['http', 'https']:
                 options.set_preference("network.proxy.type", 1)
                 options.set_preference("network.proxy.http", ip)
@@ -371,6 +415,7 @@ class ProxyManager:
                 options.set_preference("network.proxy.ssl", ip)
                 options.set_preference("network.proxy.ssl_port", int(port))
                 options.set_preference("network.proxy.share_proxy_settings", True)
+                logger.debug(f"  Прокси настроен: HTTP/HTTPS -> {ip}:{port}")
             elif protocol in ['socks4', 'socks5']:
                 options.set_preference("network.proxy.type", 1)
                 options.set_preference("network.proxy.socks", ip)
@@ -380,6 +425,10 @@ class ProxyManager:
                 else:
                     options.set_preference("network.proxy.socks_version", 4)
                 options.set_preference("network.proxy.socks_remote_dns", True)
+                logger.debug(f"  Прокси настроен: {protocol.upper()} -> {ip}:{port}")
+            else:
+                logger.warning(f"  ⚠️  Неподдерживаемый протокол прокси: {protocol}")
+                return False
             
             # Дополнительные настройки скрытия
             options.set_preference("privacy.trackingprotection.enabled", True)
@@ -390,10 +439,26 @@ class ProxyManager:
             options.set_preference("toolkit.telemetry.enabled", False)
             
             # Создаем драйвер
+            logger.debug(f"  Создаем Firefox драйвер с прокси...")
             service = Service()
             driver = webdriver.Firefox(service=service, options=options)
+            logger.info(f"  ✅ Firefox драйвер создан")
             
             try:
+                # ПРОВЕРКА: Проверяем, что прокси действительно используется
+                logger.debug(f"  [ПРОВЕРКА ПРОКСИ] Проверяем внешний IP через браузер...")
+                try:
+                    driver.get("https://api.ipify.org")
+                    time.sleep(2)
+                    browser_ip = driver.page_source.strip()
+                    if browser_ip and len(browser_ip.split('.')) == 4:
+                        logger.info(f"  ✅ Прокси работает! IP браузера: {browser_ip} (ожидалось: {ip})")
+                        if browser_ip != ip:
+                            logger.debug(f"  Примечание: IP браузера ({browser_ip}) отличается от IP прокси ({ip}) - это нормально")
+                    else:
+                        logger.warning(f"  ⚠️  Не удалось получить IP через браузер: {browser_ip}")
+                except Exception as ip_check_error:
+                    logger.warning(f"  ⚠️  Не удалось проверить IP через браузер: {str(ip_check_error)[:100]}")
                 # В Firefox navigator.webdriver нельзя переопределить после создания драйвера
                 # Поэтому мы полагаемся на настройки preferences (dom.webdriver.enabled = False)
                 # Выполняем только безопасные скрипты, которые не трогают webdriver
@@ -486,7 +551,191 @@ class ProxyManager:
                 driver.quit()
                 
         except Exception as e:
-            logger.warning(f"  ❌ Ошибка Selenium: {str(e)[:200]}")
+            import traceback
+            logger.error(f"  ❌ Ошибка Firefox: {str(e)}")
+            logger.debug(f"  Полный traceback:\n{traceback.format_exc()}")
+            return False
+    
+    def _validate_with_chrome(self, proxy: Dict, timeout: int) -> bool:
+        """Проверка через Chrome/Chromium"""
+        try:
+            from selenium.webdriver.chrome.service import Service
+            from selenium.webdriver.chrome.options import Options
+            from webdriver_manager.chrome import ChromeDriverManager
+            from selenium.webdriver.common.by import By
+            from bs4 import BeautifulSoup
+            import time
+            import random
+            import traceback
+            
+            protocol = proxy.get('protocol', 'http').lower()
+            ip = proxy['ip']
+            port = proxy['port']
+            
+            logger.info(f"  [CHROME] Проверка прокси {ip}:{port} ({protocol.upper()})...")
+            
+            # Устанавливаем chromedriver
+            try:
+                driver_path = ChromeDriverManager().install()
+                logger.debug(f"  ChromeDriver установлен: {driver_path}")
+            except Exception as e:
+                logger.error(f"  ❌ Ошибка установки ChromeDriver: {e}")
+                raise
+            
+            options = Options()
+            options.add_argument("--headless=new")  # Новый headless режим
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--window-size=1920,1080")
+            options.add_argument("--disable-blink-features=AutomationControlled")  # КРИТИЧНО для обхода детекции
+            options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            options.add_experimental_option('useAutomationExtension', False)
+            
+            # Случайный User-Agent
+            user_agents = [
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            ]
+            selected_ua = random.choice(user_agents)
+            options.add_argument(f"--user-agent={selected_ua}")
+            logger.debug(f"  User-Agent: {selected_ua}")
+            
+            # Настройка прокси для Chrome
+            logger.debug(f"  Настраиваем прокси {ip}:{port} ({protocol.upper()}) в Chrome...")
+            if protocol in ['http', 'https']:
+                proxy_arg = f"{protocol}://{ip}:{port}"
+            elif protocol == 'socks5':
+                proxy_arg = f"socks5://{ip}:{port}"
+            elif protocol == 'socks4':
+                proxy_arg = f"socks4://{ip}:{port}"
+            else:
+                logger.warning(f"  ⚠️  Неподдерживаемый протокол: {protocol}")
+                return False
+            
+            options.add_argument(f"--proxy-server={proxy_arg}")
+            logger.debug(f"  Прокси настроен: {proxy_arg}")
+            
+            # Создаем драйвер
+            logger.debug(f"  Создаем Chrome драйвер...")
+            service = Service(driver_path)
+            driver = webdriver.Chrome(service=service, options=options)
+            logger.info(f"  ✅ Chrome драйвер создан")
+            
+            try:
+                # Обход детекции через скрипты (Chrome позволяет это делать)
+                stealth_scripts = """
+                // Скрываем webdriver
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined,
+                    configurable: true
+                });
+                
+                // Chrome объект
+                window.chrome = {
+                    runtime: {}
+                };
+                
+                // Permissions
+                const originalQuery = window.navigator.permissions.query;
+                window.navigator.permissions.query = (parameters) => (
+                    parameters.name === 'notifications' ?
+                        Promise.resolve({ state: Notification.permission }) :
+                        originalQuery(parameters)
+                );
+                
+                // Плагины
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => [1, 2, 3, 4, 5],
+                    configurable: true
+                });
+                
+                // Languages
+                Object.defineProperty(navigator, 'languages', {
+                    get: () => ['ru-RU', 'ru', 'en-US', 'en'],
+                    configurable: true
+                });
+                """
+                driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
+                    'source': stealth_scripts
+                })
+                
+                # ПРОВЕРКА: Проверяем, что прокси используется
+                logger.debug(f"  [ПРОВЕРКА ПРОКСИ] Проверяем внешний IP через Chrome...")
+                try:
+                    driver.get("https://api.ipify.org")
+                    time.sleep(2)
+                    browser_ip = driver.page_source.strip()
+                    if browser_ip and len(browser_ip.split('.')) == 4:
+                        logger.info(f"  ✅ Прокси работает! IP Chrome: {browser_ip} (прокси: {ip})")
+                    else:
+                        logger.warning(f"  ⚠️  Не удалось получить IP: {browser_ip}")
+                except Exception as ip_check_error:
+                    logger.warning(f"  ⚠️  Не удалось проверить IP: {str(ip_check_error)[:100]}")
+                
+                # Имитация человеческого поведения
+                logger.info(f"  [CHROME] Имитация поведения пользователя...")
+                logger.info(f"  [CHROME] Шаг 1: Открываем главную страницу...")
+                driver.get("https://trast-zapchast.ru/")
+                time.sleep(random.uniform(2, 4))
+                
+                # Скролл
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight/3);")
+                time.sleep(random.uniform(1, 2))
+                
+                # Переходим на shop
+                logger.info(f"  [CHROME] Шаг 2: Переходим на страницу shop...")
+                site_url = "https://trast-zapchast.ru/shop/"
+                driver.get(site_url)
+                time.sleep(random.uniform(5, 8))
+                
+                # Имитируем скролл
+                driver.execute_script("window.scrollTo(0, 100);")
+                time.sleep(1)
+                driver.execute_script("window.scrollTo(0, 300);")
+                time.sleep(1)
+                
+                # Проверяем Cloudflare
+                page_source_lower = driver.page_source.lower()
+                max_wait = 30
+                wait_time = 0
+                
+                while ("cloudflare" in page_source_lower or "checking your browser" in page_source_lower or "just a moment" in page_source_lower) and wait_time < max_wait:
+                    logger.info(f"  ⏳ Cloudflare проверка... ждем {wait_time}/{max_wait} сек")
+                    time.sleep(3)
+                    driver.refresh()
+                    time.sleep(2)
+                    page_source_lower = driver.page_source.lower()
+                    wait_time += 5
+                
+                if wait_time >= max_wait:
+                    logger.warning(f"  ❌ Cloudflare проверка не пройдена")
+                    return False
+                
+                # Парсим количество страниц
+                soup = BeautifulSoup(driver.page_source, 'html.parser')
+                last_page_el = soup.select_one(".facetwp-pager .facetwp-page.last")
+                
+                if last_page_el and last_page_el.has_attr("data-page"):
+                    total_pages = int(last_page_el["data-page"])
+                    logger.info(f"  ✅✅✅ CHROME УСПЕШНО! Получено количество страниц: {total_pages}")
+                    return True
+                else:
+                    if len(driver.page_source) > 1000 and ("shop" in driver.page_source.lower() or "товар" in driver.page_source.lower()):
+                        logger.info(f"  ✅ CHROME: Страница загружена")
+                        return True
+                    else:
+                        logger.warning(f"  ❌ CHROME: Страница не загрузилась корректно")
+                        return False
+                        
+            finally:
+                driver.quit()
+                
+        except Exception as e:
+            import traceback
+            logger.error(f"  ❌ Ошибка Chrome: {str(e)}")
+            logger.debug(f"  Полный traceback:\n{traceback.format_exc()}")
             return False
     
     def validate_proxy_for_trast(self, proxy: Dict, timeout: int = 30) -> bool:
@@ -515,7 +764,18 @@ class ProxyManager:
             
             # СНАЧАЛА пробуем Selenium (самый эффективный способ обхода Cloudflare)
             logger.info(f"  [ШАГ 2.1] Пробуем Selenium (наиболее эффективный обход Cloudflare)...")
-            selenium_result = self.validate_proxy_for_trast_selenium(proxy, timeout=60)
+            
+            # Пробуем сначала Chrome (лучше обходит детекцию), потом Firefox
+            selenium_result = False
+            try:
+                logger.info(f"  Пробуем Chrome/Chromium...")
+                selenium_result = self.validate_proxy_for_trast_selenium(proxy, timeout=60, use_chrome=True)
+            except Exception as chrome_error:
+                logger.debug(f"  Chrome не доступен: {str(chrome_error)[:200]}")
+            
+            if not selenium_result:
+                logger.info(f"  Chrome не сработал, пробуем Firefox...")
+                selenium_result = self.validate_proxy_for_trast_selenium(proxy, timeout=60, use_chrome=False)
             
             if selenium_result:
                 logger.info(f"  ✅✅✅ Прокси работает через Selenium! Количество страниц получено!")
@@ -704,13 +964,19 @@ class ProxyManager:
             logger.warning(f"  ❌ Таймаут чтения (прокси медленно отвечает)")
             return False
         except requests.exceptions.ConnectionError as e:
-            logger.warning(f"  ❌ Ошибка подключения: {str(e)[:100]}")
+            import traceback
+            logger.warning(f"  ❌ Ошибка подключения: {str(e)}")
+            logger.debug(f"  Traceback:\n{traceback.format_exc()}")
             return False
         except requests.exceptions.ProxyError as e:
-            logger.warning(f"  ❌ Ошибка прокси: {str(e)[:100]}")
+            import traceback
+            logger.warning(f"  ❌ Ошибка прокси: {str(e)}")
+            logger.debug(f"  Traceback:\n{traceback.format_exc()}")
             return False
         except Exception as e:
-            logger.warning(f"  ❌ Неизвестная ошибка: {str(e)[:100]}")
+            import traceback
+            logger.error(f"  ❌ Неизвестная ошибка: {str(e)}")
+            logger.debug(f"  Полный traceback:\n{traceback.format_exc()}")
             return False
     
     def get_first_working_proxy(self, max_attempts=3000):
