@@ -351,9 +351,10 @@ class ProxyManager:
             options.add_argument("--disable-gpu")
             options.add_argument("--window-size=1920,1080")
             
-            # Обход Cloudflare
+            # Обход Cloudflare - отключаем автоматизацию ПЕРЕД созданием драйвера
             options.set_preference("dom.webdriver.enabled", False)
             options.set_preference("useAutomationExtension", False)
+            options.set_preference("marionette.logging", "FATAL")  # Меньше логов
             
             # Случайный User-Agent
             user_agents = [
@@ -393,72 +394,34 @@ class ProxyManager:
             driver = webdriver.Firefox(service=service, options=options)
             
             try:
-                # Расширенный обход детекции - скрываем все признаки автоматизации
-                stealth_scripts = """
-                // Скрываем webdriver
-                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                # В Firefox navigator.webdriver нельзя переопределить после создания драйвера
+                # Поэтому мы полагаемся на настройки preferences (dom.webdriver.enabled = False)
+                # Выполняем только безопасные скрипты, которые не трогают webdriver
                 
-                // Добавляем плагины
-                Object.defineProperty(navigator, 'plugins', {
-                    get: () => [1, 2, 3, 4, 5]
-                });
-                
-                // Языки
-                Object.defineProperty(navigator, 'languages', {
-                    get: () => ['ru-RU', 'ru', 'en-US', 'en']
-                });
-                
-                // Permissions
-                const originalQuery = window.navigator.permissions.query;
-                window.navigator.permissions.query = (parameters) => (
-                    parameters.name === 'notifications' ?
-                        Promise.resolve({ state: Notification.permission }) :
-                        originalQuery(parameters)
-                );
+                # Простые скрипты для улучшения имитации браузера
+                safe_scripts = """
+                // Добавляем плагины (если возможно)
+                try {
+                    if (!navigator.plugins || navigator.plugins.length === 0) {
+                        Object.defineProperty(navigator, 'plugins', {
+                            get: () => [1, 2, 3],
+                            configurable: true
+                        });
+                    }
+                } catch(e) {}
                 
                 // Chrome объект (если сайт проверяет)
-                window.chrome = {
-                    runtime: {}
-                };
-                
-                // Платформа
-                Object.defineProperty(navigator, 'platform', {
-                    get: () => 'Win32'
-                });
-                
-                // Hardware concurrency
-                Object.defineProperty(navigator, 'hardwareConcurrency', {
-                    get: () => 4
-                });
-                
-                // Device memory
-                Object.defineProperty(navigator, 'deviceMemory', {
-                    get: () => 8
-                });
-                
-                // Connection (сеть)
-                Object.defineProperty(navigator, 'connection', {
-                    get: () => ({
-                        effectiveType: '4g',
-                        rtt: 50,
-                        downlink: 10,
-                        saveData: false
-                    })
-                });
-                
-                // Отключаем автоматизацию в window
-                Object.defineProperty(window, 'navigator', {
-                    value: new Proxy(navigator, {
-                        has: (target, key) => (key === 'webdriver' ? false : key in target),
-                        get: (target, key) => (key === 'webdriver' ? undefined : target[key])
-                    })
-                });
+                if (!window.chrome) {
+                    window.chrome = {
+                        runtime: {}
+                    };
+                }
                 """
                 
-                driver.execute_script(stealth_scripts)
-                
-                # Дополнительные обходы
-                driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+                try:
+                    driver.execute_script(safe_scripts)
+                except:
+                    pass  # Игнорируем ошибки скриптов
                 
                 # Имитация человеческого поведения - сначала идем на главную
                 logger.info(f"  [SELENIUM] Имитация поведения пользователя...")
@@ -584,14 +547,25 @@ class ProxyManager:
                     # cloudscraper использует requests под капотом, поэтому прокси передаем через proxies
                     scraper.proxies.update(proxies)
                     
-                    # ВАЖНО: для SOCKS прокси нужно отключить проверку SSL другим способом
-                    # Используем urllib3 для настройки SSL
+                    # ВАЖНО: для cloudscraper с SOCKS прокси нужно правильно настроить SSL
                     import urllib3
                     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
                     
-                    # Для cloudscraper с прокси лучше использовать requests-style настройку
-                    # Устанавливаем verify через параметр запроса, а не через атрибут
-                    response = scraper.get(site_url, timeout=timeout, verify=False)
+                    # Отключаем проверку SSL через настройку адаптера
+                    import ssl
+                    ssl_context = ssl.create_default_context()
+                    ssl_context.check_hostname = False
+                    ssl_context.verify_mode = ssl.CERT_NONE
+                    
+                    # Для cloudscraper используем verify=False как параметр
+                    # Но сначала проверяем тип прокси
+                    if protocol in ['socks4', 'socks5']:
+                        # Для SOCKS прокси cloudscraper может не работать корректно
+                        # Пробуем, но ожидаем ошибку
+                        response = scraper.get(site_url, timeout=timeout, verify=False)
+                    else:
+                        # Для HTTP/HTTPS прокси должно работать
+                        response = scraper.get(site_url, timeout=timeout, verify=False)
                     logger.info(f"  ✅ cloudscraper успешно: HTTP {response.status_code}")
                 except Exception as e:
                     logger.warning(f"  ⚠️  Ошибка cloudscraper: {e}")
