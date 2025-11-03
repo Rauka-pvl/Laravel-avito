@@ -463,6 +463,9 @@ class ProxyManager:
         driver = None
         try:
             driver = webdriver.Firefox(service=service, options=options)
+            # Устанавливаем короткий таймаут для проверки подключения
+            driver.set_page_load_timeout(30)  # 30 секунд вместо дефолтных 60+
+            driver.implicitly_wait(5)  # Неявное ожидание элементов
             logger.info(f"  ✅ Firefox драйвер создан")
             
             # ПРОВЕРКА: Проверяем, что прокси действительно используется
@@ -511,8 +514,24 @@ class ProxyManager:
             # Имитация человеческого поведения - сначала идем на главную
             logger.info(f"  [SELENIUM] Имитация поведения пользователя...")
             logger.info(f"  [SELENIUM] Шаг 1: Открываем главную страницу...")
-            driver.get("https://trast-zapchast.ru/")
-            time.sleep(random.uniform(2, 4))
+            try:
+                driver.get("https://trast-zapchast.ru/")
+                time.sleep(random.uniform(2, 4))
+            except Exception as page_error:
+                error_msg = str(page_error).lower()
+                # Проверяем на специфичные ошибки подключения
+                if "nssfailure" in error_msg or "connection" in error_msg or "interrupted" in error_msg:
+                    logger.error(f"  ❌ Ошибка подключения к trast-zapchast.ru через прокси: {str(page_error)[:200]}")
+                    logger.error(f"  ❌ Прокси не может подключиться к целевому сайту")
+                    return False
+                elif "timeout" in error_msg or "timed out" in error_msg:
+                    logger.error(f"  ❌ Таймаут при подключении к trast-zapchast.ru: {str(page_error)[:200]}")
+                    logger.error(f"  ❌ Прокси слишком медленный или недоступен для целевого сайта")
+                    return False
+                else:
+                    # Другие ошибки - пробуем продолжить, но логируем
+                    logger.warning(f"  ⚠️  Ошибка при открытии главной страницы: {str(page_error)[:200]}")
+                    # Не возвращаем False сразу, пробуем продолжить
             
             # Скролл
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight/3);")
@@ -521,8 +540,23 @@ class ProxyManager:
             # Переходим на shop
             logger.info(f"  [SELENIUM] Шаг 2: Переходим на страницу shop...")
             site_url = "https://trast-zapchast.ru/shop/"
-            driver.get(site_url)
-            time.sleep(random.uniform(5, 8))
+            try:
+                driver.get(site_url)
+                time.sleep(random.uniform(5, 8))
+            except Exception as shop_error:
+                error_msg = str(shop_error).lower()
+                # Проверяем на специфичные ошибки подключения
+                if "nssfailure" in error_msg or "connection" in error_msg or "interrupted" in error_msg:
+                    logger.error(f"  ❌ Ошибка подключения к shop через прокси: {str(shop_error)[:200]}")
+                    logger.error(f"  ❌ Прокси не может подключиться к целевому сайту")
+                    return False
+                elif "timeout" in error_msg or "timed out" in error_msg:
+                    logger.error(f"  ❌ Таймаут при подключении к shop: {str(shop_error)[:200]}")
+                    logger.error(f"  ❌ Прокси слишком медленный или недоступен для целевого сайта")
+                    return False
+                else:
+                    logger.error(f"  ❌ Ошибка при открытии shop: {str(shop_error)[:200]}")
+                    return False
             
             # Имитируем скролл
             driver.execute_script("window.scrollTo(0, 100);")
@@ -621,12 +655,14 @@ class ProxyManager:
             
             # Настройка прокси для Chrome
             logger.debug(f"  Настраиваем прокси {ip}:{port} ({protocol.upper()}) в Chrome...")
+            # ВАЖНО: Chrome имеет проблемы с SOCKS прокси через --proxy-server
+            # SOCKS прокси часто вызывают ERR_TUNNEL_CONNECTION_FAILED
             if protocol in ['http', 'https']:
                 proxy_arg = f"{protocol}://{ip}:{port}"
-            elif protocol == 'socks5':
-                proxy_arg = f"socks5://{ip}:{port}"
-            elif protocol == 'socks4':
-                proxy_arg = f"socks4://{ip}:{port}"
+            elif protocol in ['socks4', 'socks5']:
+                # Chrome может иметь проблемы с SOCKS, но пробуем
+                logger.warning(f"  ⚠️  Chrome может иметь проблемы с {protocol.upper()} прокси (ERR_TUNNEL_CONNECTION_FAILED)")
+                proxy_arg = f"socks5://{ip}:{port}" if protocol == 'socks5' else f"socks4://{ip}:{port}"
             else:
                 logger.warning(f"  ⚠️  Неподдерживаемый протокол: {protocol}")
                 return False
@@ -638,6 +674,9 @@ class ProxyManager:
             logger.debug(f"  Создаем Chrome драйвер...")
             service = Service(driver_path)
             driver = webdriver.Chrome(service=service, options=options)
+            # Устанавливаем короткий таймаут для проверки подключения
+            driver.set_page_load_timeout(30)  # 30 секунд вместо дефолтных 60+
+            driver.implicitly_wait(5)  # Неявное ожидание элементов
             logger.info(f"  ✅ Chrome драйвер создан")
             
             try:
@@ -694,8 +733,29 @@ class ProxyManager:
                 # Имитация человеческого поведения
                 logger.info(f"  [CHROME] Имитация поведения пользователя...")
                 logger.info(f"  [CHROME] Шаг 1: Открываем главную страницу...")
-                driver.get("https://trast-zapchast.ru/")
-                time.sleep(random.uniform(2, 4))
+                try:
+                    driver.get("https://trast-zapchast.ru/")
+                    time.sleep(random.uniform(2, 4))
+                except Exception as page_error:
+                    error_msg = str(page_error).lower()
+                    # Проверяем на специфичные ошибки подключения
+                    if "tunnel_connection_failed" in error_msg or "err_tunnel" in error_msg:
+                        logger.error(f"  ❌ Ошибка туннельного подключения через прокси: {str(page_error)[:200]}")
+                        logger.error(f"  ❌ Прокси не может установить туннель к целевому сайту (обычно для SOCKS)")
+                        logger.error(f"  ❌ Рекомендуется использовать Firefox для SOCKS прокси")
+                        return False
+                    elif "connection" in error_msg or "net::err_" in error_msg:
+                        logger.error(f"  ❌ Ошибка подключения к trast-zapchast.ru через прокси: {str(page_error)[:200]}")
+                        logger.error(f"  ❌ Прокси не может подключиться к целевому сайту")
+                        return False
+                    elif "timeout" in error_msg or "timed out" in error_msg:
+                        logger.error(f"  ❌ Таймаут при подключении к trast-zapchast.ru: {str(page_error)[:200]}")
+                        logger.error(f"  ❌ Прокси слишком медленный или недоступен для целевого сайта")
+                        return False
+                    else:
+                        # Другие ошибки - пробуем продолжить, но логируем
+                        logger.warning(f"  ⚠️  Ошибка при открытии главной страницы: {str(page_error)[:200]}")
+                        # Не возвращаем False сразу, пробуем продолжить
                 
                 # Скролл
                 driver.execute_script("window.scrollTo(0, document.body.scrollHeight/3);")
@@ -704,8 +764,28 @@ class ProxyManager:
                 # Переходим на shop
                 logger.info(f"  [CHROME] Шаг 2: Переходим на страницу shop...")
                 site_url = "https://trast-zapchast.ru/shop/"
-                driver.get(site_url)
-                time.sleep(random.uniform(5, 8))
+                try:
+                    driver.get(site_url)
+                    time.sleep(random.uniform(5, 8))
+                except Exception as shop_error:
+                    error_msg = str(shop_error).lower()
+                    # Проверяем на специфичные ошибки подключения
+                    if "tunnel_connection_failed" in error_msg or "err_tunnel" in error_msg:
+                        logger.error(f"  ❌ Ошибка туннельного подключения к shop через прокси: {str(shop_error)[:200]}")
+                        logger.error(f"  ❌ Прокси не может установить туннель к целевому сайту (обычно для SOCKS)")
+                        logger.error(f"  ❌ Рекомендуется использовать Firefox для SOCKS прокси")
+                        return False
+                    elif "connection" in error_msg or "net::err_" in error_msg:
+                        logger.error(f"  ❌ Ошибка подключения к shop через прокси: {str(shop_error)[:200]}")
+                        logger.error(f"  ❌ Прокси не может подключиться к целевому сайту")
+                        return False
+                    elif "timeout" in error_msg or "timed out" in error_msg:
+                        logger.error(f"  ❌ Таймаут при подключении к shop: {str(shop_error)[:200]}")
+                        logger.error(f"  ❌ Прокси слишком медленный или недоступен для целевого сайта")
+                        return False
+                    else:
+                        logger.error(f"  ❌ Ошибка при открытии shop: {str(shop_error)[:200]}")
+                        return False
                 
                 # Имитируем скролл
                 driver.execute_script("window.scrollTo(0, 100);")
@@ -782,16 +862,24 @@ class ProxyManager:
             # СНАЧАЛА пробуем Selenium (самый эффективный способ обхода Cloudflare)
             logger.info(f"  [ШАГ 2.1] Пробуем Selenium (наиболее эффективный обход Cloudflare)...")
             
-            # Пробуем сначала Chrome (лучше обходит детекцию), потом Firefox
+            # ВАЖНО: Для SOCKS прокси сразу используем Firefox (Chrome имеет проблемы с ERR_TUNNEL_CONNECTION_FAILED)
+            protocol = proxy.get('protocol', 'http').lower()
+            use_chrome_first = protocol in ['http', 'https']  # Chrome только для HTTP/HTTPS
+            
             selenium_result = False
-            try:
-                logger.info(f"  Пробуем Chrome/Chromium...")
-                selenium_result = self.validate_proxy_for_trast_selenium(proxy, timeout=60, use_chrome=True)
-            except Exception as chrome_error:
-                logger.debug(f"  Chrome не доступен: {str(chrome_error)[:200]}")
+            if use_chrome_first:
+                try:
+                    logger.info(f"  Пробуем Chrome/Chromium...")
+                    selenium_result = self.validate_proxy_for_trast_selenium(proxy, timeout=60, use_chrome=True)
+                except Exception as chrome_error:
+                    logger.debug(f"  Chrome не доступен: {str(chrome_error)[:200]}")
+                    selenium_result = False
             
             if not selenium_result:
-                logger.info(f"  Chrome не сработал, пробуем Firefox...")
+                if use_chrome_first:
+                    logger.info(f"  Chrome не сработал, пробуем Firefox...")
+                else:
+                    logger.info(f"  Для {protocol.upper()} прокси используем Firefox (Chrome не рекомендуется для SOCKS)...")
                 selenium_result = self.validate_proxy_for_trast_selenium(proxy, timeout=60, use_chrome=False)
             
             if selenium_result:
