@@ -320,13 +320,41 @@ def _create_firefox_driver(proxy=None):
     return driver
 
 def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
-    driver.get(url)
-    time.sleep(2)
-    soup = BeautifulSoup(driver.page_source, "html.parser")
-    last_page_el = soup.select_one(".facetwp-pager .facetwp-page.last")
-    if last_page_el and last_page_el.has_attr("data-page"):
-        return int(last_page_el["data-page"])
-    return 1
+    """Получает количество страниц через драйвер (Chrome или Firefox)"""
+    try:
+        logger.debug(f"Открываем {url} через драйвер...")
+        driver.get(url)
+        # Увеличиваем задержку для Cloudflare
+        time.sleep(5)
+        
+        # Проверяем на Cloudflare
+        page_source_lower = driver.page_source.lower()
+        max_wait = 30
+        wait_time = 0
+        
+        while ("cloudflare" in page_source_lower or "checking your browser" in page_source_lower or "just a moment" in page_source_lower) and wait_time < max_wait:
+            logger.info(f"⏳ Cloudflare проверка... ждем {wait_time}/{max_wait} сек")
+            time.sleep(3)
+            driver.refresh()
+            time.sleep(2)
+            page_source_lower = driver.page_source.lower()
+            wait_time += 5
+        
+        if wait_time >= max_wait:
+            logger.warning("Cloudflare проверка не пройдена, но продолжаем...")
+        
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+        last_page_el = soup.select_one(".facetwp-pager .facetwp-page.last")
+        if last_page_el and last_page_el.has_attr("data-page"):
+            total_pages = int(last_page_el["data-page"])
+            logger.info(f"✅ Получено количество страниц: {total_pages}")
+            return total_pages
+        else:
+            logger.warning("Не удалось найти количество страниц, возвращаем 1")
+            return 1
+    except Exception as e:
+        logger.error(f"Ошибка при получении количества страниц: {e}")
+        return 1
 
 def get_products_from_page_soup(soup):
     results = []
@@ -361,7 +389,7 @@ def get_products_from_page_soup(soup):
     return results
 
 def get_driver_with_working_proxy(proxy_manager, start_from_index=0):
-    """Получает драйвер с рабочим прокси"""
+    """Получает драйвер с рабочим прокси (пробует Chrome, потом Firefox)"""
     max_attempts = 100
     attempt = 0
     
@@ -380,19 +408,38 @@ def get_driver_with_working_proxy(proxy_manager, start_from_index=0):
             
             logger.info(f"Создаем драйвер с прокси {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()})")
             
-            driver = create_driver(proxy, proxy_manager)
+            # Пробуем сначала Chrome (лучше обходит Cloudflare)
+            driver = None
+            try:
+                logger.info("Пробуем создать Chrome драйвер...")
+                driver = create_driver(proxy, proxy_manager, use_chrome=True)
+                logger.info("✅ Chrome драйвер создан")
+            except Exception as chrome_error:
+                logger.warning(f"Chrome не удалось создать: {str(chrome_error)[:200]}")
+                logger.info("Пробуем Firefox...")
+                try:
+                    driver = create_driver(proxy, proxy_manager, use_chrome=False)
+                    logger.info("✅ Firefox драйвер создан")
+                except Exception as firefox_error:
+                    logger.error(f"Firefox тоже не удалось создать: {str(firefox_error)[:200]}")
+                    attempt += 1
+                    continue
             
-            # Проверяем внешний IP
+            if not driver:
+                attempt += 1
+                continue
+            
+            # Проверяем внешний IP (опционально, пропускаем ошибки)
             try:
                 driver.get("https://api.ipify.org")
                 time.sleep(2)
                 external_ip = driver.page_source.strip()
-                if external_ip and len(external_ip) < 20:  # Простая проверка IP
+                if external_ip and len(external_ip) < 20:
                     logger.info(f"Внешний IP через прокси: {external_ip}")
                 else:
-                    logger.warning(f"Не удалось получить внешний IP: {external_ip}")
+                    logger.debug(f"Не удалось получить внешний IP: {external_ip[:50]}")
             except Exception as e:
-                logger.warning(f"Не удалось проверить внешний IP: {e}")
+                logger.debug(f"Проверка IP не критична: {str(e)[:100]}")
             
             return driver, start_from_index
             
