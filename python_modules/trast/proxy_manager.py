@@ -9,55 +9,116 @@ from typing import List, Dict, Optional
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+# Пробуем импортировать cloudscraper для обхода Cloudflare
+try:
+    import cloudscraper
+    HAS_CLOUDSCRAPER = True
+except ImportError:
+    HAS_CLOUDSCRAPER = False
+    # logger еще не инициализирован, выведем предупреждение позже
+
 logger = logging.getLogger("trast.proxy_manager")
 
 class ProxyManager:
-    def __init__(self, cache_dir: str = None):
+    def __init__(self, cache_dir: str = None, country_filter: str = "RU"):
+        """
+        Инициализация ProxyManager
+        
+        Args:
+            cache_dir: Директория для кэша прокси
+            country_filter: Фильтр по стране (например, "RU" для России). None = все страны
+        """
         self.cache_dir = cache_dir or os.path.join(os.path.dirname(__file__), "proxy_cache")
         self.proxies_file = os.path.join(self.cache_dir, "proxies.json")
         self.last_update_file = os.path.join(self.cache_dir, "last_update.txt")
         self.current_proxy_index = 0
         self.failed_proxies = set()
         self.proxies = []
+        self.country_filter = country_filter  # Фильтр по стране
         
         os.makedirs(self.cache_dir, exist_ok=True)
+        
+        if self.country_filter:
+            logger.info(f"ProxyManager инициализирован с фильтром страны: {self.country_filter}")
+        else:
+            logger.info("ProxyManager инициализирован без фильтра по стране")
         
     def download_proxies(self) -> bool:
         """Скачивает свежие прокси с Proxifly репозитория"""
         try:
-            logger.info("Скачивание свежих прокси с Proxifly...")
-            
-            # URL для получения всех прокси в JSON формате
-            url = "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/all/data.json"
+            # Используем прямой URL для российских прокси, если задан фильтр
+            if self.country_filter and self.country_filter.upper() == "RU":
+                logger.info(f"Скачивание российских прокси с Proxifly (прямая ссылка)...")
+                url = "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/countries/RU/data.json"
+            else:
+                logger.info("Скачивание всех прокси с Proxifly...")
+                url = "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/all/data.json"
             
             response = requests.get(url, timeout=30)
             response.raise_for_status()
             
             proxies_data = response.json()
             
-            # Фильтруем все типы прокси (HTTP, HTTPS, SOCKS4, SOCKS5)
-            http_proxies = []
+            # Обрабатываем прокси
+            filtered_proxies = []
+            total_proxies = len(proxies_data)
+            
             for proxy in proxies_data:
                 protocol = proxy.get('protocol', '').lower()
-                if protocol in ['http', 'https', 'socks4', 'socks5']:
-                    http_proxies.append({
-                        'ip': proxy.get('ip', ''),
-                        'port': proxy.get('port', ''),
-                        'protocol': protocol,
-                        'country': proxy.get('country', ''),
-                        'anonymity': proxy.get('anonymity', ''),
-                        'speed': proxy.get('speed', 0)
-                    })
+                
+                # Извлекаем страну из geolocation или напрямую
+                geolocation = proxy.get('geolocation', {})
+                country = (geolocation.get('country', '') or proxy.get('country', '')).upper()
+                
+                # Если использовали прямой URL для страны, все прокси уже этой страны
+                # Но всё равно проверяем на всякий случай
+                if self.country_filter and self.country_filter.upper() != "RU":
+                    # Если использовали прямой URL для RU, но фильтр другой - пропускаем
+                    if country != self.country_filter.upper():
+                        continue
+                
+                # Фильтр по протоколу
+                if protocol not in ['http', 'https', 'socks4', 'socks5']:
+                    continue
+                
+                port = proxy.get('port', '')
+                # Преобразуем порт в строку, если это число
+                if isinstance(port, int):
+                    port = str(port)
+                
+                filtered_proxies.append({
+                    'ip': proxy.get('ip', ''),
+                    'port': port,
+                    'protocol': protocol,
+                    'country': country,
+                    'anonymity': proxy.get('anonymity', ''),
+                    'speed': proxy.get('speed', 0)
+                })
+            
+            # Статистика по странам и протоколам
+            country_stats = {}
+            protocol_stats = {}
+            for p in filtered_proxies:
+                country = p['country']
+                protocol = p['protocol'].upper()
+                country_stats[country] = country_stats.get(country, 0) + 1
+                protocol_stats[protocol] = protocol_stats.get(protocol, 0) + 1
+            
+            logger.info(f"Всего прокси в репозитории: {total_proxies}")
+            logger.info(f"Отфильтровано прокси: {len(filtered_proxies)}")
+            if self.country_filter:
+                logger.info(f"Прокси для страны {self.country_filter}: {country_stats}")
+            logger.info(f"Статистика по протоколам: {protocol_stats}")
             
             # Сохраняем прокси в файл
             with open(self.proxies_file, 'w', encoding='utf-8') as f:
-                json.dump(http_proxies, f, ensure_ascii=False, indent=2)
+                json.dump(filtered_proxies, f, ensure_ascii=False, indent=2)
             
             # Обновляем время последнего обновления
             with open(self.last_update_file, 'w') as f:
                 f.write(datetime.now().isoformat())
             
-            logger.info(f"Скачано {len(http_proxies)} прокси всех типов")
+            logger.info(f"Сохранено {len(filtered_proxies)} прокси в файл")
             return True
             
         except Exception as e:
@@ -189,14 +250,20 @@ class ProxyManager:
             logger.debug(f"Ошибка при получении внешнего IP: {e}")
             return "Ошибка"
     
-    def validate_proxy_for_trast(self, proxy: Dict, timeout: int = 30) -> bool:
-        """Проверяет прокси ТОЛЬКО если он смог получить количество страниц с trast-zapchast.ru"""
+    def validate_proxy_basic(self, proxy: Dict, timeout: int = 10):
+        """
+        Базовая проверка работоспособности прокси (этап 1)
+        Проверяет, работает ли прокси вообще через тестовые сервисы
+        
+        Returns:
+            (is_working, proxy_info) - работает ли прокси и информация о нем
+        """
         try:
             protocol = proxy.get('protocol', 'http').lower()
             ip = proxy['ip']
             port = proxy['port']
             
-            logger.info(f"Проверяем прокси {ip}:{port} ({protocol}) на получение количества страниц с trast-zapchast.ru")
+            logger.info(f"[ШАГ 1] Базовая проверка прокси {ip}:{port} ({protocol.upper()})...")
             
             if protocol in ['http', 'https']:
                 proxy_url = f"{protocol}://{ip}:{port}"
@@ -212,90 +279,385 @@ class ProxyManager:
                 }
             else:
                 logger.info(f"Неподдерживаемый протокол: {protocol}")
-                return False
+                return False, {}
             
-            # Проверяем внешний IP через прокси
-            logger.info(f"Проверяем внешний IP через прокси {ip}:{port}...")
-            external_ip = self.get_external_ip(proxies, timeout=10)
-            logger.info(f"Внешний IP через прокси: {external_ip}")
-            
-            # Случайный User-Agent для разнообразия
-            user_agents = [
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
-                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
-                'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            # Проверяем через простой тестовый сервис
+            test_urls = [
+                "http://httpbin.org/ip",
+                "https://api.ipify.org",
+                "http://ifconfig.me/ip"
             ]
             
-            # Подробные заголовки для имитации реального браузера
-            headers = {
-                'User-Agent': random.choice(user_agents),
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-                'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'DNT': '1',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-                'Sec-Fetch-Dest': 'document',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'none',
-                'Sec-Fetch-User': '?1',
-                'Cache-Control': 'max-age=0',
-                'Referer': 'https://trast-zapchast.ru/',
-                'Origin': 'https://trast-zapchast.ru',
-                # Дополнительные заголовки для обхода блокировок
-                'X-Forwarded-For': ip,
-                'X-Real-IP': ip,
-                'X-Forwarded-Proto': 'https',
-                'X-Forwarded-Host': 'trast-zapchast.ru',
-                'X-Requested-With': 'XMLHttpRequest',
-                'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-                'Sec-Ch-Ua-Mobile': '?0',
-                'Sec-Ch-Ua-Platform': '"Windows"',
-                'Sec-GPC': '1',
-                'Pragma': 'no-cache',
-                'If-Modified-Since': 'Thu, 01 Jan 1970 00:00:00 GMT',
-                'If-None-Match': '*'
-            }
+            working_url = None
+            external_ip = None
             
-            # Пробуем получить главную страницу сайта
+            for test_url in test_urls:
+                try:
+                    logger.info(f"   Тестируем через {test_url}...")
+                    response = requests.get(test_url, proxies=proxies, timeout=timeout, verify=False)
+                    if response.status_code == 200:
+                        working_url = test_url
+                        # Извлекаем IP из ответа
+                        if test_url == "http://httpbin.org/ip":
+                            data = response.json()
+                            external_ip = data.get('origin', '').split(',')[0].strip()
+                        else:
+                            external_ip = response.text.strip()
+                        
+                        if external_ip and len(external_ip.split('.')) == 4:  # Проверяем что это похоже на IP
+                            logger.info(f"   ✅ Прокси РАБОТАЕТ! Внешний IP: {external_ip}")
+                            return True, {
+                                'ip': ip,
+                                'port': port,
+                                'protocol': protocol,
+                                'external_ip': external_ip,
+                                'proxies': proxies
+                            }
+                        break
+                except Exception as e:
+                    logger.debug(f"   Не удалось подключиться через {test_url}: {e}")
+                    continue
+            
+            logger.warning(f"   ❌ Прокси НЕ РАБОТАЕТ (не смог подключиться к тестовым сервисам)")
+            return False, {}
+            
+        except Exception as e:
+            logger.error(f"   ❌ Ошибка при базовой проверке прокси: {e}")
+            return False, {}
+    
+    def validate_proxy_for_trast_selenium(self, proxy: Dict, timeout: int = 60) -> bool:
+        """Проверяет прокси через Selenium (более эффективный обход Cloudflare)"""
+        try:
+            from selenium import webdriver
+            from selenium.webdriver.firefox.service import Service
+            from selenium.webdriver.firefox.options import Options
+            import geckodriver_autoinstaller
+            from bs4 import BeautifulSoup
+            import time
+            import random
+            
+            protocol = proxy.get('protocol', 'http').lower()
+            ip = proxy['ip']
+            port = proxy['port']
+            
+            logger.info(f"  [SELENIUM] Проверка прокси {ip}:{port} ({protocol.upper()}) через Selenium...")
+            
+            # Устанавливаем geckodriver
+            geckodriver_autoinstaller.install()
+            
+            options = Options()
+            options.add_argument("--headless")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--window-size=1920,1080")
+            
+            # Обход Cloudflare
+            options.set_preference("dom.webdriver.enabled", False)
+            options.set_preference("useAutomationExtension", False)
+            
+            # Случайный User-Agent
+            user_agents = [
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0",
+            ]
+            options.set_preference("general.useragent.override", random.choice(user_agents))
+            
+            # Настройка прокси
+            if protocol in ['http', 'https']:
+                options.set_preference("network.proxy.type", 1)
+                options.set_preference("network.proxy.http", ip)
+                options.set_preference("network.proxy.http_port", int(port))
+                options.set_preference("network.proxy.ssl", ip)
+                options.set_preference("network.proxy.ssl_port", int(port))
+                options.set_preference("network.proxy.share_proxy_settings", True)
+            elif protocol in ['socks4', 'socks5']:
+                options.set_preference("network.proxy.type", 1)
+                options.set_preference("network.proxy.socks", ip)
+                options.set_preference("network.proxy.socks_port", int(port))
+                if protocol == 'socks5':
+                    options.set_preference("network.proxy.socks_version", 5)
+                else:
+                    options.set_preference("network.proxy.socks_version", 4)
+                options.set_preference("network.proxy.socks_remote_dns", True)
+            
+            # Дополнительные настройки скрытия
+            options.set_preference("privacy.trackingprotection.enabled", True)
+            options.set_preference("media.peerconnection.enabled", False)  # Отключаем WebRTC
+            
+            # Настройки для обхода детекции
+            options.set_preference("browser.safebrowsing.enabled", False)
+            options.set_preference("toolkit.telemetry.enabled", False)
+            
+            # Создаем драйвер
+            service = Service()
+            driver = webdriver.Firefox(service=service, options=options)
+            
+            try:
+                # Расширенный обход детекции - скрываем все признаки автоматизации
+                stealth_scripts = """
+                // Скрываем webdriver
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                
+                // Добавляем плагины
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => [1, 2, 3, 4, 5]
+                });
+                
+                // Языки
+                Object.defineProperty(navigator, 'languages', {
+                    get: () => ['ru-RU', 'ru', 'en-US', 'en']
+                });
+                
+                // Permissions
+                const originalQuery = window.navigator.permissions.query;
+                window.navigator.permissions.query = (parameters) => (
+                    parameters.name === 'notifications' ?
+                        Promise.resolve({ state: Notification.permission }) :
+                        originalQuery(parameters)
+                );
+                
+                // Chrome объект (если сайт проверяет)
+                window.chrome = {
+                    runtime: {}
+                };
+                
+                // Платформа
+                Object.defineProperty(navigator, 'platform', {
+                    get: () => 'Win32'
+                });
+                
+                // Hardware concurrency
+                Object.defineProperty(navigator, 'hardwareConcurrency', {
+                    get: () => 4
+                });
+                
+                // Device memory
+                Object.defineProperty(navigator, 'deviceMemory', {
+                    get: () => 8
+                });
+                
+                // Connection (сеть)
+                Object.defineProperty(navigator, 'connection', {
+                    get: () => ({
+                        effectiveType: '4g',
+                        rtt: 50,
+                        downlink: 10,
+                        saveData: false
+                    })
+                });
+                
+                // Отключаем автоматизацию в window
+                Object.defineProperty(window, 'navigator', {
+                    value: new Proxy(navigator, {
+                        has: (target, key) => (key === 'webdriver' ? false : key in target),
+                        get: (target, key) => (key === 'webdriver' ? undefined : target[key])
+                    })
+                });
+                """
+                
+                driver.execute_script(stealth_scripts)
+                
+                # Дополнительные обходы
+                driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+                
+                # Имитация человеческого поведения - сначала идем на главную
+                logger.info(f"  [SELENIUM] Имитация поведения пользователя...")
+                logger.info(f"  [SELENIUM] Шаг 1: Открываем главную страницу...")
+                driver.get("https://trast-zapchast.ru/")
+                time.sleep(random.uniform(2, 4))  # Случайная задержка как у человека
+                
+                # Имитация движения мыши и скролла
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight/3);")
+                time.sleep(random.uniform(1, 2))
+                
+                # Теперь переходим на shop
+                logger.info(f"  [SELENIUM] Шаг 2: Переходим на страницу shop...")
+                site_url = "https://trast-zapchast.ru/shop/"
+                driver.get(site_url)
+                
+                # Ждем загрузки с большей задержкой для Cloudflare
+                time.sleep(random.uniform(5, 8))
+                
+                # Имитируем скролл
+                driver.execute_script("window.scrollTo(0, 100);")
+                time.sleep(1)
+                driver.execute_script("window.scrollTo(0, 300);")
+                time.sleep(1)
+                
+                # Проверяем на Cloudflare и ждем прохождения проверки
+                page_source_lower = driver.page_source.lower()
+                max_wait = 30  # Максимальное время ожидания Cloudflare
+                wait_time = 0
+                
+                while ("cloudflare" in page_source_lower or "checking your browser" in page_source_lower or "just a moment" in page_source_lower) and wait_time < max_wait:
+                    logger.info(f"  ⏳ Cloudflare проверка... ждем {wait_time}/{max_wait} сек")
+                    time.sleep(3)
+                    driver.refresh()  # Обновляем страницу
+                    time.sleep(2)
+                    page_source_lower = driver.page_source.lower()
+                    wait_time += 5
+                
+                if wait_time >= max_wait:
+                    logger.warning(f"  ❌ Cloudflare проверка не пройдена за {max_wait} секунд")
+                    return False
+                
+                # Парсим количество страниц
+                soup = BeautifulSoup(driver.page_source, 'html.parser')
+                last_page_el = soup.select_one(".facetwp-pager .facetwp-page.last")
+                
+                if last_page_el and last_page_el.has_attr("data-page"):
+                    total_pages = int(last_page_el["data-page"])
+                    logger.info(f"  ✅✅✅ SELENIUM УСПЕШНО! Получено количество страниц: {total_pages}")
+                    return True
+                else:
+                    # Проверяем, что страница вообще загрузилась
+                    if len(driver.page_source) > 1000 and ("shop" in driver.page_source.lower() or "товар" in driver.page_source.lower()):
+                        logger.info(f"  ✅ SELENIUM: Страница загружена, но количество страниц не найдено")
+                        logger.debug(f"  Первые 500 символов: {driver.page_source[:500]}")
+                        return True
+                    else:
+                        logger.warning(f"  ❌ SELENIUM: Страница не загрузилась корректно")
+                        return False
+                        
+            finally:
+                driver.quit()
+                
+        except Exception as e:
+            logger.warning(f"  ❌ Ошибка Selenium: {str(e)[:200]}")
+            return False
+    
+    def validate_proxy_for_trast(self, proxy: Dict, timeout: int = 30) -> bool:
+        """Проверяет прокси: сначала базовая работоспособность, потом доступ к trast-zapchast.ru"""
+        try:
+            protocol = proxy.get('protocol', 'http').lower()
+            ip = proxy['ip']
+            port = proxy['port']
+            
+            logger.info(f"Проверяем прокси {ip}:{port} ({protocol.upper()})")
+            logger.info(f"=" * 60)
+            
+            # ШАГ 1: Базовая проверка работоспособности прокси
+            is_basic_working, proxy_info = self.validate_proxy_basic(proxy, timeout=10)
+            
+            if not is_basic_working:
+                logger.warning(f"❌ Прокси {ip}:{port} не прошел базовую проверку - пропускаем проверку trast-zapchast.ru")
+                return False
+            
+            # Получаем proxies из базовой проверки
+            proxies = proxy_info['proxies']
+            external_ip = proxy_info.get('external_ip', 'Unknown')
+            
+            logger.info(f"✅ Базовая проверка пройдена! Внешний IP: {external_ip}")
+            logger.info(f"[ШАГ 2] Теперь проверяем доступ к trast-zapchast.ru...")
+            
+            # СНАЧАЛА пробуем Selenium (самый эффективный способ обхода Cloudflare)
+            logger.info(f"  [ШАГ 2.1] Пробуем Selenium (наиболее эффективный обход Cloudflare)...")
+            selenium_result = self.validate_proxy_for_trast_selenium(proxy, timeout=60)
+            
+            if selenium_result:
+                logger.info(f"  ✅✅✅ Прокси работает через Selenium! Количество страниц получено!")
+                return True
+            
+            logger.info(f"  [ШАГ 2.2] Selenium не сработал, пробуем cloudscraper/requests...")
+            
+            # Проверяем доступ к странице shop и пытаемся получить количество страниц
             site_url = "https://trast-zapchast.ru/shop/"
             
             logger.info(f"Отправляем запрос к {site_url} через прокси {ip}:{port}...")
+            logger.info(f"  Цель: получить количество страниц каталога")
             
-            # Создаем сессию для сохранения cookies
-            session = requests.Session()
-            session.proxies.update(proxies)
-            session.headers.update(headers)
-            
-            # Дополнительные настройки сессии
-            session.verify = False
-            session.allow_redirects = True
-            
-            # Сначала делаем запрос на главную страницу для получения cookies
-            try:
-                main_page_response = session.get("https://trast-zapchast.ru/", timeout=timeout)
-                logger.info(f"Главная страница: HTTP {main_page_response.status_code}")
+            # Используем cloudscraper для обхода Cloudflare (приоритет)
+            if HAS_CLOUDSCRAPER:
+                logger.info(f"  Используем cloudscraper для обхода Cloudflare...")
+                try:
+                    # Создаем cloudscraper сессию с поддержкой прокси
+                    scraper = cloudscraper.create_scraper(
+                        browser={
+                            'browser': 'chrome',
+                            'platform': 'windows',
+                            'desktop': True
+                        }
+                    )
+                    scraper.allow_redirects = True
+                    
+                    # Настраиваем прокси для cloudscraper
+                    # cloudscraper использует requests под капотом, поэтому прокси передаем через proxies
+                    scraper.proxies.update(proxies)
+                    
+                    # ВАЖНО: для SOCKS прокси нужно отключить проверку SSL другим способом
+                    # Используем urllib3 для настройки SSL
+                    import urllib3
+                    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                    
+                    # Для cloudscraper с прокси лучше использовать requests-style настройку
+                    # Устанавливаем verify через параметр запроса, а не через атрибут
+                    response = scraper.get(site_url, timeout=timeout, verify=False)
+                    logger.info(f"  ✅ cloudscraper успешно: HTTP {response.status_code}")
+                except Exception as e:
+                    logger.warning(f"  ⚠️  Ошибка cloudscraper: {e}")
+                    logger.debug(f"  Детали ошибки: {str(e)}")
+                    logger.info(f"  Пробуем обычный requests...")
+                    # Fallback на обычный requests
+                    session = requests.Session()
+                    session.proxies.update(proxies)
+                    session.verify = False
+                    session.allow_redirects = True
+                    
+                    # Подробные заголовки для имитации реального браузера
+                    user_agents = [
+                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+                        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    ]
+                    headers = {
+                        'User-Agent': random.choice(user_agents),
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                        'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
+                        'Accept-Encoding': 'gzip, deflate, br',
+                        'DNT': '1',
+                        'Connection': 'keep-alive',
+                        'Upgrade-Insecure-Requests': '1',
+                        'Sec-Fetch-Dest': 'document',
+                        'Sec-Fetch-Mode': 'navigate',
+                        'Sec-Fetch-Site': 'none',
+                        'Sec-Fetch-User': '?1',
+                        'Cache-Control': 'max-age=0',
+                    }
+                    session.headers.update(headers)
+                    response = session.get(site_url, timeout=timeout)
+            else:
+                # Обычный requests с заголовками (fallback если cloudscraper не установлен)
+                logger.warning(f"  ⚠️  cloudscraper не установлен, используем requests с заголовками...")
+                logger.info(f"  Рекомендуется установить: pip install cloudscraper")
+                session = requests.Session()
+                session.proxies.update(proxies)
+                session.verify = False
+                session.allow_redirects = True
                 
-                # Добавляем cookies к заголовкам
-                if main_page_response.cookies:
-                    cookie_string = "; ".join([f"{name}={value}" for name, value in main_page_response.cookies.items()])
-                    session.headers['Cookie'] = cookie_string
-                    logger.info(f"Добавлены cookies: {cookie_string}")
-            except Exception as e:
-                logger.info(f"Не удалось получить cookies с главной страницы: {e}")
+                user_agents = [
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+                    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                ]
+                headers = {
+                    'User-Agent': random.choice(user_agents),
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                    'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'DNT': '1',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                    'Sec-Fetch-Dest': 'document',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Site': 'none',
+                    'Sec-Fetch-User': '?1',
+                    'Cache-Control': 'max-age=0',
+                }
+                session.headers.update(headers)
+                response = session.get(site_url, timeout=timeout)
             
-            # Небольшая задержка между запросами
-            time.sleep(random.uniform(1, 3))
-            
-            # Теперь запрашиваем целевую страницу
-            response = session.get(site_url, timeout=timeout)
-            
-            logger.info(f"Прокси {ip}:{port} ({protocol}) - HTTP статус: {response.status_code}")
-            logger.info(f"Размер ответа: {len(response.text)} байт")
-            logger.info(f"Заголовки ответа: {dict(response.headers)}")
+            logger.debug(f"  HTTP статус: {response.status_code}")
+            logger.debug(f"  Размер ответа: {len(response.text)} байт")
             
             # Подробное логирование содержимого ответа
             if response.status_code == 200:
@@ -303,59 +665,78 @@ class ProxyManager:
                 
                 # Проверяем на различные типы блокировок
                 if "403" in response_text or "forbidden" in response_text:
-                    logger.info(f"Прокси {ip}:{port} ({protocol}) заблокирован сайтом (403 Forbidden)")
-                    logger.info(f"Первые 500 символов ответа: {response.text[:500]}")
+                    logger.warning(f"  ❌ Прокси заблокирован сайтом (403 Forbidden)")
+                    logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
                     return False
                 elif "cloudflare" in response_text:
-                    logger.info(f"Прокси {ip}:{port} ({protocol}) заблокирован Cloudflare")
-                    logger.info(f"Первые 500 символов ответа: {response.text[:500]}")
+                    logger.warning(f"  ❌ Прокси заблокирован Cloudflare")
+                    logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
                     return False
                 elif "blocked" in response_text or "access denied" in response_text:
-                    logger.info(f"Прокси {ip}:{port} ({protocol}) заблокирован (Access Denied)")
-                    logger.info(f"Первые 500 символов ответа: {response.text[:500]}")
+                    logger.warning(f"  ❌ Прокси заблокирован (Access Denied)")
+                    logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
                     return False
                 elif "captcha" in response_text or "challenge" in response_text:
-                    logger.info(f"Прокси {ip}:{port} ({protocol}) требует прохождения капчи")
-                    logger.info(f"Первые 500 символов ответа: {response.text[:500]}")
+                    logger.warning(f"  ❌ Требуется прохождение капчи")
+                    logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
                     return False
                 else:
-                    # Проверяем, что это действительно страница с товарами
-                    if "товар" in response_text or "product" in response_text or "каталог" in response_text:
-                        logger.info(f"Прокси {ip}:{port} ({protocol}) УСПЕШНО работает на сайте!")
-                        logger.info(f"Найдены признаки каталога товаров в ответе")
-                        return True
+                    # Проверяем, что это действительно страница shop и пытаемся получить количество страниц
+                    if "shop" in response_text or "товар" in response_text or "product" in response_text or "каталог" in response_text:
+                        # Пытаемся найти количество страниц
+                        from bs4 import BeautifulSoup
+                        soup = BeautifulSoup(response.text, 'html.parser')
+                        
+                        # Ищем элемент с количеством страниц (как в main.py)
+                        last_page_el = soup.select_one(".facetwp-pager .facetwp-page.last")
+                        if last_page_el and last_page_el.has_attr("data-page"):
+                            total_pages = int(last_page_el["data-page"])
+                            logger.info(f"  ✅ Прокси УСПЕШНО работает на trast-zapchast.ru!")
+                            logger.info(f"  ✅ Получено количество страниц: {total_pages}")
+                            return True
+                        else:
+                            # Страница загрузилась, но не нашли количество страниц
+                            # Проверяем, что это точно страница shop
+                            if len(response_text) > 1000 and ("trast" in response_text or "запчаст" in response_text):
+                                logger.info(f"  ✅ Прокси УСПЕШНО работает! Страница shop загружена")
+                                logger.info(f"  ⚠️  Не удалось определить количество страниц автоматически, но страница доступна")
+                                return True
+                            else:
+                                logger.warning(f"  ❌ Страница загружена, но не похожа на shop каталог")
+                                logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
+                                return False
                     else:
-                        logger.info(f"Прокси {ip}:{port} ({protocol}) получил ответ, но не похож на каталог товаров")
-                        logger.info(f"Первые 500 символов ответа: {response.text[:500]}")
+                        logger.warning(f"  ❌ Прокси получил ответ, но не похож на страницу shop")
+                        logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
                         return False
                         
             elif response.status_code == 403:
-                logger.info(f"Прокси {ip}:{port} ({protocol}) заблокирован (HTTP 403)")
-                logger.info(f"Первые 500 символов ответа: {response.text[:500]}")
+                logger.warning(f"  ❌ Прокси заблокирован (HTTP 403)")
+                logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
                 return False
             elif response.status_code == 429:
-                logger.info(f"Прокси {ip}:{port} ({protocol}) получил Rate Limit (HTTP 429)")
-                logger.info(f"Первые 500 символов ответа: {response.text[:500]}")
+                logger.warning(f"  ❌ Rate Limit (HTTP 429)")
+                logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
                 return False
             else:
-                logger.info(f"Прокси {ip}:{port} ({protocol}) - HTTP статус {response.status_code}")
-                logger.info(f"Первые 500 символов ответа: {response.text[:500]}")
+                logger.warning(f"  ❌ HTTP статус {response.status_code}")
+                logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
                 return False
                 
         except requests.exceptions.ConnectTimeout:
-            logger.info(f"Прокси {ip}:{port} ({protocol}) - таймаут подключения")
+            logger.warning(f"  ❌ Таймаут подключения (прокси не отвечает)")
             return False
         except requests.exceptions.ReadTimeout:
-            logger.info(f"Прокси {ip}:{port} ({protocol}) - таймаут чтения")
+            logger.warning(f"  ❌ Таймаут чтения (прокси медленно отвечает)")
             return False
         except requests.exceptions.ConnectionError as e:
-            logger.info(f"Прокси {ip}:{port} ({protocol}) - ошибка подключения: {str(e)}")
+            logger.warning(f"  ❌ Ошибка подключения: {str(e)[:100]}")
             return False
         except requests.exceptions.ProxyError as e:
-            logger.info(f"Прокси {ip}:{port} ({protocol}) - ошибка прокси: {str(e)}")
+            logger.warning(f"  ❌ Ошибка прокси: {str(e)[:100]}")
             return False
         except Exception as e:
-            logger.info(f"Прокси {ip}:{port} ({protocol}) - неизвестная ошибка: {str(e)}")
+            logger.warning(f"  ❌ Неизвестная ошибка: {str(e)[:100]}")
             return False
     
     def get_first_working_proxy(self, max_attempts=3000):
@@ -373,14 +754,23 @@ class ProxyManager:
             with open(self.proxies_file, 'r', encoding='utf-8') as f:
                 all_proxies = json.load(f)
             
-            # Фильтруем все типы прокси и исключаем неработающие
+            # Фильтруем прокси по протоколу, стране и исключаем неработающие
             available_proxies = []
             for proxy in all_proxies:
                 protocol = proxy.get('protocol', '').lower()
-                if protocol in ['http', 'https', 'socks4', 'socks5']:
-                    proxy_key = f"{proxy['ip']}:{proxy['port']}"
-                    if proxy_key not in self.failed_proxies:
-                        available_proxies.append(proxy)
+                country = proxy.get('country', '').upper()
+                
+                # Фильтр по протоколу
+                if protocol not in ['http', 'https', 'socks4', 'socks5']:
+                    continue
+                
+                # Фильтр по стране (если задан)
+                if self.country_filter and country != self.country_filter.upper():
+                    continue
+                
+                proxy_key = f"{proxy['ip']}:{proxy['port']}"
+                if proxy_key not in self.failed_proxies:
+                    available_proxies.append(proxy)
             
             # Случайно перемешиваем
             random.shuffle(available_proxies)
@@ -422,14 +812,23 @@ class ProxyManager:
             with open(self.proxies_file, 'r', encoding='utf-8') as f:
                 all_proxies = json.load(f)
             
-            # Фильтруем все типы прокси и исключаем неработающие
+            # Фильтруем прокси по протоколу, стране и исключаем неработающие
             available_proxies = []
             for proxy in all_proxies:
                 protocol = proxy.get('protocol', '').lower()
-                if protocol in ['http', 'https', 'socks4', 'socks5']:
-                    proxy_key = f"{proxy['ip']}:{proxy['port']}"
-                    if proxy_key not in self.failed_proxies:
-                        available_proxies.append(proxy)
+                country = proxy.get('country', '').upper()
+                
+                # Фильтр по протоколу
+                if protocol not in ['http', 'https', 'socks4', 'socks5']:
+                    continue
+                
+                # Фильтр по стране (если задан)
+                if self.country_filter and country != self.country_filter.upper():
+                    continue
+                
+                proxy_key = f"{proxy['ip']}:{proxy['port']}"
+                if proxy_key not in self.failed_proxies:
+                    available_proxies.append(proxy)
             
             # Начинаем поиск с указанного индекса
             proxies_to_check = available_proxies[start_from_index:start_from_index + max_attempts]

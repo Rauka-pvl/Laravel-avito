@@ -1,0 +1,28 @@
+# Логи
+*.log
+find_working_proxy_*.log
+test_*.log
+
+# Результаты парсинга
+*_results.json
+hybrid_parser_results.json
+polite_parser_results.json
+
+# Кэш Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Кэш прокси (будет скачиваться автоматически)
+proxy_cache/proxies.json
+proxy_cache/last_update.txt
+
+# Временные файлы
+*.tmp
+*.bak
+.DS_Store
+
+# Старые файлы прокси (не используются)
+proxies.json
+

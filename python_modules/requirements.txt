@@ -4,6 +4,7 @@ beautifulsoup4
 certifi
 pysocks>=1.7.1  # Для полной поддержки SOCKS
 requests[socks]  # Интеграция requests + socks
+cloudscraper>=1.2.69  # Обход Cloudflare защиты
 
 # Excel and CSV processing
 openpyxl

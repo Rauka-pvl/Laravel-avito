@@ -491,12 +491,13 @@ if __name__ == "__main__":
     create_new_excel(OUTPUT_FILE)
     create_new_csv(CSV_FILE)
 
-    # Инициализируем прокси менеджер
+    # Инициализируем прокси менеджер с фильтром по России
     logger.info("Step 1: Updating proxy list...")
-    proxy_manager = ProxyManager()
+    logger.info("Используем ТОЛЬКО российские прокси (country_filter='RU')")
+    proxy_manager = ProxyManager(country_filter="RU")
     
     # Стратегия ТОЛЬКО прокси - никакого прямого доступа
-    logger.info("СТРАТЕГИЯ: ТОЛЬКО ПРОКСИ - никакого прямого доступа!")
+    logger.info("СТРАТЕГИЯ: ТОЛЬКО РОССИЙСКИЕ ПРОКСИ - никакого прямого доступа!")
     logger.info("Прокси проверяются ТОЛЬКО на способность получить количество страниц с trast-zapchast.ru")
     
     logger.info("============================================================")
