@@ -17,7 +17,7 @@ mysql-connector-python>=8.2.0
 # Web automation
 selenium>=4.15.0  # Совместимость с новыми версиями Chrome/Firefox
 webdriver-manager>=4.0.0  # Автоматическая установка ChromeDriver
-geckodriver-autoinstaller>=0.1.15  # Автоматическая установка Firefox драйвера
+geckodriver-autoinstaller>=0.1.0  # Автоматическая установка Firefox драйвера (последняя доступная версия)
 
 # Telegram bot
 aiogram==3.4.1
