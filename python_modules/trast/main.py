@@ -192,8 +192,11 @@ def _create_firefox_driver(proxy=None):
         options.set_preference("network.dns.defaultIPv4", "8.8.8.8")
         options.set_preference("network.dns.defaultIPv6", "2001:4860:4860::8888")
     else:
-        # При прокси - используем DNS через прокси
-        options.set_preference("network.proxy.socks_remote_dns", True) if proxy.get('protocol', '').lower() in ['socks4', 'socks5'] else None
+        # При прокси - НЕ переопределяем DNS, пусть прокси сам делает DNS резолюцию
+        # Для HTTP прокси DNS идет через прокси автоматически
+        # Для SOCKS можно включить remote DNS
+        if proxy.get('protocol', '').lower() in ['socks4', 'socks5']:
+            options.set_preference("network.proxy.socks_remote_dns", True)
     
     # Обход Cloudflare - отключение автоматизации
     options.set_preference("dom.webdriver.enabled", False)
