@@ -1,22 +1,23 @@
 # Web scraping and HTTP requests
-requests
-beautifulsoup4
-certifi
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+certifi>=2023.11.17
+urllib3>=2.0.0
 pysocks>=1.7.1  # Для полной поддержки SOCKS
 requests[socks]  # Интеграция requests + socks
 cloudscraper>=1.2.69  # Обход Cloudflare защиты
 
 # Excel and CSV processing
-openpyxl
-pandas
+openpyxl>=3.1.0
+pandas>=2.0.0
 
 # Database connectivity
-mysql-connector-python
+mysql-connector-python>=8.2.0
 
 # Web automation
-selenium
-webdriver-manager
-geckodriver-autoinstaller  # Автоматическая установка Firefox драйвера
+selenium>=4.15.0  # Совместимость с новыми версиями Chrome/Firefox
+webdriver-manager>=4.0.0  # Автоматическая установка ChromeDriver
+geckodriver-autoinstaller>=0.1.15  # Автоматическая установка Firefox драйвера
 
 # Telegram bot
 aiogram==3.4.1
