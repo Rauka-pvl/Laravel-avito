@@ -391,23 +391,39 @@ def get_vps_external_ip():
     # Внешний IP VPS (можно также получить автоматически через requests)
     VPS_EXTERNAL_IP = "31.172.69.102"
     
-    # Дополнительно можем получить через requests для подтверждения
-    try:
-        response = requests.get("https://api.ipify.org", timeout=5)
-        detected_vps_ip = response.text.strip()
-        
-        # Если автоматически определенный IP совпадает с известным - используем его
-        if detected_vps_ip == VPS_EXTERNAL_IP:
-            logger.debug(f"📡 Внешний IP VPS подтвержден: {VPS_EXTERNAL_IP}")
-            return VPS_EXTERNAL_IP
-        else:
-            # Если IP изменился, логируем предупреждение но используем определенный
-            logger.warning(f"⚠️  Внешний IP VPS изменился! Ожидался: {VPS_EXTERNAL_IP}, получен: {detected_vps_ip}")
-            logger.warning(f"   Используем автоматически определенный IP: {detected_vps_ip}")
-            return detected_vps_ip
-    except Exception as e:
-        logger.debug(f"Не удалось автоматически определить IP VPS, используем известный: {VPS_EXTERNAL_IP}")
-        return VPS_EXTERNAL_IP
+    # Пробуем несколько сервисов для определения IP VPS
+    ip_services = [
+        ("http://httpbin.org/ip", lambda r: r.json().get('origin', '').split(',')[0].strip() if hasattr(r, 'json') else None),
+        ("https://api.ipify.org", lambda r: r.text.strip()),
+        ("https://ifconfig.me/ip", lambda r: r.text.strip()),
+        ("http://icanhazip.com", lambda r: r.text.strip()),
+    ]
+    
+    for service_url, extract_func in ip_services:
+        try:
+            response = requests.get(service_url, timeout=3)
+            detected_vps_ip = extract_func(response)
+            
+            if detected_vps_ip and detected_vps_ip.replace('.', '').isdigit():
+                # Проверяем что это похоже на IP адрес
+                parts = detected_vps_ip.split('.')
+                if len(parts) == 4 and all(0 <= int(p) <= 255 for p in parts if p.isdigit()):
+                    # Если автоматически определенный IP совпадает с известным - используем его
+                    if detected_vps_ip == VPS_EXTERNAL_IP:
+                        logger.debug(f"📡 Внешний IP VPS подтвержден через {service_url}: {VPS_EXTERNAL_IP}")
+                        return VPS_EXTERNAL_IP
+                    else:
+                        # Если IP изменился, логируем предупреждение но используем определенный
+                        logger.warning(f"⚠️  Внешний IP VPS изменился! Ожидался: {VPS_EXTERNAL_IP}, получен: {detected_vps_ip}")
+                        logger.warning(f"   Используем автоматически определенный IP: {detected_vps_ip}")
+                        return detected_vps_ip
+        except Exception as e:
+            logger.debug(f"Не удалось получить IP через {service_url}: {str(e)[:100]}")
+            continue
+    
+    # Если не удалось определить автоматически, используем известный IP
+    logger.debug(f"Не удалось автоматически определить IP VPS, используем известный: {VPS_EXTERNAL_IP}")
+    return VPS_EXTERNAL_IP
 
 def verify_proxy_usage(driver, proxy):
     """
@@ -437,31 +453,104 @@ def verify_proxy_usage(driver, proxy):
     
     external_ips = []
     
+    # Сохраняем оригинальный таймаут для восстановления
+    original_page_load_timeout = None
+    try:
+        original_page_load_timeout = driver.timeouts.page_load
+    except:
+        pass
+    
     for service_url, extract_func in ip_check_services:
         try:
             logger.debug(f"Проверка IP через {service_url}...")
-            driver.get(service_url)
-            time.sleep(2)
             
-            page_text = driver.page_source.strip()
-            if not page_text or len(page_text) > 100:
+            # Устанавливаем короткий таймаут для страниц проверки IP
+            try:
+                driver.set_page_load_timeout(10)  # 10 секунд вместо дефолтных 30+
+            except:
+                pass
+            
+            try:
+                driver.get(service_url)
+            except Exception as timeout_error:
+                error_msg = str(timeout_error).lower()
+                if "timeout" in error_msg or "timed out" in error_msg:
+                    logger.debug(f"  ⚠️  Таймаут при загрузке {service_url}")
+                elif "net::err_" in error_msg:
+                    logger.debug(f"  ⚠️  Сетевая ошибка: {error_msg[:100]}")
+                else:
+                    logger.debug(f"  ⚠️  Ошибка загрузки {service_url}: {error_msg[:100]}")
                 continue
             
-            external_ip = extract_func(page_text)
+            # Ждем немного для загрузки
+            try:
+                time.sleep(2)
+            except:
+                pass
             
-            # Проверяем, что это похоже на IP адрес
-            if external_ip and len(external_ip.split('.')) == 4:
-                external_ips.append(external_ip)
-                logger.info(f"  ✅ IP получен через {service_url}: {external_ip}")
+            try:
+                page_text = driver.page_source.strip()
+            except:
+                continue
+            
+            # Проверяем, что это не страница ошибки Chrome
+            if "ERR_TIMED_OUT" in page_text or "This site can't be reached" in page_text or "ERR_" in page_text:
+                logger.debug(f"  ⚠️  Страница {service_url} недоступна (страница ошибки Chrome)")
+                continue
+            
+            # Проверяем размер ответа (слишком большие ответы - вероятно HTML ошибки)
+            if not page_text or len(page_text) > 200:
+                logger.debug(f"  ⚠️  Неожиданный размер ответа от {service_url}: {len(page_text)} символов")
+                continue
+            
+            try:
+                external_ip = extract_func(page_text)
+            except Exception as extract_error:
+                logger.debug(f"  ⚠️  Ошибка извлечения IP из ответа {service_url}: {str(extract_error)[:100]}")
+                continue
+            
+            # Проверяем, что это похоже на IP адрес (формат x.x.x.x где x - числа 0-255)
+            if external_ip:
+                parts = external_ip.split('.')
+                if len(parts) == 4:
+                    try:
+                        # Проверяем что все части - числа в диапазоне 0-255
+                        if all(0 <= int(p) <= 255 for p in parts if p.isdigit() and len(p) > 0):
+                            external_ips.append(external_ip)
+                            logger.info(f"  ✅ IP получен через {service_url}: {external_ip}")
+                            break  # Нашли IP, можно не пробовать другие сервисы
+                        else:
+                            logger.debug(f"  ⚠️  Неверный формат IP: {external_ip}")
+                    except ValueError:
+                        logger.debug(f"  ⚠️  Не удалось распарсить IP: {external_ip}")
+                else:
+                    logger.debug(f"  ⚠️  Не похоже на IP (не 4 части): {external_ip[:50]}")
             else:
-                logger.debug(f"  Не похоже на IP: {external_ip[:50]}")
+                logger.debug(f"  ⚠️  Не удалось извлечь IP из ответа")
         except Exception as e:
-            logger.debug(f"  Ошибка при проверке через {service_url}: {str(e)[:100]}")
+            logger.debug(f"  ⚠️  Неожиданная ошибка при проверке через {service_url}: {str(e)[:100]}")
             continue
+    
+    # Восстанавливаем оригинальный таймаут
+    if original_page_load_timeout is not None:
+        try:
+            driver.set_page_load_timeout(original_page_load_timeout)
+        except:
+            try:
+                driver.set_page_load_timeout(30)  # Дефолтный таймаут
+            except:
+                pass
+    else:
+        try:
+            driver.set_page_load_timeout(30)  # Дефолтный таймаут
+        except:
+            pass
     
     if not external_ips:
         logger.warning("  ⚠️  Не удалось получить IP ни через один сервис")
-        return False
+        logger.warning("  ⚠️  Это может быть из-за проблем с сетью, таймаутов или блокировки сервисов проверки IP")
+        logger.warning("  ⚠️  Прокси настроен в драйвере, но не можем подтвердить его использование")
+        return False  # Не блокируем работу, но возвращаем False
     
     # Берем первый успешный IP
     detected_ip = external_ips[0]
@@ -546,19 +635,26 @@ def get_driver_with_working_proxy(proxy_manager, start_from_index=0):
                 attempt += 1
                 continue
             
-            # ВАЖНО: Проверяем, что прокси действительно используется
-            proxy_verified = verify_proxy_usage(driver, proxy)
-            if proxy_verified:
-                logger.info(f"✅ ПОДТВЕРЖДЕНО: Прокси {proxy['ip']}:{proxy['port']} используется")
-                # Сохраняем информацию о прокси в драйвер для последующей проверки
-                driver.proxy_info = {
-                    'ip': proxy['ip'],
-                    'port': proxy['port'],
-                    'protocol': proxy.get('protocol', 'http'),
-                    'country': proxy.get('country', 'Unknown')
-                }
-            else:
-                logger.warning(f"⚠️  Не удалось подтвердить использование прокси, но продолжаем...")
+            # ВАЖНО: Проверяем, что прокси действительно используется (неблокирующая проверка)
+            try:
+                proxy_verified = verify_proxy_usage(driver, proxy)
+                if proxy_verified:
+                    logger.info(f"✅ ПОДТВЕРЖДЕНО: Прокси {proxy['ip']}:{proxy['port']} используется")
+                else:
+                    logger.warning(f"⚠️  Не удалось подтвердить использование прокси через проверку IP")
+                    logger.warning(f"⚠️  Это может быть из-за проблем с сервисами проверки IP или сети")
+                    logger.warning(f"⚠️  Продолжаем работу (прокси настроен в драйвере)")
+            except Exception as verify_error:
+                logger.warning(f"⚠️  Ошибка при проверке прокси: {str(verify_error)[:200]}")
+                logger.warning(f"⚠️  Продолжаем работу (прокси настроен в драйвере)")
+            
+            # Сохраняем информацию о прокси в драйвер для последующей проверки
+            driver.proxy_info = {
+                'ip': proxy['ip'],
+                'port': proxy['port'],
+                'protocol': proxy.get('protocol', 'http'),
+                'country': proxy.get('country', 'Unknown')
+            }
             
             return driver, start_from_index
             
@@ -655,13 +751,18 @@ def producer(proxy_manager):
                     page_num -= 1  # Уменьшаем, т.к. в конце цикла будет увеличение
                     continue
                 
-                # Периодическая проверка использования прокси (каждые 10 страниц)
+                # Периодическая проверка использования прокси (каждые 10 страниц, неблокирующая)
                 if page_num % 10 == 1 and hasattr(driver, 'proxy_info'):
-                    logger.info(f"🔍 Периодическая проверка прокси на странице {page_num}...")
-                    if verify_proxy_usage(driver, driver.proxy_info):
-                        logger.info(f"✅ Прокси все еще работает")
-                    else:
-                        logger.warning(f"⚠️  Не удалось подтвердить прокси, возможно нужно сменить")
+                    try:
+                        logger.info(f"🔍 Периодическая проверка прокси на странице {page_num}...")
+                        if verify_proxy_usage(driver, driver.proxy_info):
+                            logger.info(f"✅ Прокси все еще работает")
+                        else:
+                            logger.warning(f"⚠️  Не удалось подтвердить прокси через проверку IP")
+                            logger.warning(f"⚠️  Это может быть из-за проблем с сервисами проверки IP")
+                    except Exception as verify_error:
+                        logger.debug(f"Ошибка при периодической проверке прокси: {str(verify_error)[:100]}")
+                        # Не блокируем парсинг из-за ошибки проверки IP
                 
                 soup = BeautifulSoup(driver.page_source, "html.parser")
                 products = get_products_from_page_soup(soup)
