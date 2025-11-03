@@ -5,19 +5,16 @@ import random
 import logging
 import requests
 import shutil
-import threading
-from time import sleep
 from datetime import datetime
 from bs4 import BeautifulSoup
 import sys
-import os
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from openpyxl import Workbook, load_workbook
 from selenium import webdriver
 from selenium.webdriver.firefox.service import Service
 from selenium.webdriver.firefox.options import Options
 import geckodriver_autoinstaller
-import sys
 import csv
 from bz_telebot.database_manager import set_script_start, set_script_end
 from proxy_manager import ProxyManager
@@ -99,19 +96,38 @@ def append_to_csv(path, product_list):
         logger.error(f"Error writing to CSV: {e}")
 
 def create_driver(proxy=None, proxy_manager=None, use_chrome=True):
-    """Создает Chrome или Firefox драйвер с улучшенным обходом Cloudflare"""
+    """Создает Chrome или Firefox драйвер с улучшенным обходом Cloudflare
+    
+    ВАЖНО: Если прокси SOCKS5/SOCKS4, Chrome автоматически не используется,
+    т.к. Chrome не поддерживает SOCKS напрямую.
+    """
+    # Проверяем тип прокси - если SOCKS, используем Firefox
+    if proxy:
+        protocol = proxy.get('protocol', 'http').lower()
+        if protocol in ['socks4', 'socks5']:
+            logger.info(f"Прокси {protocol.upper()} - используем Firefox (Chrome не поддерживает SOCKS)")
+            use_chrome = False
+    
     # Пробуем сначала Chrome (лучше обходит Cloudflare), потом Firefox
     if use_chrome:
         try:
             return _create_chrome_driver(proxy)
-        except Exception as e:
-            logger.warning(f"Chrome не доступен: {e}, пробуем Firefox...")
+        except (ValueError, Exception) as e:
+            # ValueError если SOCKS прокси, другие ошибки - технические проблемы
+            if "не поддерживает" in str(e) or "SOCKS" in str(e):
+                logger.info(f"Прокси не поддерживается Chrome: {e}, используем Firefox...")
+            else:
+                logger.warning(f"Chrome не доступен: {e}, пробуем Firefox...")
     
     # Fallback на Firefox
     return _create_firefox_driver(proxy)
 
 def _create_chrome_driver(proxy=None):
-    """Создает Chrome драйвер с прокси"""
+    """Создает Chrome драйвер с прокси
+    
+    Примечание: Chrome НЕ поддерживает SOCKS5 напрямую через --proxy-server.
+    Для SOCKS5 прокси используйте Firefox (_create_firefox_driver).
+    """
     from selenium.webdriver.chrome.service import Service
     from selenium.webdriver.chrome.options import Options
     from webdriver_manager.chrome import ChromeDriverManager
@@ -139,6 +155,8 @@ def _create_chrome_driver(proxy=None):
     options.add_argument(f"--user-agent={selected_ua}")
     
     # Настройка прокси для Chrome
+    # ВАЖНО: Chrome не поддерживает SOCKS5 напрямую через --proxy-server
+    # Используйте только HTTP/HTTPS для Chrome
     if proxy:
         protocol = proxy.get('protocol', 'http').lower()
         ip = proxy['ip']
@@ -146,15 +164,16 @@ def _create_chrome_driver(proxy=None):
         
         if protocol in ['http', 'https']:
             proxy_arg = f"{protocol}://{ip}:{port}"
-        elif protocol == 'socks5':
-            proxy_arg = f"socks5://{ip}:{port}"
-        elif protocol == 'socks4':
-            proxy_arg = f"socks4://{ip}:{port}"
+            options.add_argument(f"--proxy-server={proxy_arg}")
+            logger.debug(f"Chrome прокси настроен: {proxy_arg}")
+        elif protocol in ['socks4', 'socks5']:
+            # SOCKS5 не поддерживается в Chrome напрямую - пропускаем этот прокси
+            logger.warning(f"Chrome не поддерживает {protocol.upper()} прокси напрямую. Используйте Firefox для SOCKS прокси.")
+            raise ValueError(f"Chrome не поддерживает {protocol.upper()} прокси. Используйте Firefox.")
         else:
             proxy_arg = f"http://{ip}:{port}"
-        
-        options.add_argument(f"--proxy-server={proxy_arg}")
-        logger.debug(f"Chrome прокси настроен: {proxy_arg}")
+            options.add_argument(f"--proxy-server={proxy_arg}")
+            logger.debug(f"Chrome прокси настроен (fallback на HTTP): {proxy_arg}")
     
     service = Service(driver_path)
     driver = webdriver.Chrome(service=service, options=options)
@@ -322,42 +341,6 @@ def _create_firefox_driver(proxy=None):
     
     return driver
 
-def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
-    """Получает количество страниц через драйвер (Chrome или Firefox)"""
-    try:
-        logger.debug(f"Открываем {url} через драйвер...")
-        driver.get(url)
-        # Увеличиваем задержку для Cloudflare
-        time.sleep(5)
-        
-        # Проверяем на Cloudflare
-        page_source_lower = driver.page_source.lower()
-        max_wait = 30
-        wait_time = 0
-        
-        while ("cloudflare" in page_source_lower or "checking your browser" in page_source_lower or "just a moment" in page_source_lower) and wait_time < max_wait:
-            logger.info(f"⏳ Cloudflare проверка... ждем {wait_time}/{max_wait} сек")
-            time.sleep(3)
-            driver.refresh()
-            time.sleep(2)
-            page_source_lower = driver.page_source.lower()
-            wait_time += 5
-        
-        if wait_time >= max_wait:
-            logger.warning("Cloudflare проверка не пройдена, но продолжаем...")
-        
-        soup = BeautifulSoup(driver.page_source, "html.parser")
-        last_page_el = soup.select_one(".facetwp-pager .facetwp-page.last")
-        if last_page_el and last_page_el.has_attr("data-page"):
-            total_pages = int(last_page_el["data-page"])
-            logger.info(f"✅ Получено количество страниц: {total_pages}")
-            return total_pages
-        else:
-            logger.warning("Не удалось найти количество страниц, возвращаем 1")
-            return 1
-    except Exception as e:
-        logger.error(f"Ошибка при получении количества страниц: {e}")
-        return 1
 
 def get_products_from_page_soup(soup):
     results = []
@@ -390,6 +373,131 @@ def get_products_from_page_soup(soup):
         results.append(product)
         logger.info(f"[Product Added] {product}")
     return results
+
+def get_vps_external_ip():
+    """
+    Получает внешний IP адрес VPS для сравнения.
+    Этот IP используется когда прокси НЕ используется.
+    
+    Returns:
+        str: Внешний IP VPS или None если не удалось определить
+    """
+    # Внешний IP VPS (можно также получить автоматически через requests)
+    VPS_EXTERNAL_IP = "31.172.69.102"
+    
+    # Дополнительно можем получить через requests для подтверждения
+    try:
+        response = requests.get("https://api.ipify.org", timeout=5)
+        detected_vps_ip = response.text.strip()
+        
+        # Если автоматически определенный IP совпадает с известным - используем его
+        if detected_vps_ip == VPS_EXTERNAL_IP:
+            logger.debug(f"📡 Внешний IP VPS подтвержден: {VPS_EXTERNAL_IP}")
+            return VPS_EXTERNAL_IP
+        else:
+            # Если IP изменился, логируем предупреждение но используем определенный
+            logger.warning(f"⚠️  Внешний IP VPS изменился! Ожидался: {VPS_EXTERNAL_IP}, получен: {detected_vps_ip}")
+            logger.warning(f"   Используем автоматически определенный IP: {detected_vps_ip}")
+            return detected_vps_ip
+    except Exception as e:
+        logger.debug(f"Не удалось автоматически определить IP VPS, используем известный: {VPS_EXTERNAL_IP}")
+        return VPS_EXTERNAL_IP
+
+def verify_proxy_usage(driver, proxy):
+    """
+    Проверяет, что прокси действительно используется через драйвер.
+    Пробует несколько сервисов для получения IP и проверяет, что он отличается от локального.
+    
+    Returns:
+        bool: True если прокси используется, False если не удалось подтвердить
+    """
+    if not proxy:
+        return False
+    
+    proxy_ip = proxy.get('ip', '')
+    proxy_country = proxy.get('country', '')
+    
+    # Получаем внешний IP VPS для сравнения
+    vps_external_ip = get_vps_external_ip()
+    if vps_external_ip:
+        logger.debug(f"📡 Внешний IP VPS (для сравнения): {vps_external_ip}")
+    
+    # Список сервисов для проверки IP (пробуем несколько для надежности)
+    ip_check_services = [
+        ("https://api.ipify.org", lambda text: text.strip()),
+        ("http://httpbin.org/ip", lambda text: extract_json_ip(text)),
+        ("https://ifconfig.me/ip", lambda text: text.strip()),
+    ]
+    
+    external_ips = []
+    
+    for service_url, extract_func in ip_check_services:
+        try:
+            logger.debug(f"Проверка IP через {service_url}...")
+            driver.get(service_url)
+            time.sleep(2)
+            
+            page_text = driver.page_source.strip()
+            if not page_text or len(page_text) > 100:
+                continue
+            
+            external_ip = extract_func(page_text)
+            
+            # Проверяем, что это похоже на IP адрес
+            if external_ip and len(external_ip.split('.')) == 4:
+                external_ips.append(external_ip)
+                logger.info(f"  ✅ IP получен через {service_url}: {external_ip}")
+            else:
+                logger.debug(f"  Не похоже на IP: {external_ip[:50]}")
+        except Exception as e:
+            logger.debug(f"  Ошибка при проверке через {service_url}: {str(e)[:100]}")
+            continue
+    
+    if not external_ips:
+        logger.warning("  ⚠️  Не удалось получить IP ни через один сервис")
+        return False
+    
+    # Берем первый успешный IP
+    detected_ip = external_ips[0]
+    
+    # Проверяем, что IP действительно через прокси
+    # Примечание: IP может не совпадать с IP прокси-сервера, это нормально
+    # Главное - проверить, что он не наш локальный IP
+    
+    logger.info(f"🔍 Обнаружен внешний IP через драйвер: {detected_ip}")
+    logger.info(f"📋 Прокси: {proxy_ip}:{proxy['port']} ({proxy.get('protocol', 'http').upper()})")
+    if proxy_country:
+        logger.info(f"🌍 Страна прокси: {proxy_country}")
+    
+    # КРИТИЧЕСКАЯ ПРОВЕРКА: IP должен отличаться от внешнего IP VPS
+    if vps_external_ip:
+        if detected_ip == vps_external_ip:
+            logger.error(f"  ❌ ОШИБКА: Обнаружен IP совпадает с внешним IP VPS! Прокси НЕ ИСПОЛЬЗУЕТСЯ!")
+            logger.error(f"  Внешний IP VPS: {vps_external_ip}, Обнаружен IP: {detected_ip}")
+            logger.error(f"  ⚠️  Трафик идет напрямую с VPS, без прокси!")
+            return False
+        else:
+            logger.info(f"  ✅ IP отличается от внешнего IP VPS ({vps_external_ip}) - прокси работает!")
+            logger.info(f"  ✅ Подтверждено использование прокси: {detected_ip} != {vps_external_ip}")
+    
+    # Дополнительная проверка: если есть несколько IP от разных сервисов, они должны совпадать
+    if len(external_ips) > 1:
+        unique_ips = set(external_ips)
+        if len(unique_ips) > 1:
+            logger.warning(f"  ⚠️  Разные IP от разных сервисов: {external_ips}")
+        else:
+            logger.info(f"  ✅ IP подтвержден несколькими сервисами: {detected_ip}")
+    
+    return True
+
+def extract_json_ip(text):
+    """Извлекает IP из JSON ответа httpbin.org/ip"""
+    try:
+        import json
+        data = json.loads(text)
+        return data.get('origin', '').split(',')[0].strip()
+    except:
+        return text.strip()
 
 def get_driver_with_working_proxy(proxy_manager, start_from_index=0):
     """Получает драйвер с рабочим прокси (пробует Chrome, потом Firefox)"""
@@ -432,17 +540,19 @@ def get_driver_with_working_proxy(proxy_manager, start_from_index=0):
                 attempt += 1
                 continue
             
-            # Проверяем внешний IP (опционально, пропускаем ошибки)
-            try:
-                driver.get("https://api.ipify.org")
-                time.sleep(2)
-                external_ip = driver.page_source.strip()
-                if external_ip and len(external_ip) < 20:
-                    logger.info(f"Внешний IP через прокси: {external_ip}")
-                else:
-                    logger.debug(f"Не удалось получить внешний IP: {external_ip[:50]}")
-            except Exception as e:
-                logger.debug(f"Проверка IP не критична: {str(e)[:100]}")
+            # ВАЖНО: Проверяем, что прокси действительно используется
+            proxy_verified = verify_proxy_usage(driver, proxy)
+            if proxy_verified:
+                logger.info(f"✅ ПОДТВЕРЖДЕНО: Прокси {proxy['ip']}:{proxy['port']} используется")
+                # Сохраняем информацию о прокси в драйвер для последующей проверки
+                driver.proxy_info = {
+                    'ip': proxy['ip'],
+                    'port': proxy['port'],
+                    'protocol': proxy.get('protocol', 'http'),
+                    'country': proxy.get('country', 'Unknown')
+                }
+            else:
+                logger.warning(f"⚠️  Не удалось подтвердить использование прокси, но продолжаем...")
             
             return driver, start_from_index
             
@@ -488,7 +598,6 @@ def producer(proxy_manager):
     
     # Получаем драйвер с рабочим прокси
     driver, start_from_index = get_driver_with_working_proxy(proxy_manager)
-    current_proxy = None
     
     if not driver:
         logger.error("Не удалось создать драйвер с прокси")
@@ -516,15 +625,37 @@ def producer(proxy_manager):
                 driver.get(page_url)
                 time.sleep(random.uniform(3, 6))  # Увеличиваем время ожидания
                 
-                # Проверяем на блокировку
-                if "cloudflare" in driver.page_source.lower() or "checking your browser" in driver.page_source.lower():
-                    logger.warning(f"Страница {page_num} заблокирована Cloudflare, пробуем другой прокси...")
-                    driver.quit()
+                # Проверяем на блокировку (расширенная проверка)
+                page_source_lower = driver.page_source.lower()
+                is_blocked = (
+                    "cloudflare" in page_source_lower or 
+                    "checking your browser" in page_source_lower or
+                    "access denied" in page_source_lower or
+                    "blocked" in page_source_lower or
+                    "forbidden" in page_source_lower
+                )
+                
+                if is_blocked:
+                    logger.warning(f"Страница {page_num}: обнаружена блокировка (Cloudflare/access denied), пробуем другой прокси...")
+                    try:
+                        driver.quit()
+                    except:
+                        pass
                     driver, start_from_index = get_driver_with_working_proxy(proxy_manager, start_from_index)
                     if not driver:
                         logger.error("Не удалось получить новый драйвер")
                         break
+                    # Пробуем ту же страницу с новым прокси
+                    page_num -= 1  # Уменьшаем, т.к. в конце цикла будет увеличение
                     continue
+                
+                # Периодическая проверка использования прокси (каждые 10 страниц)
+                if page_num % 10 == 1 and hasattr(driver, 'proxy_info'):
+                    logger.info(f"🔍 Периодическая проверка прокси на странице {page_num}...")
+                    if verify_proxy_usage(driver, driver.proxy_info):
+                        logger.info(f"✅ Прокси все еще работает")
+                    else:
+                        logger.warning(f"⚠️  Не удалось подтвердить прокси, возможно нужно сменить")
                 
                 soup = BeautifulSoup(driver.page_source, "html.parser")
                 products = get_products_from_page_soup(soup)
@@ -539,7 +670,23 @@ def producer(proxy_manager):
                     empty_pages_count += 1
                     logger.warning(f"[{thread_name}] Page {page_num}: no products found (empty pages: {empty_pages_count})")
                     
-                    # Умная остановка: если 3 страницы подряд пустые
+                    # Если несколько пустых страниц подряд - возможно блокировка
+                    if empty_pages_count >= 2:
+                        logger.warning(f"Найдено {empty_pages_count} пустых страниц подряд. Возможна блокировка, пробуем новый прокси...")
+                        try:
+                            driver.quit()
+                        except:
+                            pass
+                        driver, start_from_index = get_driver_with_working_proxy(proxy_manager, start_from_index)
+                        if not driver:
+                            logger.error("Не удалось получить новый драйвер")
+                            break
+                        # Пробуем ту же страницу с новым прокси
+                        page_num -= 1  # Уменьшаем, т.к. в конце цикла будет увеличение
+                        empty_pages_count = 0  # Сбрасываем счетчик при смене прокси
+                        continue
+                    
+                    # Умная остановка: если 3 страницы подряд пустые (возможно конец данных)
                     if empty_pages_count >= max_empty_pages:
                         logger.info(f"Найдено {max_empty_pages} пустых страниц подряд. Останавливаем парсинг.")
                         break
@@ -565,33 +712,6 @@ def producer(proxy_manager):
         except:
             pass
     
-    return total_collected
-
-def producer_old():
-    """Старая функция producer без прокси (для совместимости)"""
-    thread_name = "MainThread"
-    logger.info(f"[{thread_name}] Starting producer")
-    driver = create_driver()
-    total_collected = 0
-    try:
-        total_pages = get_pages_count_with_driver(driver)
-        for page_num in range(1, total_pages + 1):
-            page_url = f"https://trast-zapchast.ru/shop/?_paged={page_num}/"
-            logger.info(f"[{thread_name}] Parsing page {page_num}/{total_pages}")
-            driver.get(page_url)
-            time.sleep(2)
-            soup = BeautifulSoup(driver.page_source, "html.parser")
-            products = get_products_from_page_soup(soup)
-            if products:
-                append_to_excel(OUTPUT_FILE, products)
-                append_to_csv(CSV_FILE, products)
-                logger.info(f"[{thread_name}] Page {page_num}: added {len(products)} products")
-                total_collected += len(products)
-            else:
-                logger.warning(f"[{thread_name}] Page {page_num}: no products found")
-            time.sleep(random.uniform(1, 2))
-    finally:
-        driver.quit()
     return total_collected
 
 def create_backup():
