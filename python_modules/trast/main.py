@@ -98,8 +98,81 @@ def append_to_csv(path, product_list):
     except Exception as e:
         logger.error(f"Error writing to CSV: {e}")
 
-def create_driver(proxy=None, proxy_manager=None):
-    """Создает Firefox драйвер с улучшенным обходом Cloudflare"""
+def create_driver(proxy=None, proxy_manager=None, use_chrome=True):
+    """Создает Chrome или Firefox драйвер с улучшенным обходом Cloudflare"""
+    # Пробуем сначала Chrome (лучше обходит Cloudflare), потом Firefox
+    if use_chrome:
+        try:
+            return _create_chrome_driver(proxy)
+        except Exception as e:
+            logger.warning(f"Chrome не доступен: {e}, пробуем Firefox...")
+    
+    # Fallback на Firefox
+    return _create_firefox_driver(proxy)
+
+def _create_chrome_driver(proxy=None):
+    """Создает Chrome драйвер с прокси"""
+    from selenium.webdriver.chrome.service import Service
+    from selenium.webdriver.chrome.options import Options
+    from webdriver_manager.chrome import ChromeDriverManager
+    from selenium import webdriver
+    
+    driver_path = ChromeDriverManager().install()
+    
+    options = Options()
+    options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option('useAutomationExtension', False)
+    
+    # User-Agent
+    user_agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    ]
+    selected_ua = random.choice(user_agents)
+    options.add_argument(f"--user-agent={selected_ua}")
+    
+    # Настройка прокси для Chrome
+    if proxy:
+        protocol = proxy.get('protocol', 'http').lower()
+        ip = proxy['ip']
+        port = proxy['port']
+        
+        if protocol in ['http', 'https']:
+            proxy_arg = f"{protocol}://{ip}:{port}"
+        elif protocol == 'socks5':
+            proxy_arg = f"socks5://{ip}:{port}"
+        elif protocol == 'socks4':
+            proxy_arg = f"socks4://{ip}:{port}"
+        else:
+            proxy_arg = f"http://{ip}:{port}"
+        
+        options.add_argument(f"--proxy-server={proxy_arg}")
+        logger.debug(f"Chrome прокси настроен: {proxy_arg}")
+    
+    service = Service(driver_path)
+    driver = webdriver.Chrome(service=service, options=options)
+    
+    # Stealth скрипты
+    stealth_scripts = """
+    Object.defineProperty(navigator, 'webdriver', {
+        get: () => undefined,
+        configurable: true
+    });
+    window.chrome = { runtime: {} };
+    """
+    driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {'source': stealth_scripts})
+    
+    return driver
+
+def _create_firefox_driver(proxy=None):
+    """Создает Firefox драйвер с прокси"""
     geckodriver_autoinstaller.install()
     
     options = Options()
@@ -111,13 +184,16 @@ def create_driver(proxy=None, proxy_manager=None):
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
     
-    # DNS настройки - используем Google DNS и Cloudflare DNS
-    options.add_argument("--dns-prefetch-disable")
-    options.set_preference("network.dns.disablePrefetch", True)
-    options.set_preference("network.dns.disablePrefetchFromHTTPS", True)
-    # Принудительно используем Google DNS
-    options.set_preference("network.dns.defaultIPv4", "8.8.8.8")
-    options.set_preference("network.dns.defaultIPv6", "2001:4860:4860::8888")
+    # DNS настройки - НЕ переопределяем при использовании прокси (прокси сам должен делать DNS)
+    if not proxy:
+        # Только если прокси нет, используем Google DNS
+        options.set_preference("network.dns.disablePrefetch", True)
+        options.set_preference("network.dns.disablePrefetchFromHTTPS", True)
+        options.set_preference("network.dns.defaultIPv4", "8.8.8.8")
+        options.set_preference("network.dns.defaultIPv6", "2001:4860:4860::8888")
+    else:
+        # При прокси - используем DNS через прокси
+        options.set_preference("network.proxy.socks_remote_dns", True) if proxy.get('protocol', '').lower() in ['socks4', 'socks5'] else None
     
     # Обход Cloudflare - отключение автоматизации
     options.set_preference("dom.webdriver.enabled", False)
