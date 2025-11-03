@@ -27,8 +27,10 @@ from config import COMBINED_XML, LOG_DIR, BASE_DIR
 
 LOG_DIR = os.path.join(BASE_DIR, "..", "..", "storage", "app", "public", "output", "logs-trast")
 OUTPUT_FILE = os.path.join(LOG_DIR, "..", "trast.xlsx")
-BACKUP_FILE = os.path.join(LOG_DIR, "..", "trast_backup.xlsx")
+TEMP_OUTPUT_FILE = os.path.join(LOG_DIR, "..", "trast_temp.xlsx")
 CSV_FILE = os.path.join(LOG_DIR, "..", "trast.csv")
+TEMP_CSV_FILE = os.path.join(LOG_DIR, "..", "trast_temp.csv")
+BACKUP_FILE = os.path.join(LOG_DIR, "..", "trast_backup.xlsx")
 BACKUP_CSV = os.path.join(LOG_DIR, "..", "trast_backup.csv")
 os.makedirs(LOG_DIR, exist_ok=True)
 
@@ -79,7 +81,11 @@ def append_to_excel(path, product_list):
         total_products += len(product_list)
     except Exception as e:
         logger.error(f"Error writing to Excel: {e}")
-    logger.info(f"Excel updated with {len(product_list)} records, file size: {os.path.getsize(OUTPUT_FILE)} bytes")
+    try:
+        file_size = os.path.getsize(path)
+        logger.info(f"Excel updated with {len(product_list)} records, file size: {file_size} bytes")
+    except:
+        pass
 
 def append_to_csv(path, product_list):
     try:
@@ -661,8 +667,9 @@ def producer(proxy_manager):
                 products = get_products_from_page_soup(soup)
                 
                 if products:
-                    append_to_excel(OUTPUT_FILE, products)
-                    append_to_csv(CSV_FILE, products)
+                    # Пишем во временные файлы (старый файл не трогаем)
+                    append_to_excel(TEMP_OUTPUT_FILE, products)
+                    append_to_csv(TEMP_CSV_FILE, products)
                     logger.info(f"[{thread_name}] Page {page_num}: added {len(products)} products")
                     total_collected += len(products)
                     empty_pages_count = 0  # Сбрасываем счетчик пустых страниц
@@ -715,6 +722,7 @@ def producer(proxy_manager):
     return total_collected
 
 def create_backup():
+    """Создает бэкап основных файлов перед обновлением"""
     try:
         if os.path.exists(OUTPUT_FILE):
             shutil.copy2(OUTPUT_FILE, BACKUP_FILE)
@@ -725,6 +733,47 @@ def create_backup():
     except Exception as e:
         logger.error(f"Error creating backup: {e}")
 
+def finalize_output_files():
+    """
+    Финализирует временные файлы - перемещает их в основные только при успехе.
+    Это гарантирует, что старый файл не будет изменен при ошибке.
+    """
+    try:
+        # Перемещаем временные файлы в основные только если они существуют
+        if os.path.exists(TEMP_OUTPUT_FILE):
+            # Создаем бэкап старого файла перед заменой
+            if os.path.exists(OUTPUT_FILE):
+                create_backup()
+            
+            # Перемещаем временный файл в основной
+            shutil.move(TEMP_OUTPUT_FILE, OUTPUT_FILE)
+            logger.info(f"✅ Временный Excel файл перемещен в основной: {OUTPUT_FILE}")
+        else:
+            logger.warning("⚠️  Временный Excel файл не найден")
+        
+        if os.path.exists(TEMP_CSV_FILE):
+            # Перемещаем временный CSV в основной
+            shutil.move(TEMP_CSV_FILE, CSV_FILE)
+            logger.info(f"✅ Временный CSV файл перемещен в основной: {CSV_FILE}")
+        else:
+            logger.warning("⚠️  Временный CSV файл не найден")
+            
+    except Exception as e:
+        logger.error(f"❌ Ошибка при финализации файлов: {e}")
+        raise
+
+def cleanup_temp_files():
+    """Удаляет временные файлы в случае ошибки"""
+    try:
+        if os.path.exists(TEMP_OUTPUT_FILE):
+            os.remove(TEMP_OUTPUT_FILE)
+            logger.info(f"Временный Excel файл удален: {TEMP_OUTPUT_FILE}")
+        if os.path.exists(TEMP_CSV_FILE):
+            os.remove(TEMP_CSV_FILE)
+            logger.info(f"Временный CSV файл удален: {TEMP_CSV_FILE}")
+    except Exception as e:
+        logger.warning(f"Не удалось удалить временные файлы: {e}")
+
 if __name__ == "__main__":
     script_name = "trast"
     logger.info("=== TRAST PARSER STARTED (PROXY-ONLY) ===")
@@ -734,8 +783,10 @@ if __name__ == "__main__":
     start_time = datetime.now()
     set_script_start(script_name)
 
-    create_new_excel(OUTPUT_FILE)
-    create_new_csv(CSV_FILE)
+    # Создаем временные файлы для записи (основной файл не трогаем)
+    create_new_excel(TEMP_OUTPUT_FILE)
+    create_new_csv(TEMP_CSV_FILE)
+    logger.info("Созданы временные файлы для записи данных")
 
     # Инициализируем прокси менеджер с фильтром по России
     logger.info("Step 1: Updating proxy list...")
@@ -756,20 +807,29 @@ if __name__ == "__main__":
     status = 'done'
     try:
         if total_products >= 100:
-            logger.info(f"✅ Собрано {total_products} товаров")
-            create_backup()
+            logger.info(f"✅ Собрано {total_products} товаров - успешно!")
+            # Перемещаем временные файлы в основные (старый файл сохраняется через бэкап)
+            finalize_output_files()
+            logger.info("✅ Основные файлы обновлены успешно")
         else:
             logger.critical(f"❗ Недостаточно данных: {total_products} товаров")
             status = 'insufficient_data'
-            if os.path.exists(BACKUP_FILE):
+            # Удаляем временные файлы - основной файл НЕ ТРОГАЕМ
+            cleanup_temp_files()
+            logger.info("⚠️  Временные файлы удалены, основной файл не изменен")
+            # Восстанавливаем из бэкапа только если есть
+            if os.path.exists(BACKUP_FILE) and not os.path.exists(OUTPUT_FILE):
                 shutil.copy2(BACKUP_FILE, OUTPUT_FILE)
                 logger.info("Excel восстановлен из бэкапа")
-            if os.path.exists(BACKUP_CSV):
+            if os.path.exists(BACKUP_CSV) and not os.path.exists(CSV_FILE):
                 shutil.copy2(BACKUP_CSV, CSV_FILE)
                 logger.info("CSV восстановлен из бэкапа")
     except Exception as e:
-        logger.exception(f"Ошибка при создании бэкапа: {e}")
+        logger.exception(f"❌ Ошибка при финализации: {e}")
         status = 'error'
+        # При ошибке удаляем временные файлы - основной файл остается нетронутым
+        cleanup_temp_files()
+        logger.info("⚠️  При ошибке временные файлы удалены, основной файл не изменен")
 
     duration = (datetime.now() - start_time).total_seconds()
     set_script_end(script_name, status=status)
