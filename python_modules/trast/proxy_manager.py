@@ -463,9 +463,8 @@ class ProxyManager:
         driver = None
         try:
             driver = webdriver.Firefox(service=service, options=options)
-            # Устанавливаем короткий таймаут для проверки подключения
-            driver.set_page_load_timeout(30)  # 30 секунд вместо дефолтных 60+
-            driver.implicitly_wait(5)  # Неявное ожидание элементов
+            # НЕ устанавливаем таймауты сразу - пусть драйвер использует дефолтные
+            # Таймауты будем устанавливать только при необходимости, но не сразу после создания
             logger.info(f"  ✅ Firefox драйвер создан")
             
             # ПРОВЕРКА: Проверяем, что прокси действительно используется
@@ -674,9 +673,8 @@ class ProxyManager:
             logger.debug(f"  Создаем Chrome драйвер...")
             service = Service(driver_path)
             driver = webdriver.Chrome(service=service, options=options)
-            # Устанавливаем короткий таймаут для проверки подключения
-            driver.set_page_load_timeout(30)  # 30 секунд вместо дефолтных 60+
-            driver.implicitly_wait(5)  # Неявное ожидание элементов
+            # НЕ устанавливаем таймауты сразу - пусть драйвер использует дефолтные
+            # Таймауты будем устанавливать только при необходимости, но не сразу после создания
             logger.info(f"  ✅ Chrome драйвер создан")
             
             try:
@@ -771,9 +769,11 @@ class ProxyManager:
                     error_msg = str(shop_error).lower()
                     # Проверяем на специфичные ошибки подключения
                     if "tunnel_connection_failed" in error_msg or "err_tunnel" in error_msg:
+                        # ERR_TUNNEL_CONNECTION_FAILED может быть как для SOCKS, так и для неработающего HTTP прокси
                         logger.error(f"  ❌ Ошибка туннельного подключения к shop через прокси: {str(shop_error)[:200]}")
-                        logger.error(f"  ❌ Прокси не может установить туннель к целевому сайту (обычно для SOCKS)")
-                        logger.error(f"  ❌ Рекомендуется использовать Firefox для SOCKS прокси")
+                        logger.error(f"  ❌ Прокси не может установить соединение к целевому сайту")
+                        if protocol in ['socks4', 'socks5']:
+                            logger.error(f"  ❌ Рекомендуется использовать Firefox для SOCKS прокси")
                         return False
                     elif "connection" in error_msg or "net::err_" in error_msg:
                         logger.error(f"  ❌ Ошибка подключения к shop через прокси: {str(shop_error)[:200]}")
