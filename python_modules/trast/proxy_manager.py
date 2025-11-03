@@ -383,6 +383,7 @@ class ProxyManager:
     
     def _validate_with_firefox(self, proxy: Dict, timeout: int) -> bool:
         """Проверка через Firefox"""
+        from selenium import webdriver
         from selenium.webdriver.firefox.service import Service
         from selenium.webdriver.firefox.options import Options
         import geckodriver_autoinstaller
@@ -574,6 +575,7 @@ class ProxyManager:
     def _validate_with_chrome(self, proxy: Dict, timeout: int) -> bool:
         """Проверка через Chrome/Chromium"""
         try:
+            from selenium import webdriver
             from selenium.webdriver.chrome.service import Service
             from selenium.webdriver.chrome.options import Options
             from webdriver_manager.chrome import ChromeDriverManager
