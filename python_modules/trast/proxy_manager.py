@@ -20,13 +20,16 @@ except ImportError:
 logger = logging.getLogger("trast.proxy_manager")
 
 class ProxyManager:
-    def __init__(self, cache_dir: str = None, country_filter: str = "RU"):
+    def __init__(self, cache_dir: str = None, country_filter = None):
         """
         Инициализация ProxyManager
         
         Args:
             cache_dir: Директория для кэша прокси
-            country_filter: Фильтр по стране (например, "RU" для России). None = все страны
+            country_filter: Фильтр по странам. Может быть:
+                - str: одна страна (например, "RU")
+                - list: список стран (например, ["RU", "BY", "KZ"])
+                - None: все страны
         """
         self.cache_dir = cache_dir or os.path.join(os.path.dirname(__file__), "proxy_cache")
         self.proxies_file = os.path.join(self.cache_dir, "proxies.json")
@@ -34,30 +37,47 @@ class ProxyManager:
         self.current_proxy_index = 0
         self.failed_proxies = set()
         self.proxies = []
-        self.country_filter = country_filter  # Фильтр по стране
+        
+        # Нормализуем country_filter - всегда список (uppercase)
+        if country_filter is None:
+            self.country_filter = None
+        elif isinstance(country_filter, str):
+            self.country_filter = [country_filter.upper()]
+        elif isinstance(country_filter, list):
+            self.country_filter = [c.upper() for c in country_filter]
+        else:
+            self.country_filter = None
         
         os.makedirs(self.cache_dir, exist_ok=True)
         
         if self.country_filter:
-            logger.info(f"ProxyManager инициализирован с фильтром страны: {self.country_filter}")
+            countries_str = ", ".join(self.country_filter)
+            logger.info(f"ProxyManager инициализирован с фильтром стран: {countries_str}")
         else:
             logger.info("ProxyManager инициализирован без фильтра по стране")
         
     def download_proxies(self) -> bool:
         """Скачивает свежие прокси с Proxifly репозитория"""
         try:
-            # Используем прямой URL для российских прокси, если задан фильтр
-            if self.country_filter and self.country_filter.upper() == "RU":
-                logger.info(f"Скачивание российских прокси с Proxifly (прямая ссылка)...")
-                url = "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/countries/RU/data.json"
+            # Страны СНГ
+            CIS_COUNTRIES = ["RU", "BY", "KZ", "AM", "AZ", "GE", "KG", "MD", "TJ", "TM", "UZ", "UA"]
+            
+            # Если фильтр - одна страна из СНГ, можем использовать прямой URL
+            # Но для списка стран загружаем все и фильтруем
+            if self.country_filter and len(self.country_filter) == 1 and self.country_filter[0] in CIS_COUNTRIES:
+                country = self.country_filter[0]
+                logger.info(f"Скачивание прокси для страны {country} с Proxifly (прямая ссылка)...")
+                url = f"https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/countries/{country}/data.json"
+                response = requests.get(url, timeout=30)
+                response.raise_for_status()
+                proxies_data = response.json()
             else:
-                logger.info("Скачивание всех прокси с Proxifly...")
+                # Загружаем ВСЕ прокси и фильтруем по списку стран
+                logger.info("Скачивание всех прокси с Proxifly для фильтрации по странам СНГ...")
                 url = "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/all/data.json"
-            
-            response = requests.get(url, timeout=30)
-            response.raise_for_status()
-            
-            proxies_data = response.json()
+                response = requests.get(url, timeout=30)
+                response.raise_for_status()
+                proxies_data = response.json()
             
             # Обрабатываем прокси
             filtered_proxies = []
@@ -70,11 +90,9 @@ class ProxyManager:
                 geolocation = proxy.get('geolocation', {})
                 country = (geolocation.get('country', '') or proxy.get('country', '')).upper()
                 
-                # Если использовали прямой URL для страны, все прокси уже этой страны
-                # Но всё равно проверяем на всякий случай
-                if self.country_filter and self.country_filter.upper() != "RU":
-                    # Если использовали прямой URL для RU, но фильтр другой - пропускаем
-                    if country != self.country_filter.upper():
+                # Фильтр по странам (если задан)
+                if self.country_filter:
+                    if country not in self.country_filter:
                         continue
                 
                 # Фильтр по протоколу
@@ -371,190 +389,187 @@ class ProxyManager:
         from bs4 import BeautifulSoup
         import time
         import random
-            
-            protocol = proxy.get('protocol', 'http').lower()
-            ip = proxy['ip']
-            port = proxy['port']
-            
-            logger.info(f"  [FIREFOX] Проверка прокси {ip}:{port} ({protocol.upper()})...")
-            
-            # Устанавливаем geckodriver
-            try:
-                geckodriver_autoinstaller.install()
-            except Exception as e:
-                logger.warning(f"  ⚠️  Ошибка установки geckodriver: {e}")
-            
-            options = Options()
-            options.add_argument("--headless")
-            options.add_argument("--no-sandbox")
-            options.add_argument("--disable-gpu")
-            options.add_argument("--disable-dev-shm-usage")
-            options.add_argument("--window-size=1920,1080")
-            
-            # Обход Cloudflare - отключаем автоматизацию ПЕРЕД созданием драйвера
-            options.set_preference("dom.webdriver.enabled", False)
-            options.set_preference("useAutomationExtension", False)
-            options.set_preference("marionette.logging", "FATAL")
-            
-            # Случайный User-Agent (реалистичные)
-            user_agents = [
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
-                "Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0",
-            ]
-            selected_ua = random.choice(user_agents)
-            options.set_preference("general.useragent.override", selected_ua)
-            logger.debug(f"  User-Agent: {selected_ua}")
-            
-            # Настройка прокси - ВАЖНО для обхода блокировок
-            logger.debug(f"  Настраиваем прокси {ip}:{port} ({protocol.upper()}) в Firefox...")
-            if protocol in ['http', 'https']:
-                options.set_preference("network.proxy.type", 1)
-                options.set_preference("network.proxy.http", ip)
-                options.set_preference("network.proxy.http_port", int(port))
-                options.set_preference("network.proxy.ssl", ip)
-                options.set_preference("network.proxy.ssl_port", int(port))
-                options.set_preference("network.proxy.share_proxy_settings", True)
-                logger.debug(f"  Прокси настроен: HTTP/HTTPS -> {ip}:{port}")
-            elif protocol in ['socks4', 'socks5']:
-                options.set_preference("network.proxy.type", 1)
-                options.set_preference("network.proxy.socks", ip)
-                options.set_preference("network.proxy.socks_port", int(port))
-                if protocol == 'socks5':
-                    options.set_preference("network.proxy.socks_version", 5)
-                else:
-                    options.set_preference("network.proxy.socks_version", 4)
-                options.set_preference("network.proxy.socks_remote_dns", True)
-                logger.debug(f"  Прокси настроен: {protocol.upper()} -> {ip}:{port}")
+        
+        protocol = proxy.get('protocol', 'http').lower()
+        ip = proxy['ip']
+        port = proxy['port']
+        
+        logger.info(f"  [FIREFOX] Проверка прокси {ip}:{port} ({protocol.upper()})...")
+        
+        # Устанавливаем geckodriver
+        try:
+            geckodriver_autoinstaller.install()
+        except Exception as e:
+            logger.warning(f"  ⚠️  Ошибка установки geckodriver: {e}")
+        
+        options = Options()
+        options.add_argument("--headless")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--window-size=1920,1080")
+        
+        # Обход Cloudflare - отключаем автоматизацию ПЕРЕД созданием драйвера
+        options.set_preference("dom.webdriver.enabled", False)
+        options.set_preference("useAutomationExtension", False)
+        options.set_preference("marionette.logging", "FATAL")
+        
+        # Случайный User-Agent (реалистичные)
+        user_agents = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+            "Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0",
+        ]
+        selected_ua = random.choice(user_agents)
+        options.set_preference("general.useragent.override", selected_ua)
+        logger.debug(f"  User-Agent: {selected_ua}")
+        
+        # Настройка прокси - ВАЖНО для обхода блокировок
+        logger.debug(f"  Настраиваем прокси {ip}:{port} ({protocol.upper()}) в Firefox...")
+        if protocol in ['http', 'https']:
+            options.set_preference("network.proxy.type", 1)
+            options.set_preference("network.proxy.http", ip)
+            options.set_preference("network.proxy.http_port", int(port))
+            options.set_preference("network.proxy.ssl", ip)
+            options.set_preference("network.proxy.ssl_port", int(port))
+            options.set_preference("network.proxy.share_proxy_settings", True)
+            logger.debug(f"  Прокси настроен: HTTP/HTTPS -> {ip}:{port}")
+        elif protocol in ['socks4', 'socks5']:
+            options.set_preference("network.proxy.type", 1)
+            options.set_preference("network.proxy.socks", ip)
+            options.set_preference("network.proxy.socks_port", int(port))
+            if protocol == 'socks5':
+                options.set_preference("network.proxy.socks_version", 5)
             else:
-                logger.warning(f"  ⚠️  Неподдерживаемый протокол прокси: {protocol}")
-                return False
-            
-            # Дополнительные настройки скрытия
-            options.set_preference("privacy.trackingprotection.enabled", True)
-            options.set_preference("media.peerconnection.enabled", False)  # Отключаем WebRTC
-            
-            # Настройки для обхода детекции
-            options.set_preference("browser.safebrowsing.enabled", False)
-            options.set_preference("toolkit.telemetry.enabled", False)
-            
-            # Создаем драйвер
-            logger.debug(f"  Создаем Firefox драйвер с прокси...")
-            service = Service()
+                options.set_preference("network.proxy.socks_version", 4)
+            options.set_preference("network.proxy.socks_remote_dns", True)
+            logger.debug(f"  Прокси настроен: {protocol.upper()} -> {ip}:{port}")
+        else:
+            logger.warning(f"  ⚠️  Неподдерживаемый протокол прокси: {protocol}")
+            return False
+        
+        # Дополнительные настройки скрытия
+        options.set_preference("privacy.trackingprotection.enabled", True)
+        options.set_preference("media.peerconnection.enabled", False)  # Отключаем WebRTC
+        
+        # Настройки для обхода детекции
+        options.set_preference("browser.safebrowsing.enabled", False)
+        options.set_preference("toolkit.telemetry.enabled", False)
+        
+        # Создаем драйвер
+        logger.debug(f"  Создаем Firefox драйвер с прокси...")
+        service = Service()
+        driver = None
+        try:
             driver = webdriver.Firefox(service=service, options=options)
             logger.info(f"  ✅ Firefox драйвер создан")
             
+            # ПРОВЕРКА: Проверяем, что прокси действительно используется
+            logger.debug(f"  [ПРОВЕРКА ПРОКСИ] Проверяем внешний IP через браузер...")
             try:
-                # ПРОВЕРКА: Проверяем, что прокси действительно используется
-                logger.debug(f"  [ПРОВЕРКА ПРОКСИ] Проверяем внешний IP через браузер...")
-                try:
-                    driver.get("https://api.ipify.org")
-                    time.sleep(2)
-                    browser_ip = driver.page_source.strip()
-                    if browser_ip and len(browser_ip.split('.')) == 4:
-                        logger.info(f"  ✅ Прокси работает! IP браузера: {browser_ip} (ожидалось: {ip})")
-                        if browser_ip != ip:
-                            logger.debug(f"  Примечание: IP браузера ({browser_ip}) отличается от IP прокси ({ip}) - это нормально")
-                    else:
-                        logger.warning(f"  ⚠️  Не удалось получить IP через браузер: {browser_ip}")
-                except Exception as ip_check_error:
-                    logger.warning(f"  ⚠️  Не удалось проверить IP через браузер: {str(ip_check_error)[:100]}")
-                # В Firefox navigator.webdriver нельзя переопределить после создания драйвера
-                # Поэтому мы полагаемся на настройки preferences (dom.webdriver.enabled = False)
-                # Выполняем только безопасные скрипты, которые не трогают webdriver
-                
-                # Простые скрипты для улучшения имитации браузера
-                safe_scripts = """
-                // Добавляем плагины (если возможно)
-                try {
-                    if (!navigator.plugins || navigator.plugins.length === 0) {
-                        Object.defineProperty(navigator, 'plugins', {
-                            get: () => [1, 2, 3],
-                            configurable: true
-                        });
-                    }
-                } catch(e) {}
-                
-                // Chrome объект (если сайт проверяет)
-                if (!window.chrome) {
-                    window.chrome = {
-                        runtime: {}
-                    };
+                driver.get("https://api.ipify.org")
+                time.sleep(2)
+                browser_ip = driver.page_source.strip()
+                if browser_ip and len(browser_ip.split('.')) == 4:
+                    logger.info(f"  ✅ Прокси работает! IP браузера: {browser_ip} (ожидалось: {ip})")
+                    if browser_ip != ip:
+                        logger.debug(f"  Примечание: IP браузера ({browser_ip}) отличается от IP прокси ({ip}) - это нормально")
+                else:
+                    logger.warning(f"  ⚠️  Не удалось получить IP через браузер: {browser_ip}")
+            except Exception as ip_check_error:
+                logger.warning(f"  ⚠️  Не удалось проверить IP через браузер: {str(ip_check_error)[:100]}")
+            # В Firefox navigator.webdriver нельзя переопределить после создания драйвера
+            # Поэтому мы полагаемся на настройки preferences (dom.webdriver.enabled = False)
+            # Выполняем только безопасные скрипты, которые не трогают webdriver
+            
+            # Простые скрипты для улучшения имитации браузера
+            safe_scripts = """
+            // Добавляем плагины (если возможно)
+            try {
+                if (!navigator.plugins || navigator.plugins.length === 0) {
+                    Object.defineProperty(navigator, 'plugins', {
+                        get: () => [1, 2, 3],
+                        configurable: true
+                    });
                 }
-                """
-                
-                try:
-                    driver.execute_script(safe_scripts)
-                except:
-                    pass  # Игнорируем ошибки скриптов
-                
-                # Имитация человеческого поведения - сначала идем на главную
-                logger.info(f"  [SELENIUM] Имитация поведения пользователя...")
-                logger.info(f"  [SELENIUM] Шаг 1: Открываем главную страницу...")
-                driver.get("https://trast-zapchast.ru/")
-                time.sleep(random.uniform(2, 4))  # Случайная задержка как у человека
-                
-                # Имитация движения мыши и скролла
-                driver.execute_script("window.scrollTo(0, document.body.scrollHeight/3);")
-                time.sleep(random.uniform(1, 2))
-                
-                # Теперь переходим на shop
-                logger.info(f"  [SELENIUM] Шаг 2: Переходим на страницу shop...")
-                site_url = "https://trast-zapchast.ru/shop/"
-                driver.get(site_url)
-                
-                # Ждем загрузки с большей задержкой для Cloudflare
-                time.sleep(random.uniform(5, 8))
-                
-                # Имитируем скролл
-                driver.execute_script("window.scrollTo(0, 100);")
-                time.sleep(1)
-                driver.execute_script("window.scrollTo(0, 300);")
-                time.sleep(1)
-                
-                # Проверяем на Cloudflare и ждем прохождения проверки
+            } catch(e) {}
+            
+            // Chrome объект (если сайт проверяет)
+            if (!window.chrome) {
+                window.chrome = {
+                    runtime: {}
+                };
+            }
+            """
+            
+            try:
+                driver.execute_script(safe_scripts)
+            except:
+                pass  # Игнорируем ошибки скриптов
+            
+            # Имитация человеческого поведения - сначала идем на главную
+            logger.info(f"  [SELENIUM] Имитация поведения пользователя...")
+            logger.info(f"  [SELENIUM] Шаг 1: Открываем главную страницу...")
+            driver.get("https://trast-zapchast.ru/")
+            time.sleep(random.uniform(2, 4))
+            
+            # Скролл
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight/3);")
+            time.sleep(random.uniform(1, 2))
+            
+            # Переходим на shop
+            logger.info(f"  [SELENIUM] Шаг 2: Переходим на страницу shop...")
+            site_url = "https://trast-zapchast.ru/shop/"
+            driver.get(site_url)
+            time.sleep(random.uniform(5, 8))
+            
+            # Имитируем скролл
+            driver.execute_script("window.scrollTo(0, 100);")
+            time.sleep(1)
+            driver.execute_script("window.scrollTo(0, 300);")
+            time.sleep(1)
+            
+            # Проверяем Cloudflare
+            page_source_lower = driver.page_source.lower()
+            max_wait = 30
+            wait_time = 0
+            
+            while ("cloudflare" in page_source_lower or "checking your browser" in page_source_lower or "just a moment" in page_source_lower) and wait_time < max_wait:
+                logger.info(f"  ⏳ Cloudflare проверка... ждем {wait_time}/{max_wait} сек")
+                time.sleep(3)
+                driver.refresh()
+                time.sleep(2)
                 page_source_lower = driver.page_source.lower()
-                max_wait = 30  # Максимальное время ожидания Cloudflare
-                wait_time = 0
-                
-                while ("cloudflare" in page_source_lower or "checking your browser" in page_source_lower or "just a moment" in page_source_lower) and wait_time < max_wait:
-                    logger.info(f"  ⏳ Cloudflare проверка... ждем {wait_time}/{max_wait} сек")
-                    time.sleep(3)
-                    driver.refresh()  # Обновляем страницу
-                    time.sleep(2)
-                    page_source_lower = driver.page_source.lower()
-                    wait_time += 5
-                
-                if wait_time >= max_wait:
-                    logger.warning(f"  ❌ Cloudflare проверка не пройдена за {max_wait} секунд")
-                    return False
-                
-                # Парсим количество страниц
-                soup = BeautifulSoup(driver.page_source, 'html.parser')
-                last_page_el = soup.select_one(".facetwp-pager .facetwp-page.last")
-                
-                if last_page_el and last_page_el.has_attr("data-page"):
-                    total_pages = int(last_page_el["data-page"])
-                    logger.info(f"  ✅✅✅ SELENIUM УСПЕШНО! Получено количество страниц: {total_pages}")
+                wait_time += 5
+            
+            if wait_time >= max_wait:
+                logger.warning(f"  ❌ Cloudflare проверка не пройдена")
+                return False
+            
+            # Парсим количество страниц
+            soup = BeautifulSoup(driver.page_source, 'html.parser')
+            last_page_el = soup.select_one(".facetwp-pager .facetwp-page.last")
+            
+            if last_page_el and last_page_el.has_attr("data-page"):
+                total_pages = int(last_page_el["data-page"])
+                logger.info(f"  ✅✅✅ FIREFOX УСПЕШНО! Получено количество страниц: {total_pages}")
+                return True
+            else:
+                if len(driver.page_source) > 1000 and ("shop" in driver.page_source.lower() or "товар" in driver.page_source.lower()):
+                    logger.info(f"  ✅ FIREFOX: Страница загружена")
                     return True
                 else:
-                    # Проверяем, что страница вообще загрузилась
-                    if len(driver.page_source) > 1000 and ("shop" in driver.page_source.lower() or "товар" in driver.page_source.lower()):
-                        logger.info(f"  ✅ SELENIUM: Страница загружена, но количество страниц не найдено")
-                        logger.debug(f"  Первые 500 символов: {driver.page_source[:500]}")
-                        return True
-                    else:
-                        logger.warning(f"  ❌ SELENIUM: Страница не загрузилась корректно")
-                        return False
-                        
-            finally:
-                driver.quit()
-                
+                    logger.warning(f"  ❌ FIREFOX: Страница не загрузилась корректно")
+                    return False
+                    
         except Exception as e:
             import traceback
             logger.error(f"  ❌ Ошибка Firefox: {str(e)}")
             logger.debug(f"  Полный traceback:\n{traceback.format_exc()}")
             return False
+        finally:
+            if driver:
+                driver.quit()
     
     def _validate_with_chrome(self, proxy: Dict, timeout: int) -> bool:
         """Проверка через Chrome/Chromium"""
@@ -1004,8 +1019,8 @@ class ProxyManager:
                 if protocol not in ['http', 'https', 'socks4', 'socks5']:
                     continue
                 
-                # Фильтр по стране (если задан)
-                if self.country_filter and country != self.country_filter.upper():
+                # Фильтр по странам (если задан)
+                if self.country_filter and country not in self.country_filter:
                     continue
                 
                 proxy_key = f"{proxy['ip']}:{proxy['port']}"
@@ -1062,8 +1077,8 @@ class ProxyManager:
                 if protocol not in ['http', 'https', 'socks4', 'socks5']:
                     continue
                 
-                # Фильтр по стране (если задан)
-                if self.country_filter and country != self.country_filter.upper():
+                # Фильтр по странам (если задан)
+                if self.country_filter and country not in self.country_filter:
                     continue
                 
                 proxy_key = f"{proxy['ip']}:{proxy['port']}"
