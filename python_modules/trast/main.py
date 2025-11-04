@@ -810,16 +810,24 @@ def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
             logger.warning(f"⚠️  Используем 1 страницу (не удалось определить количество)")
             return 1
     except Exception as e:
+        error_msg = str(e).lower()
         logger.error(f"❌ Ошибка при получении количества страниц: {e}")
-        logger.error(f"❌ Traceback: {traceback.format_exc()}")
-        # Сохраняем HTML для отладки
-        try:
-            debug_file = os.path.join(LOG_DIR, f"debug_error_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
-            with open(debug_file, 'w', encoding='utf-8') as f:
-                f.write(driver.page_source)
-            logger.error(f"❌ HTML сохранен в {debug_file} для отладки")
-        except:
-            pass
+        
+        # Если это таймаут, не сохраняем HTML (страница не загрузилась)
+        if "timeout" in error_msg or "timed out" in error_msg:
+            logger.error(f"❌ Таймаут при загрузке страницы - страница не загрузилась")
+            logger.error(f"❌ Прокси не может подключиться к целевому сайту или слишком медленный")
+        else:
+            logger.error(f"❌ Traceback: {traceback.format_exc()}")
+            # Сохраняем HTML для отладки только если страница частично загрузилась
+            try:
+                if driver and hasattr(driver, 'page_source') and driver.page_source:
+                    debug_file = os.path.join(LOG_DIR, f"debug_error_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
+                    with open(debug_file, 'w', encoding='utf-8') as f:
+                        f.write(driver.page_source)
+                    logger.error(f"❌ HTML сохранен в {debug_file} для отладки")
+            except Exception as save_error:
+                logger.debug(f"Не удалось сохранить HTML для отладки: {save_error}")
         raise
 
 def producer(proxy_manager):
