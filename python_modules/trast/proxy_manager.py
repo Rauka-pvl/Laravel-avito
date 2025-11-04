@@ -479,12 +479,20 @@ class ProxyManager:
                 driver.get("https://api.ipify.org")
                 time.sleep(2)
                 browser_ip = driver.page_source.strip()
-                if browser_ip and len(browser_ip.split('.')) == 4:
-                    logger.info(f"  ✅ Прокси работает! IP браузера: {browser_ip} (ожидалось: {ip})")
-                    if browser_ip != ip:
-                        logger.debug(f"  Примечание: IP браузера ({browser_ip}) отличается от IP прокси ({ip}) - это нормально")
+                # Пробуем извлечь IP из HTML через regex
+                import re
+                ip_pattern = r'\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b'
+                ip_matches = re.findall(ip_pattern, browser_ip)
+                extracted_ip = ip_matches[0] if ip_matches else None
+                
+                if extracted_ip:
+                    logger.info(f"  ✅ Прокси работает! IP браузера: {extracted_ip} (ожидалось: {ip})")
+                    if extracted_ip != ip:
+                        logger.debug(f"  Примечание: IP браузера ({extracted_ip}) отличается от IP прокси ({ip}) - это нормально")
                 else:
-                    logger.warning(f"  ⚠️  Не удалось получить IP через браузер: {browser_ip}")
+                    # Если не нашли IP, ограничиваем вывод HTML до 200 символов
+                    browser_ip_preview = browser_ip[:200] + "..." if len(browser_ip) > 200 else browser_ip
+                    logger.warning(f"  ⚠️  Не удалось получить IP через браузер (размер ответа: {len(browser_ip)} символов, превью: {browser_ip_preview})")
             except Exception as ip_check_error:
                 logger.warning(f"  ⚠️  Не удалось проверить IP через браузер: {str(ip_check_error)[:100]}")
             # В Firefox navigator.webdriver нельзя переопределить после создания драйвера
