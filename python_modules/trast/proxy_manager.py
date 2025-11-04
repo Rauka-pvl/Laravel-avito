@@ -56,9 +56,15 @@ class ProxyManager:
         else:
             logger.info("ProxyManager инициализирован без фильтра по стране")
         
-    def download_proxies(self) -> bool:
-        """Скачивает свежие прокси с Proxifly репозитория"""
+    def download_proxies(self, force_update=False) -> bool:
+        """Скачивает свежие прокси с Proxifly репозитория
+        
+        Args:
+            force_update: Если True, обновляет прокси даже если они свежие
+        """
         try:
+            if force_update:
+                logger.info("🔄 Принудительное обновление списка прокси...")
             # Страны СНГ
             CIS_COUNTRIES = ["RU", "BY", "KZ", "AM", "AZ", "GE", "KG", "MD", "TJ", "TM", "UZ", "UA"]
             

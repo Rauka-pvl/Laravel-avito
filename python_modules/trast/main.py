@@ -684,8 +684,35 @@ def get_driver_with_working_proxy(proxy_manager, start_from_index=0):
                 logger.info(f"Попытка {attempt + 1}/{max_attempts}")
                 time.sleep(2)
     
+    # Если все прокси не сработали, ждем 10 минут и обновляем список прокси
     logger.error("Не удалось создать драйвер после всех попыток")
-    return None, start_from_index
+    logger.info("⏳ Ожидаем 10 минут перед обновлением списка прокси...")
+    logger.info("   Возможно список прокси обновился в репозитории")
+    
+    wait_minutes = 10
+    wait_seconds = wait_minutes * 60
+    
+    # Показываем прогресс каждую минуту
+    for minute in range(wait_minutes):
+        remaining = wait_minutes - minute - 1
+        logger.info(f"   Осталось ждать: {remaining} минут...")
+        time.sleep(60)  # Ждем 1 минуту
+    
+    logger.info("✅ Ожидание завершено, обновляем список прокси...")
+    
+    # Принудительно обновляем список прокси (force_update=True)
+    try:
+        if proxy_manager.download_proxies(force_update=True):
+            logger.info("✅ Список прокси обновлен, пробуем еще раз...")
+            # Сбрасываем индекс и пробуем заново
+            return get_driver_with_working_proxy(proxy_manager, start_from_index=0)
+        else:
+            logger.warning("⚠️  Не удалось обновить список прокси, используем кэшированный")
+            return None, start_from_index
+    except Exception as update_error:
+        logger.error(f"❌ Ошибка при обновлении списка прокси: {update_error}")
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
+        return None, start_from_index
 
 def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
     """Получает количество страниц с улучшенной обработкой Cloudflare"""
@@ -803,6 +830,7 @@ def producer(proxy_manager):
     total_collected = 0
     empty_pages_count = 0
     max_empty_pages = 3
+    pages_checked = 0  # Счетчик проверенных страниц
     
     try:
         logger.info(f"Начинаем парсинг ТОЛЬКО через прокси")
@@ -816,8 +844,9 @@ def producer(proxy_manager):
         
         for page_num in range(1, total_pages + 1):
             try:
+                pages_checked += 1  # Увеличиваем счетчик проверенных страниц
                 page_url = f"https://trast-zapchast.ru/shop/?_paged={page_num}"
-                logger.info(f"[{thread_name}] Parsing page {page_num}/{total_pages}")
+                logger.info(f"[{thread_name}] Parsing page {page_num}/{total_pages} (проверено: {pages_checked})")
                 
                 driver.get(page_url)
                 time.sleep(random.uniform(3, 6))  # Увеличиваем время ожидания
@@ -873,6 +902,12 @@ def producer(proxy_manager):
                     empty_pages_count += 1
                     logger.warning(f"[{thread_name}] Page {page_num}: no products found (empty pages: {empty_pages_count})")
                     
+                    # Умная остановка: если 2 пустые страницы подряд И проверено больше 100 страниц
+                    if empty_pages_count >= 2 and pages_checked > 100:
+                        logger.info(f"⏹️  Остановка парсинга: найдено {empty_pages_count} пустых страниц подряд и проверено {pages_checked} страниц (>100)")
+                        logger.info(f"   Вероятно достигнут конец данных или все товары собраны")
+                        break
+                    
                     # Если несколько пустых страниц подряд - возможно блокировка
                     if empty_pages_count >= 2:
                         logger.warning(f"Найдено {empty_pages_count} пустых страниц подряд. Возможна блокировка, пробуем новый прокси...")
@@ -886,6 +921,7 @@ def producer(proxy_manager):
                             break
                         # Пробуем ту же страницу с новым прокси
                         page_num -= 1  # Уменьшаем, т.к. в конце цикла будет увеличение
+                        pages_checked -= 1  # Уменьшаем счетчик, т.к. повторяем страницу
                         empty_pages_count = 0  # Сбрасываем счетчик при смене прокси
                         continue
                     
