@@ -1069,15 +1069,20 @@ def cleanup_temp_files():
     except Exception as e:
         logger.warning(f"Не удалось удалить временные файлы: {e}")
 
-def rename_log_file_by_status(status):
-    """Переименовывает лог-файл с суффиксом на основе статуса"""
+def rename_log_file_by_status(status, total_products=0):
+    """Переименовывает лог-файл с суффиксом на основе статуса
+    
+    Args:
+        status: Статус парсинга ('done', 'insufficient_data', 'error')
+        total_products: Количество собранных товаров (для определения успеха)
+    """
     try:
         if not os.path.exists(LOG_FILE_PATH):
             logger.debug(f"Лог-файл не найден: {LOG_FILE_PATH}")
             return
         
         # Определяем суффикс на основе статуса
-        if status == 'done' and 'total_products' in globals() and globals().get('total_products', 0) >= 100:
+        if status == 'done' and total_products >= 100:
             suffix = "_success"
         elif status == 'insufficient_data':
             suffix = "_insufficient_data"
@@ -1157,7 +1162,7 @@ if __name__ == "__main__":
         except:
             pass
         # Переименовываем лог-файл перед выходом
-        rename_log_file_by_status('error')
+        rename_log_file_by_status('error', total_products=0)
         sys.exit(1)
 
     status = 'done'
@@ -1201,4 +1206,4 @@ if __name__ == "__main__":
     logger.info("============================================================")
     
     # Переименовываем лог-файл на основе статуса
-    rename_log_file_by_status(status)
+    rename_log_file_by_status(status, total_products=total_products)
