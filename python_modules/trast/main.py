@@ -635,21 +635,26 @@ def get_driver_with_working_proxy(proxy_manager, start_from_index=0):
                 return None, start_from_index
             
             logger.info(f"Создаем драйвер с прокси {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()})")
+            logger.info(f"Пробуем этот прокси на оба браузера (Chrome → Firefox)")
             
             # Пробуем сначала Chrome (лучше обходит Cloudflare)
             driver = None
+            chrome_worked = False
             try:
-                logger.info("Пробуем создать Chrome драйвер...")
+                logger.info(f"  [1/2] Пробуем создать Chrome драйвер с прокси {proxy['ip']}:{proxy['port']}...")
                 driver = create_driver(proxy, proxy_manager, use_chrome=True)
                 logger.info("✅ Chrome драйвер создан")
+                chrome_worked = True
             except Exception as chrome_error:
-                logger.warning(f"Chrome не удалось создать: {str(chrome_error)[:200]}")
-                logger.info("Пробуем Firefox...")
+                logger.warning(f"  ❌ Chrome не удалось создать: {str(chrome_error)[:200]}")
+                logger.info(f"  [2/2] Пробуем Firefox с тем же прокси {proxy['ip']}:{proxy['port']}...")
                 try:
                     driver = create_driver(proxy, proxy_manager, use_chrome=False)
                     logger.info("✅ Firefox драйвер создан")
                 except Exception as firefox_error:
-                    logger.error(f"Firefox тоже не удалось создать: {str(firefox_error)[:200]}")
+                    logger.error(f"  ❌ Firefox тоже не удалось создать: {str(firefox_error)[:200]}")
+                    logger.warning(f"⚠️  Прокси {proxy['ip']}:{proxy['port']} не работает ни в Chrome, ни в Firefox")
+                    logger.info(f"Переходим к следующему прокси...")
                     attempt += 1
                     continue
             
