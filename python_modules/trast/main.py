@@ -723,9 +723,16 @@ def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
         
         logger.info("Получаем количество страниц для парсинга...")
         
-        # Устанавливаем таймаут для загрузки страницы
-        driver.set_page_load_timeout(60)
-        driver.get(url)
+        # Устанавливаем таймаут для загрузки страницы (увеличен для медленных прокси)
+        driver.set_page_load_timeout(90)  # 90 секунд вместо 60 для медленных прокси
+        try:
+            driver.get(url)
+        except Exception as get_error:
+            error_msg = str(get_error).lower()
+            if "timeout" in error_msg or "timed out" in error_msg:
+                logger.warning(f"⚠️  Таймаут при загрузке страницы {url}")
+                logger.warning(f"⚠️  Прокси может быть слишком медленным или недоступным для целевого сайта")
+            raise
         
         # Ждем загрузки страницы и скроллим для активации динамического контента
         wait = WebDriverWait(driver, 30)
@@ -835,11 +842,56 @@ def producer(proxy_manager):
     try:
         logger.info(f"Начинаем парсинг ТОЛЬКО через прокси")
         
-        # Получаем количество страниц
-        try:
-            total_pages = get_pages_count_with_driver(driver)
-        except Exception as e:
-            logger.error(f"Не удалось получить количество страниц: {e}")
+        # Получаем количество страниц (с повторными попытками при таймауте)
+        total_pages = None
+        max_retries = 3
+        
+        for retry in range(max_retries):
+            try:
+                logger.info(f"Попытка {retry + 1}/{max_retries} получить количество страниц...")
+                total_pages = get_pages_count_with_driver(driver)
+                if total_pages and total_pages > 0:
+                    logger.info(f"✅ Успешно получено количество страниц: {total_pages}")
+                    break
+                else:
+                    logger.warning(f"⚠️  Получено некорректное количество страниц: {total_pages}")
+            except Exception as e:
+                error_msg = str(e).lower()
+                if "timeout" in error_msg or "timed out" in error_msg:
+                    logger.warning(f"⚠️  Таймаут при получении количества страниц (попытка {retry + 1}/{max_retries})")
+                    if retry < max_retries - 1:
+                        logger.info(f"Пробуем другой прокси...")
+                        try:
+                            driver.quit()
+                        except:
+                            pass
+                        driver, start_from_index = get_driver_with_working_proxy(proxy_manager, start_from_index)
+                        if not driver:
+                            logger.error("Не удалось получить новый драйвер для повторной попытки")
+                            return 0
+                        logger.info(f"Получен новый драйвер, пробуем еще раз...")
+                        continue
+                    else:
+                        logger.error(f"❌ Все попытки получить количество страниц завершились таймаутом")
+                        return 0
+                else:
+                    logger.error(f"❌ Ошибка при получении количества страниц: {e}")
+                    if retry < max_retries - 1:
+                        logger.info(f"Пробуем другой прокси...")
+                        try:
+                            driver.quit()
+                        except:
+                            pass
+                        driver, start_from_index = get_driver_with_working_proxy(proxy_manager, start_from_index)
+                        if not driver:
+                            logger.error("Не удалось получить новый драйвер для повторной попытки")
+                            return 0
+                        continue
+                    else:
+                        return 0
+        
+        if not total_pages or total_pages <= 0:
+            logger.error("❌ Не удалось получить количество страниц после всех попыток")
             return 0
         
         for page_num in range(1, total_pages + 1):
