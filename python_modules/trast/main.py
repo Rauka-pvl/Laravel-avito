@@ -505,7 +505,25 @@ def verify_proxy_usage(driver, proxy):
                 continue
             
             try:
-                external_ip = extract_func(page_text)
+                # Всегда ищем IP через regex в page_text (может быть обернут в HTML теги)
+                import re
+                ip_pattern = r'\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b'
+                
+                # Сначала пробуем извлечь через функцию
+                raw_ip = extract_func(page_text) if extract_func else page_text
+                
+                # Ищем IP в raw_ip (может быть HTML)
+                ip_matches = re.findall(ip_pattern, str(raw_ip))
+                if not ip_matches:
+                    # Если не нашли, ищем во всем page_text
+                    ip_matches = re.findall(ip_pattern, page_text)
+                
+                if ip_matches:
+                    external_ip = ip_matches[0]  # Берем первый найденный IP
+                    logger.debug(f"  Извлечен IP из ответа: {external_ip}")
+                else:
+                    logger.debug(f"  ⚠️  Не удалось извлечь IP из ответа")
+                    continue
             except Exception as extract_error:
                 logger.debug(f"  ⚠️  Ошибка извлечения IP из ответа {service_url}: {str(extract_error)[:100]}")
                 continue
@@ -672,26 +690,102 @@ def get_driver_with_working_proxy(proxy_manager, start_from_index=0):
 def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
     """Получает количество страниц с улучшенной обработкой Cloudflare"""
     try:
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.common.by import By
+        
         logger.info("Получаем количество страниц для парсинга...")
+        
+        # Устанавливаем таймаут для загрузки страницы
+        driver.set_page_load_timeout(60)
         driver.get(url)
-        time.sleep(5)  # Увеличиваем время ожидания для Cloudflare
         
-        # Проверяем, не заблокированы ли мы
-        if "cloudflare" in driver.page_source.lower() or "checking your browser" in driver.page_source.lower():
-            logger.warning("Обнаружена страница Cloudflare, ждем...")
-            time.sleep(10)
+        # Ждем загрузки страницы и скроллим для активации динамического контента
+        wait = WebDriverWait(driver, 30)
         
-        soup = BeautifulSoup(driver.page_source, "html.parser")
+        # Проверяем на Cloudflare и ждем его прохождения
+        page_source_lower = driver.page_source.lower()
+        max_wait = 30
+        wait_time = 0
+        
+        while ("cloudflare" in page_source_lower or "checking your browser" in page_source_lower or "just a moment" in page_source_lower) and wait_time < max_wait:
+            logger.info(f"⏳ Cloudflare проверка... ждем {wait_time}/{max_wait} сек")
+            time.sleep(3)
+            driver.refresh()
+            time.sleep(2)
+            page_source_lower = driver.page_source.lower()
+            wait_time += 5
+        
+        # Скроллим для активации динамического контента (как в proxy_manager)
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight/3);")
+        time.sleep(random.uniform(1, 2))
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
+        time.sleep(random.uniform(1, 2))
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(random.uniform(2, 3))
+        
+        # Дополнительное ожидание для полной загрузки
+        time.sleep(3)
+        
+        # Пробуем найти элемент пагинации (используем ту же логику что в proxy_manager)
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
         last_page_el = soup.select_one(".facetwp-pager .facetwp-page.last")
+        
         if last_page_el and last_page_el.has_attr("data-page"):
             total_pages = int(last_page_el["data-page"])
-            logger.info(f"Найдено {total_pages} страниц для парсинга")
+            logger.info(f"✅ Найдено {total_pages} страниц для парсинга")
             return total_pages
         else:
-            logger.warning("Не удалось найти информацию о количестве страниц, используем 1")
+            # Пробуем альтернативные селекторы
+            if not last_page_el:
+                last_page_el = soup.select_one(".facetwp-page.last")
+            if not last_page_el:
+                last_page_els = soup.select(".facetwp-pager .facetwp-page")
+                if last_page_els:
+                    last_page_el = last_page_els[-1]
+            
+            if last_page_el and last_page_el.has_attr("data-page"):
+                total_pages = int(last_page_el["data-page"])
+                logger.info(f"✅ Найдено {total_pages} страниц для парсинга (альтернативный селектор)")
+                return total_pages
+            
+            # Пробуем через WebDriverWait (как в proxy_manager)
+            try:
+                wait = WebDriverWait(driver, 10)
+                last_page_element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".facetwp-pager .facetwp-page.last")))
+                if last_page_element.get_attribute("data-page"):
+                    total_pages = int(last_page_element.get_attribute("data-page"))
+                    logger.info(f"✅ Найдено {total_pages} страниц для парсинга (через WebDriverWait)")
+                    return total_pages
+            except Exception as wait_error:
+                logger.debug(f"WebDriverWait не помог: {wait_error}")
+            
+            # Сохраняем HTML для отладки
+            debug_file = os.path.join(LOG_DIR, f"debug_pagination_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
+            try:
+                with open(debug_file, 'w', encoding='utf-8') as f:
+                    f.write(driver.page_source)
+                logger.warning(f"⚠️  Не удалось найти информацию о количестве страниц")
+                logger.warning(f"⚠️  HTML сохранен в {debug_file} для отладки")
+                logger.warning(f"⚠️  Размер страницы: {len(driver.page_source)} символов")
+                logger.warning(f"⚠️  Содержит 'facetwp': {'facetwp' in driver.page_source.lower()}")
+                logger.warning(f"⚠️  Содержит 'shop': {'shop' in driver.page_source.lower()}")
+            except:
+                pass
+            
+            logger.warning(f"⚠️  Используем 1 страницу (не удалось определить количество)")
             return 1
     except Exception as e:
-        logger.error(f"Ошибка при получении количества страниц: {e}")
+        logger.error(f"❌ Ошибка при получении количества страниц: {e}")
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
+        # Сохраняем HTML для отладки
+        try:
+            debug_file = os.path.join(LOG_DIR, f"debug_error_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
+            with open(debug_file, 'w', encoding='utf-8') as f:
+                f.write(driver.page_source)
+            logger.error(f"❌ HTML сохранен в {debug_file} для отладки")
+        except:
+            pass
         raise
 
 def producer(proxy_manager):
