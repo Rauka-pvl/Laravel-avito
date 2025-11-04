@@ -414,11 +414,11 @@ def get_vps_external_ip():
                 if len(parts) == 4 and all(0 <= int(p) <= 255 for p in parts if p.isdigit()):
                     # Если автоматически определенный IP совпадает с известным - используем его
                     if detected_vps_ip == VPS_EXTERNAL_IP:
-                        logger.debug(f"📡 Внешний IP VPS подтвержден через {service_url}: {VPS_EXTERNAL_IP}")
+                        logger.debug(f" Внешний IP VPS подтвержден через {service_url}: {VPS_EXTERNAL_IP}")
                         return VPS_EXTERNAL_IP
                     else:
                         # Если IP изменился, логируем предупреждение но используем определенный
-                        logger.warning(f"⚠️  Внешний IP VPS изменился! Ожидался: {VPS_EXTERNAL_IP}, получен: {detected_vps_ip}")
+                        logger.warning(f"[WARNING]  Внешний IP VPS изменился! Ожидался: {VPS_EXTERNAL_IP}, получен: {detected_vps_ip}")
                         logger.warning(f"   Используем автоматически определенный IP: {detected_vps_ip}")
                         return detected_vps_ip
         except Exception as e:
@@ -446,7 +446,7 @@ def verify_proxy_usage(driver, proxy):
     # Получаем внешний IP VPS для сравнения
     vps_external_ip = get_vps_external_ip()
     if vps_external_ip:
-        logger.debug(f"📡 Внешний IP VPS (для сравнения): {vps_external_ip}")
+        logger.debug(f" Внешний IP VPS (для сравнения): {vps_external_ip}")
     
     # Список сервисов для проверки IP (пробуем несколько для надежности)
     ip_check_services = [
@@ -479,11 +479,11 @@ def verify_proxy_usage(driver, proxy):
             except Exception as timeout_error:
                 error_msg = str(timeout_error).lower()
                 if "timeout" in error_msg or "timed out" in error_msg:
-                    logger.debug(f"  ⚠️  Таймаут при загрузке {service_url}")
+                    logger.debug(f"  [WARNING]  Таймаут при загрузке {service_url}")
                 elif "net::err_" in error_msg:
-                    logger.debug(f"  ⚠️  Сетевая ошибка: {error_msg[:100]}")
+                    logger.debug(f"  [WARNING]  Сетевая ошибка: {error_msg[:100]}")
                 else:
-                    logger.debug(f"  ⚠️  Ошибка загрузки {service_url}: {error_msg[:100]}")
+                    logger.debug(f"  [WARNING]  Ошибка загрузки {service_url}: {error_msg[:100]}")
                 continue
             
             # Ждем немного для загрузки
@@ -499,12 +499,12 @@ def verify_proxy_usage(driver, proxy):
             
             # Проверяем, что это не страница ошибки Chrome
             if "ERR_TIMED_OUT" in page_text or "This site can't be reached" in page_text or "ERR_" in page_text:
-                logger.debug(f"  ⚠️  Страница {service_url} недоступна (страница ошибки Chrome)")
+                logger.debug(f"  [WARNING]  Страница {service_url} недоступна (страница ошибки Chrome)")
                 continue
             
             # Проверяем размер ответа (слишком большие ответы - вероятно HTML ошибки)
             if not page_text or len(page_text) > 200:
-                logger.debug(f"  ⚠️  Неожиданный размер ответа от {service_url}: {len(page_text)} символов")
+                logger.debug(f"  [WARNING]  Неожиданный размер ответа от {service_url}: {len(page_text)} символов")
                 continue
             
             try:
@@ -525,10 +525,10 @@ def verify_proxy_usage(driver, proxy):
                     external_ip = ip_matches[0]  # Берем первый найденный IP
                     logger.debug(f"  Извлечен IP из ответа: {external_ip}")
                 else:
-                    logger.debug(f"  ⚠️  Не удалось извлечь IP из ответа")
+                    logger.debug(f"  [WARNING]  Не удалось извлечь IP из ответа")
                     continue
             except Exception as extract_error:
-                logger.debug(f"  ⚠️  Ошибка извлечения IP из ответа {service_url}: {str(extract_error)[:100]}")
+                logger.debug(f"  [WARNING]  Ошибка извлечения IP из ответа {service_url}: {str(extract_error)[:100]}")
                 continue
             
             # Проверяем, что это похоже на IP адрес (формат x.x.x.x где x - числа 0-255)
@@ -539,18 +539,18 @@ def verify_proxy_usage(driver, proxy):
                         # Проверяем что все части - числа в диапазоне 0-255
                         if all(0 <= int(p) <= 255 for p in parts if p.isdigit() and len(p) > 0):
                             external_ips.append(external_ip)
-                            logger.info(f"  ✅ IP получен через {service_url}: {external_ip}")
+                            logger.info(f"  [OK] IP получен через {service_url}: {external_ip}")
                             break  # Нашли IP, можно не пробовать другие сервисы
                         else:
-                            logger.debug(f"  ⚠️  Неверный формат IP: {external_ip}")
+                            logger.debug(f"  [WARNING]  Неверный формат IP: {external_ip}")
                     except ValueError:
-                        logger.debug(f"  ⚠️  Не удалось распарсить IP: {external_ip}")
+                        logger.debug(f"  [WARNING]  Не удалось распарсить IP: {external_ip}")
                 else:
-                    logger.debug(f"  ⚠️  Не похоже на IP (не 4 части): {external_ip[:50]}")
+                    logger.debug(f"  [WARNING]  Не похоже на IP (не 4 части): {external_ip[:50]}")
             else:
-                logger.debug(f"  ⚠️  Не удалось извлечь IP из ответа")
+                logger.debug(f"  [WARNING]  Не удалось извлечь IP из ответа")
         except Exception as e:
-            logger.debug(f"  ⚠️  Неожиданная ошибка при проверке через {service_url}: {str(e)[:100]}")
+            logger.debug(f"  [WARNING]  Неожиданная ошибка при проверке через {service_url}: {str(e)[:100]}")
             continue
     
     # Восстанавливаем оригинальный таймаут
@@ -569,9 +569,9 @@ def verify_proxy_usage(driver, proxy):
             pass
     
     if not external_ips:
-        logger.warning("  ⚠️  Не удалось получить IP ни через один сервис")
-        logger.warning("  ⚠️  Это может быть из-за проблем с сетью, таймаутов или блокировки сервисов проверки IP")
-        logger.warning("  ⚠️  Прокси настроен в драйвере, но не можем подтвердить его использование")
+        logger.warning("  [WARNING]  Не удалось получить IP ни через один сервис")
+        logger.warning("  [WARNING]  Это может быть из-за проблем с сетью, таймаутов или блокировки сервисов проверки IP")
+        logger.warning("  [WARNING]  Прокси настроен в драйвере, но не можем подтвердить его использование")
         return False  # Не блокируем работу, но возвращаем False
     
     # Берем первый успешный IP
@@ -581,29 +581,29 @@ def verify_proxy_usage(driver, proxy):
     # Примечание: IP может не совпадать с IP прокси-сервера, это нормально
     # Главное - проверить, что он не наш локальный IP
     
-    logger.info(f"🔍 Обнаружен внешний IP через драйвер: {detected_ip}")
-    logger.info(f"📋 Прокси: {proxy_ip}:{proxy['port']} ({proxy.get('protocol', 'http').upper()})")
+    logger.info(f" Обнаружен внешний IP через драйвер: {detected_ip}")
+    logger.info(f" Прокси: {proxy_ip}:{proxy['port']} ({proxy.get('protocol', 'http').upper()})")
     if proxy_country:
-        logger.info(f"🌍 Страна прокси: {proxy_country}")
+        logger.info(f" Страна прокси: {proxy_country}")
     
     # КРИТИЧЕСКАЯ ПРОВЕРКА: IP должен отличаться от внешнего IP VPS
     if vps_external_ip:
         if detected_ip == vps_external_ip:
-            logger.error(f"  ❌ ОШИБКА: Обнаружен IP совпадает с внешним IP VPS! Прокси НЕ ИСПОЛЬЗУЕТСЯ!")
+            logger.error(f"  [ERROR] ОШИБКА: Обнаружен IP совпадает с внешним IP VPS! Прокси НЕ ИСПОЛЬЗУЕТСЯ!")
             logger.error(f"  Внешний IP VPS: {vps_external_ip}, Обнаружен IP: {detected_ip}")
-            logger.error(f"  ⚠️  Трафик идет напрямую с VPS, без прокси!")
+            logger.error(f"  [WARNING]  Трафик идет напрямую с VPS, без прокси!")
             return False
         else:
-            logger.info(f"  ✅ IP отличается от внешнего IP VPS ({vps_external_ip}) - прокси работает!")
-            logger.info(f"  ✅ Подтверждено использование прокси: {detected_ip} != {vps_external_ip}")
+            logger.info(f"  [OK] IP отличается от внешнего IP VPS ({vps_external_ip}) - прокси работает!")
+            logger.info(f"  [OK] Подтверждено использование прокси: {detected_ip} != {vps_external_ip}")
     
     # Дополнительная проверка: если есть несколько IP от разных сервисов, они должны совпадать
     if len(external_ips) > 1:
         unique_ips = set(external_ips)
         if len(unique_ips) > 1:
-            logger.warning(f"  ⚠️  Разные IP от разных сервисов: {external_ips}")
+            logger.warning(f"  [WARNING]  Разные IP от разных сервисов: {external_ips}")
         else:
-            logger.info(f"  ✅ IP подтвержден несколькими сервисами: {detected_ip}")
+            logger.info(f"  [OK] IP подтвержден несколькими сервисами: {detected_ip}")
     
     return True
 
@@ -643,17 +643,17 @@ def get_driver_with_working_proxy(proxy_manager, start_from_index=0):
             try:
                 logger.info(f"  [1/2] Пробуем создать Chrome драйвер с прокси {proxy['ip']}:{proxy['port']}...")
                 driver = create_driver(proxy, proxy_manager, use_chrome=True)
-                logger.info("✅ Chrome драйвер создан")
+                logger.info("[OK] Chrome драйвер создан")
                 chrome_worked = True
             except Exception as chrome_error:
-                logger.warning(f"  ❌ Chrome не удалось создать: {str(chrome_error)[:200]}")
+                logger.warning(f"  [ERROR] Chrome не удалось создать: {str(chrome_error)[:200]}")
                 logger.info(f"  [2/2] Пробуем Firefox с тем же прокси {proxy['ip']}:{proxy['port']}...")
                 try:
                     driver = create_driver(proxy, proxy_manager, use_chrome=False)
-                    logger.info("✅ Firefox драйвер создан")
+                    logger.info("[OK] Firefox драйвер создан")
                 except Exception as firefox_error:
-                    logger.error(f"  ❌ Firefox тоже не удалось создать: {str(firefox_error)[:200]}")
-                    logger.warning(f"⚠️  Прокси {proxy['ip']}:{proxy['port']} не работает ни в Chrome, ни в Firefox")
+                    logger.error(f"  [ERROR] Firefox тоже не удалось создать: {str(firefox_error)[:200]}")
+                    logger.warning(f"[WARNING]  Прокси {proxy['ip']}:{proxy['port']} не работает ни в Chrome, ни в Firefox")
                     logger.info(f"Переходим к следующему прокси...")
                     attempt += 1
                     continue
@@ -666,14 +666,14 @@ def get_driver_with_working_proxy(proxy_manager, start_from_index=0):
             try:
                 proxy_verified = verify_proxy_usage(driver, proxy)
                 if proxy_verified:
-                    logger.info(f"✅ ПОДТВЕРЖДЕНО: Прокси {proxy['ip']}:{proxy['port']} используется")
+                    logger.info(f"[OK] ПОДТВЕРЖДЕНО: Прокси {proxy['ip']}:{proxy['port']} используется")
                 else:
-                    logger.warning(f"⚠️  Не удалось подтвердить использование прокси через проверку IP")
-                    logger.warning(f"⚠️  Это может быть из-за проблем с сервисами проверки IP или сети")
-                    logger.warning(f"⚠️  Продолжаем работу (прокси настроен в драйвере)")
+                    logger.warning(f"[WARNING]  Не удалось подтвердить использование прокси через проверку IP")
+                    logger.warning(f"[WARNING]  Это может быть из-за проблем с сервисами проверки IP или сети")
+                    logger.warning(f"[WARNING]  Продолжаем работу (прокси настроен в драйвере)")
             except Exception as verify_error:
-                logger.warning(f"⚠️  Ошибка при проверке прокси: {str(verify_error)[:200]}")
-                logger.warning(f"⚠️  Продолжаем работу (прокси настроен в драйвере)")
+                logger.warning(f"[WARNING]  Ошибка при проверке прокси: {str(verify_error)[:200]}")
+                logger.warning(f"[WARNING]  Продолжаем работу (прокси настроен в драйвере)")
             
             # Сохраняем информацию о прокси в драйвер для последующей проверки
             driver.proxy_info = {
@@ -694,7 +694,7 @@ def get_driver_with_working_proxy(proxy_manager, start_from_index=0):
     
     # Если все прокси не сработали, ждем 10 минут и обновляем список прокси
     logger.error("Не удалось создать драйвер после всех попыток")
-    logger.info("⏳ Ожидаем 10 минут перед обновлением списка прокси...")
+    logger.info("[WAIT] Ожидаем 10 минут перед обновлением списка прокси...")
     logger.info("   Возможно список прокси обновился в репозитории")
     
     wait_minutes = 10
@@ -706,20 +706,20 @@ def get_driver_with_working_proxy(proxy_manager, start_from_index=0):
         logger.info(f"   Осталось ждать: {remaining} минут...")
         time.sleep(60)  # Ждем 1 минуту
     
-    logger.info("✅ Ожидание завершено, обновляем список прокси...")
+    logger.info("[OK] Ожидание завершено, обновляем список прокси...")
     
     # Принудительно обновляем список прокси (force_update=True)
     try:
         if proxy_manager.download_proxies(force_update=True):
-            logger.info("✅ Список прокси обновлен, пробуем еще раз...")
+            logger.info("[OK] Список прокси обновлен, пробуем еще раз...")
             # Сбрасываем индекс и пробуем заново
             return get_driver_with_working_proxy(proxy_manager, start_from_index=0)
         else:
-            logger.warning("⚠️  Не удалось обновить список прокси, используем кэшированный")
+            logger.warning("[WARNING]  Не удалось обновить список прокси, используем кэшированный")
             return None, start_from_index
     except Exception as update_error:
-        logger.error(f"❌ Ошибка при обновлении списка прокси: {update_error}")
-        logger.error(f"❌ Traceback: {traceback.format_exc()}")
+        logger.error(f"[ERROR] Ошибка при обновлении списка прокси: {update_error}")
+        logger.error(f"[ERROR] Traceback: {traceback.format_exc()}")
         return None, start_from_index
 
 def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
@@ -738,8 +738,8 @@ def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
         except Exception as get_error:
             error_msg = str(get_error).lower()
             if "timeout" in error_msg or "timed out" in error_msg:
-                logger.warning(f"⚠️  Таймаут при загрузке страницы {url}")
-                logger.warning(f"⚠️  Прокси может быть слишком медленным или недоступным для целевого сайта")
+                logger.warning(f"[WARNING]  Таймаут при загрузке страницы {url}")
+                logger.warning(f"[WARNING]  Прокси может быть слишком медленным или недоступным для целевого сайта")
             raise
         
         # Ждем загрузки страницы и скроллим для активации динамического контента
@@ -751,7 +751,7 @@ def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
         wait_time = 0
         
         while ("cloudflare" in page_source_lower or "checking your browser" in page_source_lower or "just a moment" in page_source_lower) and wait_time < max_wait:
-            logger.info(f"⏳ Cloudflare проверка... ждем {wait_time}/{max_wait} сек")
+            logger.info(f"[WAIT] Cloudflare проверка... ждем {wait_time}/{max_wait} сек")
             time.sleep(3)
             driver.refresh()
             time.sleep(2)
@@ -775,7 +775,7 @@ def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
         
         if last_page_el and last_page_el.has_attr("data-page"):
             total_pages = int(last_page_el["data-page"])
-            logger.info(f"✅ Найдено {total_pages} страниц для парсинга")
+            logger.info(f"[OK] Найдено {total_pages} страниц для парсинга")
             return total_pages
         else:
             # Пробуем альтернативные селекторы
@@ -788,7 +788,7 @@ def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
             
             if last_page_el and last_page_el.has_attr("data-page"):
                 total_pages = int(last_page_el["data-page"])
-                logger.info(f"✅ Найдено {total_pages} страниц для парсинга (альтернативный селектор)")
+                logger.info(f"[OK] Найдено {total_pages} страниц для парсинга (альтернативный селектор)")
                 return total_pages
             
             # Пробуем через WebDriverWait (как в proxy_manager)
@@ -797,7 +797,7 @@ def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
                 last_page_element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".facetwp-pager .facetwp-page.last")))
                 if last_page_element.get_attribute("data-page"):
                     total_pages = int(last_page_element.get_attribute("data-page"))
-                    logger.info(f"✅ Найдено {total_pages} страниц для парсинга (через WebDriverWait)")
+                    logger.info(f"[OK] Найдено {total_pages} страниц для парсинга (через WebDriverWait)")
                     return total_pages
             except Exception as wait_error:
                 logger.debug(f"WebDriverWait не помог: {wait_error}")
@@ -807,33 +807,33 @@ def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
             try:
                 with open(debug_file, 'w', encoding='utf-8') as f:
                     f.write(driver.page_source)
-                logger.warning(f"⚠️  Не удалось найти информацию о количестве страниц")
-                logger.warning(f"⚠️  HTML сохранен в {debug_file} для отладки")
-                logger.warning(f"⚠️  Размер страницы: {len(driver.page_source)} символов")
-                logger.warning(f"⚠️  Содержит 'facetwp': {'facetwp' in driver.page_source.lower()}")
-                logger.warning(f"⚠️  Содержит 'shop': {'shop' in driver.page_source.lower()}")
+                logger.warning(f"[WARNING]  Не удалось найти информацию о количестве страниц")
+                logger.warning(f"[WARNING]  HTML сохранен в {debug_file} для отладки")
+                logger.warning(f"[WARNING]  Размер страницы: {len(driver.page_source)} символов")
+                logger.warning(f"[WARNING]  Содержит 'facetwp': {'facetwp' in driver.page_source.lower()}")
+                logger.warning(f"[WARNING]  Содержит 'shop': {'shop' in driver.page_source.lower()}")
             except:
                 pass
             
-            logger.warning(f"⚠️  Используем 1 страницу (не удалось определить количество)")
+            logger.warning(f"[WARNING]  Используем 1 страницу (не удалось определить количество)")
             return 1
     except Exception as e:
         error_msg = str(e).lower()
-        logger.error(f"❌ Ошибка при получении количества страниц: {e}")
+        logger.error(f"[ERROR] Ошибка при получении количества страниц: {e}")
         
         # Если это таймаут, не сохраняем HTML (страница не загрузилась)
         if "timeout" in error_msg or "timed out" in error_msg:
-            logger.error(f"❌ Таймаут при загрузке страницы - страница не загрузилась")
-            logger.error(f"❌ Прокси не может подключиться к целевому сайту или слишком медленный")
+            logger.error(f"[ERROR] Таймаут при загрузке страницы - страница не загрузилась")
+            logger.error(f"[ERROR] Прокси не может подключиться к целевому сайту или слишком медленный")
         else:
-            logger.error(f"❌ Traceback: {traceback.format_exc()}")
+            logger.error(f"[ERROR] Traceback: {traceback.format_exc()}")
             # Сохраняем HTML для отладки только если страница частично загрузилась
             try:
                 if driver and hasattr(driver, 'page_source') and driver.page_source:
                     debug_file = os.path.join(LOG_DIR, f"debug_error_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
                     with open(debug_file, 'w', encoding='utf-8') as f:
                         f.write(driver.page_source)
-                    logger.error(f"❌ HTML сохранен в {debug_file} для отладки")
+                    logger.error(f"[ERROR] HTML сохранен в {debug_file} для отладки")
             except Exception as save_error:
                 logger.debug(f"Не удалось сохранить HTML для отладки: {save_error}")
         raise
@@ -867,14 +867,14 @@ def producer(proxy_manager):
                 logger.info(f"Попытка {retry + 1}/{max_retries} получить количество страниц...")
                 total_pages = get_pages_count_with_driver(driver)
                 if total_pages and total_pages > 0:
-                    logger.info(f"✅ Успешно получено количество страниц: {total_pages}")
+                    logger.info(f"[OK] Успешно получено количество страниц: {total_pages}")
                     break
                 else:
-                    logger.warning(f"⚠️  Получено некорректное количество страниц: {total_pages}")
+                    logger.warning(f"[WARNING]  Получено некорректное количество страниц: {total_pages}")
             except Exception as e:
                 error_msg = str(e).lower()
                 if "timeout" in error_msg or "timed out" in error_msg:
-                    logger.warning(f"⚠️  Таймаут при получении количества страниц (попытка {retry + 1}/{max_retries})")
+                    logger.warning(f"[WARNING]  Таймаут при получении количества страниц (попытка {retry + 1}/{max_retries})")
                     if retry < max_retries - 1:
                         logger.info(f"Пробуем другой прокси...")
                         try:
@@ -888,10 +888,10 @@ def producer(proxy_manager):
                         logger.info(f"Получен новый драйвер, пробуем еще раз...")
                         continue
                     else:
-                        logger.error(f"❌ Все попытки получить количество страниц завершились таймаутом")
+                        logger.error(f"[ERROR] Все попытки получить количество страниц завершились таймаутом")
                         return 0
                 else:
-                    logger.error(f"❌ Ошибка при получении количества страниц: {e}")
+                    logger.error(f"[ERROR] Ошибка при получении количества страниц: {e}")
                     if retry < max_retries - 1:
                         logger.info(f"Пробуем другой прокси...")
                         try:
@@ -907,7 +907,7 @@ def producer(proxy_manager):
                         return 0
         
         if not total_pages or total_pages <= 0:
-            logger.error("❌ Не удалось получить количество страниц после всех попыток")
+            logger.error("[ERROR] Не удалось получить количество страниц после всех попыток")
             return 0
         
         for page_num in range(1, total_pages + 1):
@@ -943,19 +943,6 @@ def producer(proxy_manager):
                     page_num -= 1  # Уменьшаем, т.к. в конце цикла будет увеличение
                     continue
                 
-                # Периодическая проверка использования прокси (каждые 10 страниц, неблокирующая)
-                if page_num % 10 == 1 and hasattr(driver, 'proxy_info'):
-                    try:
-                        logger.info(f"🔍 Периодическая проверка прокси на странице {page_num}...")
-                        if verify_proxy_usage(driver, driver.proxy_info):
-                            logger.info(f"✅ Прокси все еще работает")
-                        else:
-                            logger.warning(f"⚠️  Не удалось подтвердить прокси через проверку IP")
-                            logger.warning(f"⚠️  Это может быть из-за проблем с сервисами проверки IP")
-                    except Exception as verify_error:
-                        logger.debug(f"Ошибка при периодической проверке прокси: {str(verify_error)[:100]}")
-                        # Не блокируем парсинг из-за ошибки проверки IP
-                
                 soup = BeautifulSoup(driver.page_source, "html.parser")
                 products = get_products_from_page_soup(soup)
                 
@@ -972,7 +959,7 @@ def producer(proxy_manager):
                     
                     # Умная остановка: если 2 пустые страницы подряд И проверено больше 100 страниц
                     if empty_pages_count >= 2 and pages_checked > 100:
-                        logger.info(f"⏹️  Остановка парсинга: найдено {empty_pages_count} пустых страниц подряд и проверено {pages_checked} страниц (>100)")
+                        logger.info(f"[STOP]  Остановка парсинга: найдено {empty_pages_count} пустых страниц подряд и проверено {pages_checked} страниц (>100)")
                         logger.info(f"   Вероятно достигнут конец данных или все товары собраны")
                         break
                     
@@ -1047,19 +1034,19 @@ def finalize_output_files():
             
             # Перемещаем временный файл в основной
             shutil.move(TEMP_OUTPUT_FILE, OUTPUT_FILE)
-            logger.info(f"✅ Временный Excel файл перемещен в основной: {OUTPUT_FILE}")
+            logger.info(f"[OK] Временный Excel файл перемещен в основной: {OUTPUT_FILE}")
         else:
-            logger.warning("⚠️  Временный Excel файл не найден")
+            logger.warning("[WARNING]  Временный Excel файл не найден")
         
         if os.path.exists(TEMP_CSV_FILE):
             # Перемещаем временный CSV в основной
             shutil.move(TEMP_CSV_FILE, CSV_FILE)
-            logger.info(f"✅ Временный CSV файл перемещен в основной: {CSV_FILE}")
+            logger.info(f"[OK] Временный CSV файл перемещен в основной: {CSV_FILE}")
         else:
-            logger.warning("⚠️  Временный CSV файл не найден")
+            logger.warning("[WARNING]  Временный CSV файл не найден")
             
     except Exception as e:
-        logger.error(f"❌ Ошибка при финализации файлов: {e}")
+        logger.error(f"[ERROR] Ошибка при финализации файлов: {e}")
         raise
 
 def cleanup_temp_files():
@@ -1103,10 +1090,10 @@ def rename_log_file_by_status(status, total_products=0):
         
         # Переименовываем файл
         os.rename(LOG_FILE_PATH, new_log_path)
-        logger.info(f"📝 Лог-файл переименован: {os.path.basename(new_log_path)}")
+        logger.info(f" Лог-файл переименован: {os.path.basename(new_log_path)}")
         
     except Exception as e:
-        logger.warning(f"⚠️  Не удалось переименовать лог-файл: {e}")
+        logger.warning(f"[WARNING]  Не удалось переименовать лог-файл: {e}")
 
 if __name__ == "__main__":
     script_name = "trast"
@@ -1117,9 +1104,9 @@ if __name__ == "__main__":
     try:
         start_time = datetime.now()
         set_script_start(script_name)
-        logger.info("✅ Database connection successful")
+        logger.info("[OK] Database connection successful")
     except Exception as db_error:
-        logger.warning(f"⚠️  Database connection failed: {db_error}, continuing without DB...")
+        logger.warning(f"[WARNING]  Database connection failed: {db_error}, continuing without DB...")
         # Продолжаем без БД
         start_time = datetime.now()
 
@@ -1127,10 +1114,10 @@ if __name__ == "__main__":
     try:
         create_new_excel(TEMP_OUTPUT_FILE)
         create_new_csv(TEMP_CSV_FILE)
-        logger.info("✅ Созданы временные файлы для записи данных")
+        logger.info("[OK] Созданы временные файлы для записи данных")
     except Exception as file_error:
-        logger.error(f"❌ Ошибка при создании временных файлов: {file_error}")
-        logger.error(f"❌ Traceback: {traceback.format_exc()}")
+        logger.error(f"[ERROR] Ошибка при создании временных файлов: {file_error}")
+        logger.error(f"[ERROR] Traceback: {traceback.format_exc()}")
         sys.exit(1)
 
     # Инициализируем прокси менеджер с фильтром по России
@@ -1140,10 +1127,10 @@ if __name__ == "__main__":
     logger.info(f"Используем прокси из стран СНГ: {', '.join(CIS_COUNTRIES)}")
     try:
         proxy_manager = ProxyManager(country_filter=CIS_COUNTRIES)
-        logger.info("✅ ProxyManager инициализирован")
+        logger.info("[OK] ProxyManager инициализирован")
     except Exception as pm_error:
-        logger.error(f"❌ Ошибка при инициализации ProxyManager: {pm_error}")
-        logger.error(f"❌ Traceback: {traceback.format_exc()}")
+        logger.error(f"[ERROR] Ошибка при инициализации ProxyManager: {pm_error}")
+        logger.error(f"[ERROR] Traceback: {traceback.format_exc()}")
         sys.exit(1)
     
     # Стратегия ТОЛЬКО прокси - никакого прямого доступа
@@ -1155,10 +1142,10 @@ if __name__ == "__main__":
     # Запускаем парсинг ТОЛЬКО через прокси
     try:
         total_products = producer(proxy_manager)
-        logger.info(f"✅ Producer завершился, собрано товаров: {total_products}")
+        logger.info(f"[OK] Producer завершился, собрано товаров: {total_products}")
     except Exception as producer_error:
-        logger.error(f"❌ Критическая ошибка в producer: {producer_error}")
-        logger.error(f"❌ Traceback: {traceback.format_exc()}")
+        logger.error(f"[ERROR] Критическая ошибка в producer: {producer_error}")
+        logger.error(f"[ERROR] Traceback: {traceback.format_exc()}")
         total_products = 0
         status = 'error'
         cleanup_temp_files()
@@ -1173,16 +1160,16 @@ if __name__ == "__main__":
     status = 'done'
     try:
         if total_products >= 100:
-            logger.info(f"✅ Собрано {total_products} товаров - успешно!")
+            logger.info(f"[OK] Собрано {total_products} товаров - успешно!")
             # Перемещаем временные файлы в основные (старый файл сохраняется через бэкап)
             finalize_output_files()
-            logger.info("✅ Основные файлы обновлены успешно")
+            logger.info("[OK] Основные файлы обновлены успешно")
         else:
             logger.critical(f"❗ Недостаточно данных: {total_products} товаров")
             status = 'insufficient_data'
             # Удаляем временные файлы - основной файл НЕ ТРОГАЕМ
             cleanup_temp_files()
-            logger.info("⚠️  Временные файлы удалены, основной файл не изменен")
+            logger.info("[WARNING]  Временные файлы удалены, основной файл не изменен")
             # Восстанавливаем из бэкапа только если есть
             if os.path.exists(BACKUP_FILE) and not os.path.exists(OUTPUT_FILE):
                 shutil.copy2(BACKUP_FILE, OUTPUT_FILE)
@@ -1191,17 +1178,17 @@ if __name__ == "__main__":
                 shutil.copy2(BACKUP_CSV, CSV_FILE)
                 logger.info("CSV восстановлен из бэкапа")
     except Exception as e:
-        logger.exception(f"❌ Ошибка при финализации: {e}")
+        logger.exception(f"[ERROR] Ошибка при финализации: {e}")
         status = 'error'
         # При ошибке удаляем временные файлы - основной файл остается нетронутым
         cleanup_temp_files()
-        logger.info("⚠️  При ошибке временные файлы удалены, основной файл не изменен")
+        logger.info("[WARNING]  При ошибке временные файлы удалены, основной файл не изменен")
 
     duration = (datetime.now() - start_time).total_seconds()
     try:
         set_script_end(script_name, status=status)
     except Exception as db_end_error:
-        logger.warning(f"⚠️  Ошибка при сохранении окончания в БД: {db_end_error}")
+        logger.warning(f"[WARNING]  Ошибка при сохранении окончания в БД: {db_end_error}")
 
     logger.info("============================================================")
     logger.info(f"Парсинг завершен! Всего собрано товаров: {total_products}")
