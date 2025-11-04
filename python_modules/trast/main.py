@@ -37,11 +37,14 @@ os.makedirs(LOG_DIR, exist_ok=True)
 
 logger = logging.getLogger("trast")
 
+# Сохраняем путь к лог-файлу для последующего переименования
+LOG_FILE_PATH = os.path.join(LOG_DIR, f"trast_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(os.path.join(LOG_DIR, f"trast_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"), encoding="utf-8-sig"),
+        logging.FileHandler(LOG_FILE_PATH, encoding="utf-8-sig"),
         logging.StreamHandler()
     ]
 )
@@ -1066,6 +1069,35 @@ def cleanup_temp_files():
     except Exception as e:
         logger.warning(f"Не удалось удалить временные файлы: {e}")
 
+def rename_log_file_by_status(status):
+    """Переименовывает лог-файл с суффиксом на основе статуса"""
+    try:
+        if not os.path.exists(LOG_FILE_PATH):
+            logger.debug(f"Лог-файл не найден: {LOG_FILE_PATH}")
+            return
+        
+        # Определяем суффикс на основе статуса
+        if status == 'done' and 'total_products' in globals() and globals().get('total_products', 0) >= 100:
+            suffix = "_success"
+        elif status == 'insufficient_data':
+            suffix = "_insufficient_data"
+        elif status == 'error':
+            suffix = "_failed"
+        else:
+            suffix = "_unknown"
+        
+        # Создаем новое имя файла
+        base_name = os.path.splitext(LOG_FILE_PATH)[0]
+        extension = os.path.splitext(LOG_FILE_PATH)[1]
+        new_log_path = f"{base_name}{suffix}{extension}"
+        
+        # Переименовываем файл
+        os.rename(LOG_FILE_PATH, new_log_path)
+        logger.info(f"📝 Лог-файл переименован: {os.path.basename(new_log_path)}")
+        
+    except Exception as e:
+        logger.warning(f"⚠️  Не удалось переименовать лог-файл: {e}")
+
 if __name__ == "__main__":
     script_name = "trast"
     logger.info("=== TRAST PARSER STARTED (PROXY-ONLY) ===")
@@ -1120,7 +1152,12 @@ if __name__ == "__main__":
         total_products = 0
         status = 'error'
         cleanup_temp_files()
-        set_script_end(script_name, status='error')
+        try:
+            set_script_end(script_name, status='error')
+        except:
+            pass
+        # Переименовываем лог-файл перед выходом
+        rename_log_file_by_status('error')
         sys.exit(1)
 
     status = 'done'
@@ -1162,3 +1199,6 @@ if __name__ == "__main__":
     logger.info(f"Статус: {status}")
     logger.info(f"Товаров собрано: {total_products}")
     logger.info("============================================================")
+    
+    # Переименовываем лог-файл на основе статуса
+    rename_log_file_by_status(status)
