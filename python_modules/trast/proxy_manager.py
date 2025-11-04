@@ -64,7 +64,7 @@ class ProxyManager:
         """
         try:
             if force_update:
-                logger.info("🔄 Принудительное обновление списка прокси...")
+                logger.info("[UPDATE] Принудительное обновление списка прокси...")
             # Страны СНГ
             CIS_COUNTRIES = ["RU", "BY", "KZ", "AM", "AZ", "GE", "KG", "MD", "TJ", "TM", "UZ", "UA"]
             
@@ -329,7 +329,7 @@ class ProxyManager:
                             external_ip = response.text.strip()
                         
                         if external_ip and len(external_ip.split('.')) == 4:  # Проверяем что это похоже на IP
-                            logger.info(f"   ✅ Прокси РАБОТАЕТ! Внешний IP: {external_ip}")
+                            logger.info(f"   [OK] Прокси РАБОТАЕТ! Внешний IP: {external_ip}")
                             return True, {
                                 'ip': ip,
                                 'port': port,
@@ -342,11 +342,11 @@ class ProxyManager:
                     logger.debug(f"   Не удалось подключиться через {test_url}: {e}")
                     continue
             
-            logger.warning(f"   ❌ Прокси НЕ РАБОТАЕТ (не смог подключиться к тестовым сервисам)")
+            logger.warning(f"   [ERROR] Прокси НЕ РАБОТАЕТ (не смог подключиться к тестовым сервисам)")
             return False, {}
             
         except Exception as e:
-            logger.error(f"   ❌ Ошибка при базовой проверке прокси: {e}")
+            logger.error(f"   [ERROR] Ошибка при базовой проверке прокси: {e}")
             return False, {}
     
     def validate_proxy_for_trast_selenium(self, proxy: Dict, timeout: int = 60, use_chrome: bool = False) -> bool:
@@ -363,7 +363,7 @@ class ProxyManager:
                 try:
                     return self._validate_with_chrome(proxy, timeout)
                 except Exception as e:
-                    logger.warning(f"  ⚠️  Chrome не доступен: {str(e)[:200]}")
+                    logger.warning(f"  [WARNING]  Chrome не доступен: {str(e)[:200]}")
                     logger.info(f"  Пробуем Firefox...")
                     # Fallback на Firefox
             
@@ -371,19 +371,19 @@ class ProxyManager:
             try:
                 return self._validate_with_firefox(proxy, timeout)
             except Exception as e:
-                logger.error(f"  ❌ Ошибка Firefox: {str(e)}")
+                logger.error(f"  [ERROR] Ошибка Firefox: {str(e)}")
                 logger.debug(f"  Traceback: {traceback.format_exc()}")
                 # Пробуем Chrome как fallback
                 try:
                     logger.info(f"  Пробуем Chrome как альтернативу...")
                     return self._validate_with_chrome(proxy, timeout)
                 except Exception as chrome_error:
-                    logger.error(f"  ❌ Chrome тоже не работает: {str(chrome_error)[:200]}")
+                    logger.error(f"  [ERROR] Chrome тоже не работает: {str(chrome_error)[:200]}")
                     logger.debug(f"  Chrome traceback: {traceback.format_exc()}")
                     return False
                     
         except Exception as e:
-            logger.error(f"  ❌ Критическая ошибка Selenium: {str(e)}")
+            logger.error(f"  [ERROR] Критическая ошибка Selenium: {str(e)}")
             logger.debug(f"  Полный traceback: {traceback.format_exc()}")
             return False
     
@@ -407,7 +407,7 @@ class ProxyManager:
         try:
             geckodriver_autoinstaller.install()
         except Exception as e:
-            logger.warning(f"  ⚠️  Ошибка установки geckodriver: {e}")
+            logger.warning(f"  [WARNING]  Ошибка установки geckodriver: {e}")
         
         options = Options()
         options.add_argument("--headless")
@@ -452,7 +452,7 @@ class ProxyManager:
             options.set_preference("network.proxy.socks_remote_dns", True)
             logger.debug(f"  Прокси настроен: {protocol.upper()} -> {ip}:{port}")
         else:
-            logger.warning(f"  ⚠️  Неподдерживаемый протокол прокси: {protocol}")
+            logger.warning(f"  [WARNING]  Неподдерживаемый протокол прокси: {protocol}")
             return False
         
         # Дополнительные настройки скрытия
@@ -471,7 +471,7 @@ class ProxyManager:
             driver = webdriver.Firefox(service=service, options=options)
             # НЕ устанавливаем таймауты сразу - пусть драйвер использует дефолтные
             # Таймауты будем устанавливать только при необходимости, но не сразу после создания
-            logger.info(f"  ✅ Firefox драйвер создан")
+            logger.info(f"  [OK] Firefox драйвер создан")
             
             # ПРОВЕРКА: Проверяем, что прокси действительно используется
             logger.debug(f"  [ПРОВЕРКА ПРОКСИ] Проверяем внешний IP через браузер...")
@@ -486,15 +486,15 @@ class ProxyManager:
                 extracted_ip = ip_matches[0] if ip_matches else None
                 
                 if extracted_ip:
-                    logger.info(f"  ✅ Прокси работает! IP браузера: {extracted_ip} (ожидалось: {ip})")
+                    logger.info(f"  [OK] Прокси работает! IP браузера: {extracted_ip} (ожидалось: {ip})")
                     if extracted_ip != ip:
                         logger.debug(f"  Примечание: IP браузера ({extracted_ip}) отличается от IP прокси ({ip}) - это нормально")
                 else:
                     # Если не нашли IP, ограничиваем вывод HTML до 200 символов
                     browser_ip_preview = browser_ip[:200] + "..." if len(browser_ip) > 200 else browser_ip
-                    logger.warning(f"  ⚠️  Не удалось получить IP через браузер (размер ответа: {len(browser_ip)} символов, превью: {browser_ip_preview})")
+                    logger.warning(f"  [WARNING]  Не удалось получить IP через браузер (размер ответа: {len(browser_ip)} символов, превью: {browser_ip_preview})")
             except Exception as ip_check_error:
-                logger.warning(f"  ⚠️  Не удалось проверить IP через браузер: {str(ip_check_error)[:100]}")
+                logger.warning(f"  [WARNING]  Не удалось проверить IP через браузер: {str(ip_check_error)[:100]}")
             # В Firefox navigator.webdriver нельзя переопределить после создания драйвера
             # Поэтому мы полагаемся на настройки preferences (dom.webdriver.enabled = False)
             # Выполняем только безопасные скрипты, которые не трогают webdriver
@@ -534,16 +534,16 @@ class ProxyManager:
                 error_msg = str(page_error).lower()
                 # Проверяем на специфичные ошибки подключения
                 if "nssfailure" in error_msg or "connection" in error_msg or "interrupted" in error_msg:
-                    logger.error(f"  ❌ Ошибка подключения к trast-zapchast.ru через прокси: {str(page_error)[:200]}")
-                    logger.error(f"  ❌ Прокси не может подключиться к целевому сайту")
+                    logger.error(f"  [ERROR] Ошибка подключения к trast-zapchast.ru через прокси: {str(page_error)[:200]}")
+                    logger.error(f"  [ERROR] Прокси не может подключиться к целевому сайту")
                     return False
                 elif "timeout" in error_msg or "timed out" in error_msg:
-                    logger.error(f"  ❌ Таймаут при подключении к trast-zapchast.ru: {str(page_error)[:200]}")
-                    logger.error(f"  ❌ Прокси слишком медленный или недоступен для целевого сайта")
+                    logger.error(f"  [ERROR] Таймаут при подключении к trast-zapchast.ru: {str(page_error)[:200]}")
+                    logger.error(f"  [ERROR] Прокси слишком медленный или недоступен для целевого сайта")
                     return False
                 else:
                     # Другие ошибки - пробуем продолжить, но логируем
-                    logger.warning(f"  ⚠️  Ошибка при открытии главной страницы: {str(page_error)[:200]}")
+                    logger.warning(f"  [WARNING]  Ошибка при открытии главной страницы: {str(page_error)[:200]}")
                     # Не возвращаем False сразу, пробуем продолжить
             
             # Скролл
@@ -560,15 +560,15 @@ class ProxyManager:
                 error_msg = str(shop_error).lower()
                 # Проверяем на специфичные ошибки подключения
                 if "nssfailure" in error_msg or "connection" in error_msg or "interrupted" in error_msg:
-                    logger.error(f"  ❌ Ошибка подключения к shop через прокси: {str(shop_error)[:200]}")
-                    logger.error(f"  ❌ Прокси не может подключиться к целевому сайту")
+                    logger.error(f"  [ERROR] Ошибка подключения к shop через прокси: {str(shop_error)[:200]}")
+                    logger.error(f"  [ERROR] Прокси не может подключиться к целевому сайту")
                     return False
                 elif "timeout" in error_msg or "timed out" in error_msg:
-                    logger.error(f"  ❌ Таймаут при подключении к shop: {str(shop_error)[:200]}")
-                    logger.error(f"  ❌ Прокси слишком медленный или недоступен для целевого сайта")
+                    logger.error(f"  [ERROR] Таймаут при подключении к shop: {str(shop_error)[:200]}")
+                    logger.error(f"  [ERROR] Прокси слишком медленный или недоступен для целевого сайта")
                     return False
                 else:
-                    logger.error(f"  ❌ Ошибка при открытии shop: {str(shop_error)[:200]}")
+                    logger.error(f"  [ERROR] Ошибка при открытии shop: {str(shop_error)[:200]}")
                     return False
             
             # Имитируем скролл
@@ -583,7 +583,7 @@ class ProxyManager:
             wait_time = 0
             
             while ("cloudflare" in page_source_lower or "checking your browser" in page_source_lower or "just a moment" in page_source_lower) and wait_time < max_wait:
-                logger.info(f"  ⏳ Cloudflare проверка... ждем {wait_time}/{max_wait} сек")
+                logger.info(f"  [WAIT] Cloudflare проверка... ждем {wait_time}/{max_wait} сек")
                 time.sleep(3)
                 driver.refresh()
                 time.sleep(2)
@@ -591,7 +591,7 @@ class ProxyManager:
                 wait_time += 5
             
             if wait_time >= max_wait:
-                logger.warning(f"  ❌ Cloudflare проверка не пройдена")
+                logger.warning(f"  [ERROR] Cloudflare проверка не пройдена")
                 return False
             
             # Парсим количество страниц
@@ -600,19 +600,19 @@ class ProxyManager:
             
             if last_page_el and last_page_el.has_attr("data-page"):
                 total_pages = int(last_page_el["data-page"])
-                logger.info(f"  ✅✅✅ FIREFOX УСПЕШНО! Получено количество страниц: {total_pages}")
+                logger.info(f"  [OK][OK][OK] FIREFOX УСПЕШНО! Получено количество страниц: {total_pages}")
                 return True
             else:
                 if len(driver.page_source) > 1000 and ("shop" in driver.page_source.lower() or "товар" in driver.page_source.lower()):
-                    logger.info(f"  ✅ FIREFOX: Страница загружена")
+                    logger.info(f"  [OK] FIREFOX: Страница загружена")
                     return True
                 else:
-                    logger.warning(f"  ❌ FIREFOX: Страница не загрузилась корректно")
+                    logger.warning(f"  [ERROR] FIREFOX: Страница не загрузилась корректно")
                     return False
                     
         except Exception as e:
             import traceback
-            logger.error(f"  ❌ Ошибка Firefox: {str(e)}")
+            logger.error(f"  [ERROR] Ошибка Firefox: {str(e)}")
             logger.debug(f"  Полный traceback:\n{traceback.format_exc()}")
             return False
         finally:
@@ -643,7 +643,7 @@ class ProxyManager:
                 driver_path = ChromeDriverManager().install()
                 logger.debug(f"  ChromeDriver установлен: {driver_path}")
             except Exception as e:
-                logger.error(f"  ❌ Ошибка установки ChromeDriver: {e}")
+                logger.error(f"  [ERROR] Ошибка установки ChromeDriver: {e}")
                 raise
             
             options = Options()
@@ -674,10 +674,10 @@ class ProxyManager:
                 proxy_arg = f"{protocol}://{ip}:{port}"
             elif protocol in ['socks4', 'socks5']:
                 # Chrome может иметь проблемы с SOCKS, но пробуем
-                logger.warning(f"  ⚠️  Chrome может иметь проблемы с {protocol.upper()} прокси (ERR_TUNNEL_CONNECTION_FAILED)")
+                logger.warning(f"  [WARNING]  Chrome может иметь проблемы с {protocol.upper()} прокси (ERR_TUNNEL_CONNECTION_FAILED)")
                 proxy_arg = f"socks5://{ip}:{port}" if protocol == 'socks5' else f"socks4://{ip}:{port}"
             else:
-                logger.warning(f"  ⚠️  Неподдерживаемый протокол: {protocol}")
+                logger.warning(f"  [WARNING]  Неподдерживаемый протокол: {protocol}")
                 return False
             
             options.add_argument(f"--proxy-server={proxy_arg}")
@@ -689,7 +689,7 @@ class ProxyManager:
             driver = webdriver.Chrome(service=service, options=options)
             # НЕ устанавливаем таймауты сразу - пусть драйвер использует дефолтные
             # Таймауты будем устанавливать только при необходимости, но не сразу после создания
-            logger.info(f"  ✅ Chrome драйвер создан")
+            logger.info(f"  [OK] Chrome драйвер создан")
             
             try:
                 # Обход детекции через скрипты (Chrome позволяет это делать)
@@ -742,13 +742,13 @@ class ProxyManager:
                     extracted_ip = ip_matches[0] if ip_matches else None
                     
                     if extracted_ip:
-                        logger.info(f"  ✅ Прокси работает! IP Chrome: {extracted_ip} (прокси: {ip})")
+                        logger.info(f"  [OK] Прокси работает! IP Chrome: {extracted_ip} (прокси: {ip})")
                     else:
                         # Если не нашли IP, ограничиваем вывод HTML до 200 символов
                         browser_ip_preview = browser_ip[:200] + "..." if len(browser_ip) > 200 else browser_ip
-                        logger.warning(f"  ⚠️  Не удалось получить IP (размер ответа: {len(browser_ip)} символов, превью: {browser_ip_preview})")
+                        logger.warning(f"  [WARNING]  Не удалось получить IP (размер ответа: {len(browser_ip)} символов, превью: {browser_ip_preview})")
                 except Exception as ip_check_error:
-                    logger.warning(f"  ⚠️  Не удалось проверить IP: {str(ip_check_error)[:100]}")
+                    logger.warning(f"  [WARNING]  Не удалось проверить IP: {str(ip_check_error)[:100]}")
                 
                 # Имитация человеческого поведения
                 logger.info(f"  [CHROME] Имитация поведения пользователя...")
@@ -760,21 +760,21 @@ class ProxyManager:
                     error_msg = str(page_error).lower()
                     # Проверяем на специфичные ошибки подключения
                     if "tunnel_connection_failed" in error_msg or "err_tunnel" in error_msg:
-                        logger.error(f"  ❌ Ошибка туннельного подключения через прокси: {str(page_error)[:200]}")
-                        logger.error(f"  ❌ Прокси не может установить туннель к целевому сайту (обычно для SOCKS)")
-                        logger.error(f"  ❌ Рекомендуется использовать Firefox для SOCKS прокси")
+                        logger.error(f"  [ERROR] Ошибка туннельного подключения через прокси: {str(page_error)[:200]}")
+                        logger.error(f"  [ERROR] Прокси не может установить туннель к целевому сайту (обычно для SOCKS)")
+                        logger.error(f"  [ERROR] Рекомендуется использовать Firefox для SOCKS прокси")
                         return False
                     elif "connection" in error_msg or "net::err_" in error_msg:
-                        logger.error(f"  ❌ Ошибка подключения к trast-zapchast.ru через прокси: {str(page_error)[:200]}")
-                        logger.error(f"  ❌ Прокси не может подключиться к целевому сайту")
+                        logger.error(f"  [ERROR] Ошибка подключения к trast-zapchast.ru через прокси: {str(page_error)[:200]}")
+                        logger.error(f"  [ERROR] Прокси не может подключиться к целевому сайту")
                         return False
                     elif "timeout" in error_msg or "timed out" in error_msg:
-                        logger.error(f"  ❌ Таймаут при подключении к trast-zapchast.ru: {str(page_error)[:200]}")
-                        logger.error(f"  ❌ Прокси слишком медленный или недоступен для целевого сайта")
+                        logger.error(f"  [ERROR] Таймаут при подключении к trast-zapchast.ru: {str(page_error)[:200]}")
+                        logger.error(f"  [ERROR] Прокси слишком медленный или недоступен для целевого сайта")
                         return False
                     else:
                         # Другие ошибки - пробуем продолжить, но логируем
-                        logger.warning(f"  ⚠️  Ошибка при открытии главной страницы: {str(page_error)[:200]}")
+                        logger.warning(f"  [WARNING]  Ошибка при открытии главной страницы: {str(page_error)[:200]}")
                         # Не возвращаем False сразу, пробуем продолжить
                 
                 # Скролл
@@ -792,21 +792,21 @@ class ProxyManager:
                     # Проверяем на специфичные ошибки подключения
                     if "tunnel_connection_failed" in error_msg or "err_tunnel" in error_msg:
                         # ERR_TUNNEL_CONNECTION_FAILED может быть как для SOCKS, так и для неработающего HTTP прокси
-                        logger.error(f"  ❌ Ошибка туннельного подключения к shop через прокси: {str(shop_error)[:200]}")
-                        logger.error(f"  ❌ Прокси не может установить соединение к целевому сайту")
+                        logger.error(f"  [ERROR] Ошибка туннельного подключения к shop через прокси: {str(shop_error)[:200]}")
+                        logger.error(f"  [ERROR] Прокси не может установить соединение к целевому сайту")
                         if protocol in ['socks4', 'socks5']:
-                            logger.error(f"  ❌ Рекомендуется использовать Firefox для SOCKS прокси")
+                            logger.error(f"  [ERROR] Рекомендуется использовать Firefox для SOCKS прокси")
                         return False
                     elif "connection" in error_msg or "net::err_" in error_msg:
-                        logger.error(f"  ❌ Ошибка подключения к shop через прокси: {str(shop_error)[:200]}")
-                        logger.error(f"  ❌ Прокси не может подключиться к целевому сайту")
+                        logger.error(f"  [ERROR] Ошибка подключения к shop через прокси: {str(shop_error)[:200]}")
+                        logger.error(f"  [ERROR] Прокси не может подключиться к целевому сайту")
                         return False
                     elif "timeout" in error_msg or "timed out" in error_msg:
-                        logger.error(f"  ❌ Таймаут при подключении к shop: {str(shop_error)[:200]}")
-                        logger.error(f"  ❌ Прокси слишком медленный или недоступен для целевого сайта")
+                        logger.error(f"  [ERROR] Таймаут при подключении к shop: {str(shop_error)[:200]}")
+                        logger.error(f"  [ERROR] Прокси слишком медленный или недоступен для целевого сайта")
                         return False
                     else:
-                        logger.error(f"  ❌ Ошибка при открытии shop: {str(shop_error)[:200]}")
+                        logger.error(f"  [ERROR] Ошибка при открытии shop: {str(shop_error)[:200]}")
                         return False
                 
                 # Имитируем скролл
@@ -821,7 +821,7 @@ class ProxyManager:
                 wait_time = 0
                 
                 while ("cloudflare" in page_source_lower or "checking your browser" in page_source_lower or "just a moment" in page_source_lower) and wait_time < max_wait:
-                    logger.info(f"  ⏳ Cloudflare проверка... ждем {wait_time}/{max_wait} сек")
+                    logger.info(f"  [WAIT] Cloudflare проверка... ждем {wait_time}/{max_wait} сек")
                     time.sleep(3)
                     driver.refresh()
                     time.sleep(2)
@@ -829,7 +829,7 @@ class ProxyManager:
                     wait_time += 5
                 
                 if wait_time >= max_wait:
-                    logger.warning(f"  ❌ Cloudflare проверка не пройдена")
+                    logger.warning(f"  [ERROR] Cloudflare проверка не пройдена")
                     return False
                 
                 # Парсим количество страниц
@@ -838,14 +838,14 @@ class ProxyManager:
                 
                 if last_page_el and last_page_el.has_attr("data-page"):
                     total_pages = int(last_page_el["data-page"])
-                    logger.info(f"  ✅✅✅ CHROME УСПЕШНО! Получено количество страниц: {total_pages}")
+                    logger.info(f"  [OK][OK][OK] CHROME УСПЕШНО! Получено количество страниц: {total_pages}")
                     return True
                 else:
                     if len(driver.page_source) > 1000 and ("shop" in driver.page_source.lower() or "товар" in driver.page_source.lower()):
-                        logger.info(f"  ✅ CHROME: Страница загружена")
+                        logger.info(f"  [OK] CHROME: Страница загружена")
                         return True
                     else:
-                        logger.warning(f"  ❌ CHROME: Страница не загрузилась корректно")
+                        logger.warning(f"  [ERROR] CHROME: Страница не загрузилась корректно")
                         return False
                         
             finally:
@@ -853,7 +853,7 @@ class ProxyManager:
                 
         except Exception as e:
             import traceback
-            logger.error(f"  ❌ Ошибка Chrome: {str(e)}")
+            logger.error(f"  [ERROR] Ошибка Chrome: {str(e)}")
             logger.debug(f"  Полный traceback:\n{traceback.format_exc()}")
             return False
     
@@ -871,14 +871,14 @@ class ProxyManager:
             is_basic_working, proxy_info = self.validate_proxy_basic(proxy, timeout=10)
             
             if not is_basic_working:
-                logger.warning(f"❌ Прокси {ip}:{port} не прошел базовую проверку - пропускаем проверку trast-zapchast.ru")
+                logger.warning(f"[ERROR] Прокси {ip}:{port} не прошел базовую проверку - пропускаем проверку trast-zapchast.ru")
                 return False
             
             # Получаем proxies из базовой проверки
             proxies = proxy_info['proxies']
             external_ip = proxy_info.get('external_ip', 'Unknown')
             
-            logger.info(f"✅ Базовая проверка пройдена! Внешний IP: {external_ip}")
+            logger.info(f"[OK] Базовая проверка пройдена! Внешний IP: {external_ip}")
             logger.info(f"[ШАГ 2] Теперь проверяем доступ к trast-zapchast.ru...")
             
             # СНАЧАЛА пробуем Selenium (самый эффективный способ обхода Cloudflare)
@@ -905,7 +905,7 @@ class ProxyManager:
                 selenium_result = self.validate_proxy_for_trast_selenium(proxy, timeout=60, use_chrome=False)
             
             if selenium_result:
-                logger.info(f"  ✅✅✅ Прокси работает через Selenium! Количество страниц получено!")
+                logger.info(f"  [OK][OK][OK] Прокси работает через Selenium! Количество страниц получено!")
                 return True
             
             logger.info(f"  [ШАГ 2.2] Selenium не сработал, пробуем cloudscraper/requests...")
@@ -953,9 +953,9 @@ class ProxyManager:
                     else:
                         # Для HTTP/HTTPS прокси должно работать
                         response = scraper.get(site_url, timeout=timeout, verify=False)
-                    logger.info(f"  ✅ cloudscraper успешно: HTTP {response.status_code}")
+                    logger.info(f"  [OK] cloudscraper успешно: HTTP {response.status_code}")
                 except Exception as e:
-                    logger.warning(f"  ⚠️  Ошибка cloudscraper: {e}")
+                    logger.warning(f"  [WARNING]  Ошибка cloudscraper: {e}")
                     logger.debug(f"  Детали ошибки: {str(e)}")
                     logger.info(f"  Пробуем обычный requests...")
                     # Fallback на обычный requests
@@ -988,7 +988,7 @@ class ProxyManager:
                     response = session.get(site_url, timeout=timeout)
             else:
                 # Обычный requests с заголовками (fallback если cloudscraper не установлен)
-                logger.warning(f"  ⚠️  cloudscraper не установлен, используем requests с заголовками...")
+                logger.warning(f"  [WARNING]  cloudscraper не установлен, используем requests с заголовками...")
                 logger.info(f"  Рекомендуется установить: pip install cloudscraper")
                 session = requests.Session()
                 session.proxies.update(proxies)
@@ -1026,19 +1026,19 @@ class ProxyManager:
                 
                 # Проверяем на различные типы блокировок
                 if "403" in response_text or "forbidden" in response_text:
-                    logger.warning(f"  ❌ Прокси заблокирован сайтом (403 Forbidden)")
+                    logger.warning(f"  [ERROR] Прокси заблокирован сайтом (403 Forbidden)")
                     logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
                     return False
                 elif "cloudflare" in response_text:
-                    logger.warning(f"  ❌ Прокси заблокирован Cloudflare")
+                    logger.warning(f"  [ERROR] Прокси заблокирован Cloudflare")
                     logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
                     return False
                 elif "blocked" in response_text or "access denied" in response_text:
-                    logger.warning(f"  ❌ Прокси заблокирован (Access Denied)")
+                    logger.warning(f"  [ERROR] Прокси заблокирован (Access Denied)")
                     logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
                     return False
                 elif "captcha" in response_text or "challenge" in response_text:
-                    logger.warning(f"  ❌ Требуется прохождение капчи")
+                    logger.warning(f"  [ERROR] Требуется прохождение капчи")
                     logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
                     return False
                 else:
@@ -1052,57 +1052,57 @@ class ProxyManager:
                         last_page_el = soup.select_one(".facetwp-pager .facetwp-page.last")
                         if last_page_el and last_page_el.has_attr("data-page"):
                             total_pages = int(last_page_el["data-page"])
-                            logger.info(f"  ✅ Прокси УСПЕШНО работает на trast-zapchast.ru!")
-                            logger.info(f"  ✅ Получено количество страниц: {total_pages}")
+                            logger.info(f"  [OK] Прокси УСПЕШНО работает на trast-zapchast.ru!")
+                            logger.info(f"  [OK] Получено количество страниц: {total_pages}")
                             return True
                         else:
                             # Страница загрузилась, но не нашли количество страниц
                             # Проверяем, что это точно страница shop
                             if len(response_text) > 1000 and ("trast" in response_text or "запчаст" in response_text):
-                                logger.info(f"  ✅ Прокси УСПЕШНО работает! Страница shop загружена")
-                                logger.info(f"  ⚠️  Не удалось определить количество страниц автоматически, но страница доступна")
+                                logger.info(f"  [OK] Прокси УСПЕШНО работает! Страница shop загружена")
+                                logger.info(f"  [WARNING]  Не удалось определить количество страниц автоматически, но страница доступна")
                                 return True
                             else:
-                                logger.warning(f"  ❌ Страница загружена, но не похожа на shop каталог")
+                                logger.warning(f"  [ERROR] Страница загружена, но не похожа на shop каталог")
                                 logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
                                 return False
                     else:
-                        logger.warning(f"  ❌ Прокси получил ответ, но не похож на страницу shop")
+                        logger.warning(f"  [ERROR] Прокси получил ответ, но не похож на страницу shop")
                         logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
                         return False
                         
             elif response.status_code == 403:
-                logger.warning(f"  ❌ Прокси заблокирован (HTTP 403)")
+                logger.warning(f"  [ERROR] Прокси заблокирован (HTTP 403)")
                 logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
                 return False
             elif response.status_code == 429:
-                logger.warning(f"  ❌ Rate Limit (HTTP 429)")
+                logger.warning(f"  [ERROR] Rate Limit (HTTP 429)")
                 logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
                 return False
             else:
-                logger.warning(f"  ❌ HTTP статус {response.status_code}")
+                logger.warning(f"  [ERROR] HTTP статус {response.status_code}")
                 logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
                 return False
                 
         except requests.exceptions.ConnectTimeout:
-            logger.warning(f"  ❌ Таймаут подключения (прокси не отвечает)")
+            logger.warning(f"  [ERROR] Таймаут подключения (прокси не отвечает)")
             return False
         except requests.exceptions.ReadTimeout:
-            logger.warning(f"  ❌ Таймаут чтения (прокси медленно отвечает)")
+            logger.warning(f"  [ERROR] Таймаут чтения (прокси медленно отвечает)")
             return False
         except requests.exceptions.ConnectionError as e:
             import traceback
-            logger.warning(f"  ❌ Ошибка подключения: {str(e)}")
+            logger.warning(f"  [ERROR] Ошибка подключения: {str(e)}")
             logger.debug(f"  Traceback:\n{traceback.format_exc()}")
             return False
         except requests.exceptions.ProxyError as e:
             import traceback
-            logger.warning(f"  ❌ Ошибка прокси: {str(e)}")
+            logger.warning(f"  [ERROR] Ошибка прокси: {str(e)}")
             logger.debug(f"  Traceback:\n{traceback.format_exc()}")
             return False
         except Exception as e:
             import traceback
-            logger.error(f"  ❌ Неизвестная ошибка: {str(e)}")
+            logger.error(f"  [ERROR] Неизвестная ошибка: {str(e)}")
             logger.debug(f"  Полный traceback:\n{traceback.format_exc()}")
             return False
     
@@ -1247,7 +1247,7 @@ class ProxyManager:
                 
             if self.validate_proxy(proxy):
                 working_proxies.append(proxy)
-                logger.info(f"✅ Найден рабочий прокси: {proxy['ip']}:{proxy['port']} ({proxy['country']}) - скорость: {proxy.get('speed', 'Unknown')}ms")
+                logger.info(f"[OK] Найден рабочий прокси: {proxy['ip']}:{proxy['port']} ({proxy['country']}) - скорость: {proxy.get('speed', 'Unknown')}ms")
         
         logger.info(f"Найдено {len(working_proxies)} рабочих прокси")
         return working_proxies
