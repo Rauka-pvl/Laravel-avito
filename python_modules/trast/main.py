@@ -752,16 +752,67 @@ def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(random.uniform(2, 3))
         
-        # Дополнительное ожидание для полной загрузки
-        time.sleep(3)
+        # Дополнительное ожидание для полной загрузки динамического контента
+        time.sleep(5)
         
-        # Пробуем найти элемент пагинации (используем ту же логику что в proxy_manager)
+        # Пробуем найти элемент пагинации через Selenium (более надежно для динамического контента)
+        total_pages = None
+        
+        # Метод 1: Ищем через Selenium WebDriverWait (самый надежный для динамического контента)
+        try:
+            wait = WebDriverWait(driver, 15)
+            # Сначала ждем появления пагинации
+            pagination_container = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".facetwp-pager")))
+            logger.debug("Пагинация найдена через WebDriverWait")
+            
+            # Пробуем найти элемент .last
+            try:
+                last_page_element = driver.find_element(By.CSS_SELECTOR, ".facetwp-pager .facetwp-page.last")
+                if last_page_element:
+                    data_page = last_page_element.get_attribute("data-page")
+                    if data_page:
+                        total_pages = int(data_page)
+                        logger.info(f"[OK] Найдено {total_pages} страниц для парсинга (через Selenium .last)")
+                        return total_pages
+            except:
+                pass
+            
+            # Если .last не найден, ищем все элементы пагинации и берем максимальный номер
+            try:
+                page_elements = driver.find_elements(By.CSS_SELECTOR, ".facetwp-pager .facetwp-page")
+                logger.debug(f"Найдено элементов пагинации: {len(page_elements)}")
+                if page_elements:
+                    max_page = 0
+                    found_pages = []
+                    for page_el in page_elements:
+                        data_page = page_el.get_attribute("data-page")
+                        if data_page:
+                            try:
+                                page_num = int(data_page)
+                                found_pages.append(page_num)
+                                if page_num > max_page:
+                                    max_page = page_num
+                            except:
+                                pass
+                    logger.debug(f"Найденные номера страниц: {found_pages}")
+                    if max_page > 0:
+                        total_pages = max_page
+                        logger.info(f"[OK] Найдено {total_pages} страниц для парсинга (через Selenium, максимальный номер из {len(found_pages)} элементов)")
+                        return total_pages
+                    else:
+                        logger.warning(f"[WARNING]  Найдено {len(page_elements)} элементов пагинации, но не удалось извлечь номера страниц")
+            except Exception as find_error:
+                logger.debug(f"Ошибка при поиске всех элементов пагинации: {find_error}")
+        except Exception as wait_error:
+            logger.debug(f"WebDriverWait не помог: {wait_error}")
+        
+        # Метод 2: Пробуем через BeautifulSoup (fallback)
         soup = BeautifulSoup(driver.page_source, 'html.parser')
         last_page_el = soup.select_one(".facetwp-pager .facetwp-page.last")
         
         if last_page_el and last_page_el.has_attr("data-page"):
             total_pages = int(last_page_el["data-page"])
-            logger.info(f"[OK] Найдено {total_pages} страниц для парсинга")
+            logger.info(f"[OK] Найдено {total_pages} страниц для парсинга (через BeautifulSoup .last)")
             return total_pages
         else:
             # Пробуем альтернативные селекторы
@@ -769,24 +820,33 @@ def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
                 last_page_el = soup.select_one(".facetwp-page.last")
             if not last_page_el:
                 last_page_els = soup.select(".facetwp-pager .facetwp-page")
+                logger.debug(f"Найдено элементов пагинации через BeautifulSoup: {len(last_page_els)}")
                 if last_page_els:
+                    # Берем максимальный номер из всех найденных элементов
+                    max_page = 0
+                    found_pages = []
+                    for page_el in last_page_els:
+                        if page_el.has_attr("data-page"):
+                            try:
+                                page_num = int(page_el["data-page"])
+                                found_pages.append(page_num)
+                                if page_num > max_page:
+                                    max_page = page_num
+                            except:
+                                pass
+                    logger.debug(f"Найденные номера страниц через BeautifulSoup: {found_pages}")
+                    if max_page > 0:
+                        total_pages = max_page
+                        logger.info(f"[OK] Найдено {total_pages} страниц для парсинга (через BeautifulSoup, максимальный номер из {len(found_pages)} элементов)")
+                        return total_pages
+                    else:
+                        logger.warning(f"[WARNING]  Найдено {len(last_page_els)} элементов пагинации через BeautifulSoup, но не удалось извлечь номера страниц")
                     last_page_el = last_page_els[-1]
             
             if last_page_el and last_page_el.has_attr("data-page"):
                 total_pages = int(last_page_el["data-page"])
                 logger.info(f"[OK] Найдено {total_pages} страниц для парсинга (альтернативный селектор)")
                 return total_pages
-            
-            # Пробуем через WebDriverWait (как в proxy_manager)
-            try:
-                wait = WebDriverWait(driver, 10)
-                last_page_element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".facetwp-pager .facetwp-page.last")))
-                if last_page_element.get_attribute("data-page"):
-                    total_pages = int(last_page_element.get_attribute("data-page"))
-                    logger.info(f"[OK] Найдено {total_pages} страниц для парсинга (через WebDriverWait)")
-                    return total_pages
-            except Exception as wait_error:
-                logger.debug(f"WebDriverWait не помог: {wait_error}")
             
             # Сохраняем HTML для отладки
             debug_file = os.path.join(LOG_DIR, f"debug_pagination_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
@@ -1140,6 +1200,7 @@ if __name__ == "__main__":
             
             # Очищаем временные файлы перед новой попыткой (кроме первой)
             if attempt > 1:
+                logger.info(f"[RETRY] Перезапуск с самого начала (попытка {attempt}/{max_retries})...")
                 cleanup_temp_files()
                 create_new_excel(TEMP_OUTPUT_FILE)
                 create_new_csv(TEMP_CSV_FILE)
@@ -1153,12 +1214,17 @@ if __name__ == "__main__":
                 logger.info(f"[OK] Найдено {total_products} товаров, завершаем парсинг")
                 break
             
-            # Если 0 товаров и это не последняя попытка - повторяем
+            # Если 0 товаров и это не последняя попытка - повторяем с самого начала
             if total_products == 0 and attempt < max_retries:
-                logger.warning(f"[RETRY] Найдено 0 товаров, запускаем повторную попытку ({attempt + 1}/{max_retries})...")
-                TelegramNotifier.notify(f"[Trast] Retry {attempt + 1}/{max_retries} — 0 products found, restarting...")
-                attempt += 1
-                time.sleep(5)  # Небольшая пауза перед следующей попыткой
+                next_attempt = attempt + 1
+                logger.warning(f"[RETRY] Найдено 0 товаров, перезапускаем с самого начала (попытка {next_attempt}/{max_retries})...")
+                # Отправляем уведомление
+                TelegramNotifier.notify(f"[Trast] Retry {next_attempt}/{max_retries} — 0 products found, restarting...")
+                # Увеличиваем задержку между попытками (30, 35, 40, 45 секунд)
+                wait_before_retry = 30 + attempt * 5
+                logger.info(f"[RETRY] Ожидание {wait_before_retry} секунд перед следующей попыткой...")
+                time.sleep(wait_before_retry)
+                attempt = next_attempt
                 continue
             
             # Если 0 товаров и это последняя попытка - выходим
@@ -1170,12 +1236,20 @@ if __name__ == "__main__":
             logger.error(f"[ERROR] Критическая ошибка в producer (попытка {attempt}/{max_retries}): {producer_error}")
             logger.error(f"[ERROR] Traceback: {traceback.format_exc()}")
             
-            # Если это не последняя попытка - пробуем еще раз
+            # Если это не последняя попытка - пробуем еще раз с самого начала
             if attempt < max_retries:
-                logger.warning(f"[RETRY] Ошибка в producer, пробуем еще раз ({attempt + 1}/{max_retries})...")
-                TelegramNotifier.notify(f"[Trast] Retry {attempt + 1}/{max_retries} — Error: {str(producer_error)[:100]}")
-                attempt += 1
-                time.sleep(5)
+                next_attempt = attempt + 1
+                logger.warning(f"[RETRY] Ошибка в producer, перезапускаем с самого начала ({next_attempt}/{max_retries})...")
+                TelegramNotifier.notify(f"[Trast] Retry {next_attempt}/{max_retries} — Error: {str(producer_error)[:100]}")
+                # Очищаем временные файлы перед повторной попыткой
+                cleanup_temp_files()
+                create_new_excel(TEMP_OUTPUT_FILE)
+                create_new_csv(TEMP_CSV_FILE)
+                # Увеличиваем задержку между попытками (30, 35, 40, 45 секунд)
+                wait_before_retry = 30 + attempt * 5
+                logger.info(f"[RETRY] Ожидание {wait_before_retry} секунд перед следующей попыткой...")
+                time.sleep(wait_before_retry)
+                attempt = next_attempt
                 continue
             else:
                 # Последняя попытка завершилась ошибкой
