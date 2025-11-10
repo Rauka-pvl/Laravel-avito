@@ -1129,26 +1129,77 @@ if __name__ == "__main__":
     
     logger.info("============================================================")
     
-    # Запускаем парсинг ТОЛЬКО через прокси
-    try:
-        total_products = producer(proxy_manager)
-        logger.info(f"[OK] Producer завершился, собрано товаров: {total_products}")
-    except Exception as producer_error:
-        logger.error(f"[ERROR] Критическая ошибка в producer: {producer_error}")
-        logger.error(f"[ERROR] Traceback: {traceback.format_exc()}")
-        total_products = 0
-        status = 'error'
-        TelegramNotifier.notify(f"[Trast] Update failed — <code>{producer_error}</code>")
-        cleanup_temp_files()
+    # Запускаем парсинг ТОЛЬКО через прокси с повторными попытками при 0 товаров
+    max_retries = 5  # Максимальное количество попыток
+    attempt = 1
+    total_products = 0
+    
+    while attempt <= max_retries:
         try:
-            set_script_end(script_name, status='error')
-        except:
-            pass
-        # Переименовываем лог-файл перед выходом
-        rename_log_file_by_status('error', total_products=0)
-        sys.exit(1)
+            logger.info(f"Попытка парсинга {attempt}/{max_retries}...")
+            
+            # Очищаем временные файлы перед новой попыткой (кроме первой)
+            if attempt > 1:
+                cleanup_temp_files()
+                create_new_excel(TEMP_OUTPUT_FILE)
+                create_new_csv(TEMP_CSV_FILE)
+                logger.info(f"[RETRY] Созданы новые временные файлы для попытки {attempt}")
+            
+            total_products = producer(proxy_manager)
+            logger.info(f"[OK] Producer завершился, собрано товаров: {total_products}")
+            
+            # Если нашли товары - выходим из цикла
+            if total_products > 0:
+                logger.info(f"[OK] Найдено {total_products} товаров, завершаем парсинг")
+                break
+            
+            # Если 0 товаров и это не последняя попытка - повторяем
+            if total_products == 0 and attempt < max_retries:
+                logger.warning(f"[RETRY] Найдено 0 товаров, запускаем повторную попытку ({attempt + 1}/{max_retries})...")
+                TelegramNotifier.notify(f"[Trast] Retry {attempt + 1}/{max_retries} — 0 products found, restarting...")
+                attempt += 1
+                time.sleep(5)  # Небольшая пауза перед следующей попыткой
+                continue
+            
+            # Если 0 товаров и это последняя попытка - выходим
+            if total_products == 0 and attempt >= max_retries:
+                logger.error(f"[ERROR] После {max_retries} попыток найдено 0 товаров")
+                break
+                
+        except Exception as producer_error:
+            logger.error(f"[ERROR] Критическая ошибка в producer (попытка {attempt}/{max_retries}): {producer_error}")
+            logger.error(f"[ERROR] Traceback: {traceback.format_exc()}")
+            
+            # Если это не последняя попытка - пробуем еще раз
+            if attempt < max_retries:
+                logger.warning(f"[RETRY] Ошибка в producer, пробуем еще раз ({attempt + 1}/{max_retries})...")
+                TelegramNotifier.notify(f"[Trast] Retry {attempt + 1}/{max_retries} — Error: {str(producer_error)[:100]}")
+                attempt += 1
+                time.sleep(5)
+                continue
+            else:
+                # Последняя попытка завершилась ошибкой
+                total_products = 0
+                status = 'error'
+                TelegramNotifier.notify(f"[Trast] Update failed — <code>{producer_error}</code>")
+                cleanup_temp_files()
+                try:
+                    set_script_end(script_name, status='error')
+                except:
+                    pass
+                # Переименовываем лог-файл перед выходом
+                rename_log_file_by_status('error', total_products=0)
+                sys.exit(1)
 
-    status = 'done'
+    # Определяем статус на основе результата
+    if total_products == 0:
+        status = 'insufficient_data'
+        logger.critical(f"❗ После {attempt} попыток найдено 0 товаров")
+    elif total_products >= 100:
+        status = 'done'
+    else:
+        status = 'insufficient_data'
+    
     try:
         if total_products >= 100:
             logger.info(f"[OK] Собрано {total_products} товаров - успешно!")
@@ -1157,7 +1208,6 @@ if __name__ == "__main__":
             logger.info("[OK] Основные файлы обновлены успешно")
         else:
             logger.critical(f"❗ Недостаточно данных: {total_products} товаров")
-            status = 'insufficient_data'
             # Удаляем временные файлы - основной файл НЕ ТРОГАЕМ
             cleanup_temp_files()
             logger.info("[WARNING]  Временные файлы удалены, основной файл не изменен")
