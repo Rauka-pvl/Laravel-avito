@@ -70,22 +70,66 @@ def parse_xml_response(content):
         return []
 
 # === Fetch price list from Froza ===
-def get_price_list(code: str, brand: str = "") -> list:
-    for attempt in [brand, ""]:
-        url = f"https://www.froza.ru/search_xml4.php?get=price_list&user={LOGIN}&password={PASSWORD}&code={code}"
-        if attempt:
-            url += f"&brand={attempt}"
+def normalize_brand(value: str) -> str:
+    return "".join(ch.lower() for ch in value if ch.isalnum())
 
+
+def extract_item_brand(item: dict) -> str:
+    brand_keys = ("make_name", "brand", "maker", "manufacturer", "brand_name")
+    for key in brand_keys:
+        value = item.get(key)
+        if value:
+            return value
+    return ""
+
+
+def get_price_list(code: str, brand: str = "") -> list:
+    normalized_target = normalize_brand(brand) if brand else ""
+    
+    # Если указан бренд, ищем только по нему, без fallback на все бренды
+    if brand:
+        url = f"https://www.froza.ru/search_xml4.php?get=price_list&user={LOGIN}&password={PASSWORD}&code={code}&brand={brand}"
         try:
-            logger.info(f"Requesting price list for: {code} (brand: {attempt or 'any'})")
+            logger.info(f"Requesting price list for: {code} (brand: {brand})")
             response = requests.get(url, timeout=5)
             response.raise_for_status()
             data = parse_xml_response(response.content)
-            if data:
-                return data
+            if not data:
+                logger.warning(f"No data returned for code {code} with brand {brand}")
+                return []
+
+            # Фильтруем по нормализованному бренду
+            filtered = [
+                item for item in data
+                if normalize_brand(extract_item_brand(item)) == normalized_target
+            ]
+            if filtered:
+                logger.info(
+                    f"Filtered {len(filtered)} offers matching brand '{brand}' out of {len(data)} total"
+                )
+                return filtered
+            else:
+                logger.warning(
+                    f"No offers matched brand '{brand}' for code {code}. Returning empty list to avoid wrong prices."
+                )
+                # Не возвращаем все результаты, если указан бренд, но он не найден
+                # Это предотвращает использование цен от других брендов
+                return []
         except Exception as e:
             logger.error(f"Request error: {e}")
-    return []
+            return []
+    
+    # Если бренд не указан, возвращаем все результаты
+    url = f"https://www.froza.ru/search_xml4.php?get=price_list&user={LOGIN}&password={PASSWORD}&code={code}"
+    try:
+        logger.info(f"Requesting price list for: {code} (any brand)")
+        response = requests.get(url, timeout=5)
+        response.raise_for_status()
+        data = parse_xml_response(response.content)
+        return data if data else []
+    except Exception as e:
+        logger.error(f"Request error: {e}")
+        return []
 
 # === Select the best offer (delivery <= 5 days) ===
 def select_offer(data: list, oem: str = "", brand: str = "") -> tuple:
