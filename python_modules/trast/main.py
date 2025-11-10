@@ -1100,6 +1100,8 @@ if __name__ == "__main__":
     logger.info("=== TRAST PARSER STARTED (PROXY-ONLY) ===")
     logger.info(f"Target URL: https://trast-zapchast.ru/shop/?_paged=1")
     logger.info(f"Start time: {datetime.now()}")
+    TelegramNotifier.notify("Trast update started")
+    error_message = None
     
     try:
         start_time = datetime.now()
@@ -1118,6 +1120,7 @@ if __name__ == "__main__":
     except Exception as file_error:
         logger.error(f"[ERROR] Ошибка при создании временных файлов: {file_error}")
         logger.error(f"[ERROR] Traceback: {traceback.format_exc()}")
+        TelegramNotifier.notify(f"Trast update failed: {file_error}")
         sys.exit(1)
 
     # Инициализируем прокси менеджер с фильтром по России
@@ -1131,6 +1134,7 @@ if __name__ == "__main__":
     except Exception as pm_error:
         logger.error(f"[ERROR] Ошибка при инициализации ProxyManager: {pm_error}")
         logger.error(f"[ERROR] Traceback: {traceback.format_exc()}")
+        TelegramNotifier.notify(f"Trast update failed: {pm_error}")
         sys.exit(1)
     
     # Стратегия ТОЛЬКО прокси - никакого прямого доступа
@@ -1148,6 +1152,7 @@ if __name__ == "__main__":
         logger.error(f"[ERROR] Traceback: {traceback.format_exc()}")
         total_products = 0
         status = 'error'
+        TelegramNotifier.notify(f"Trast update failed: {producer_error}")
         cleanup_temp_files()
         try:
             set_script_end(script_name, status='error')
@@ -1180,6 +1185,7 @@ if __name__ == "__main__":
     except Exception as e:
         logger.exception(f"[ERROR] Ошибка при финализации: {e}")
         status = 'error'
+        error_message = str(e)
         # При ошибке удаляем временные файлы - основной файл остается нетронутым
         cleanup_temp_files()
         logger.info("[WARNING]  При ошибке временные файлы удалены, основной файл не изменен")
@@ -1189,6 +1195,8 @@ if __name__ == "__main__":
         set_script_end(script_name, status=status)
     except Exception as db_end_error:
         logger.warning(f"[WARNING]  Ошибка при сохранении окончания в БД: {db_end_error}")
+        if status != 'done':
+            error_message = error_message or str(db_end_error)
 
     logger.info("============================================================")
     logger.info(f"Парсинг завершен! Всего собрано товаров: {total_products}")
@@ -1196,6 +1204,14 @@ if __name__ == "__main__":
     logger.info(f"Статус: {status}")
     logger.info(f"Товаров собрано: {total_products}")
     logger.info("============================================================")
+
+    if status == 'done':
+        TelegramNotifier.notify(f"Trast update completed successfully. Duration: {duration:.2f} seconds. Products collected: {total_products}")
+    elif status == 'insufficient_data':
+        TelegramNotifier.notify(f"Trast update completed with insufficient data. Duration: {duration:.2f} seconds. Products collected: {total_products}")
+    else:
+        failure_details = error_message or "Unknown error"
+        TelegramNotifier.notify(f"Trast update failed: {failure_details}")
     
     # Переименовываем лог-файл на основе статуса
     rename_log_file_by_status(status, total_products=total_products)
