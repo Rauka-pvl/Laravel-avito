@@ -397,10 +397,7 @@ def get_vps_external_ip():
     
     # Пробуем несколько сервисов для определения IP VPS
     ip_services = [
-        ("http://httpbin.org/ip", lambda r: r.json().get('origin', '').split(',')[0].strip() if hasattr(r, 'json') else None),
-        ("https://api.ipify.org", lambda r: r.text.strip()),
         ("https://ifconfig.me/ip", lambda r: r.text.strip()),
-        ("http://icanhazip.com", lambda r: r.text.strip()),
     ]
     
     for service_url, extract_func in ip_services:
@@ -450,8 +447,6 @@ def verify_proxy_usage(driver, proxy):
     
     # Список сервисов для проверки IP (пробуем несколько для надежности)
     ip_check_services = [
-        ("https://api.ipify.org", lambda text: text.strip()),
-        ("http://httpbin.org/ip", lambda text: extract_json_ip(text)),
         ("https://ifconfig.me/ip", lambda text: text.strip()),
     ]
     
@@ -606,15 +601,6 @@ def verify_proxy_usage(driver, proxy):
             logger.info(f"  [OK] IP подтвержден несколькими сервисами: {detected_ip}")
     
     return True
-
-def extract_json_ip(text):
-    """Извлекает IP из JSON ответа httpbin.org/ip"""
-    try:
-        import json
-        data = json.loads(text)
-        return data.get('origin', '').split(',')[0].strip()
-    except:
-        return text.strip()
 
 def get_driver_with_working_proxy(proxy_manager, start_from_index=0):
     """Получает драйвер с рабочим прокси (пробует Chrome, потом Firefox)"""

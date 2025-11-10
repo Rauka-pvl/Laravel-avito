@@ -34,9 +34,11 @@ class ProxyManager:
         self.cache_dir = cache_dir or os.path.join(os.path.dirname(__file__), "proxy_cache")
         self.proxies_file = os.path.join(self.cache_dir, "proxies.json")
         self.last_update_file = os.path.join(self.cache_dir, "last_update.txt")
+        self.successful_proxies_file = os.path.join(self.cache_dir, "successful_proxies.json")
         self.current_proxy_index = 0
         self.failed_proxies = set()
         self.proxies = []
+        self.successful_proxies = []  # Список успешных прокси в памяти
         
         # Нормализуем country_filter - всегда список (uppercase)
         if country_filter is None:
@@ -49,6 +51,11 @@ class ProxyManager:
             self.country_filter = None
         
         os.makedirs(self.cache_dir, exist_ok=True)
+        
+        # Загружаем успешные прокси при инициализации
+        self.successful_proxies = self.load_successful_proxies()
+        if self.successful_proxies:
+            logger.info(f"Загружено {len(self.successful_proxies)} успешных прокси из кэша")
         
         if self.country_filter:
             countries_str = ", ".join(self.country_filter)
@@ -182,6 +189,88 @@ class ProxyManager:
             logger.error(f"Ошибка при проверке времени обновления: {e}")
             return True
     
+    def load_successful_proxies(self) -> List[Dict]:
+        """Загружает список успешных прокси из файла"""
+        try:
+            if not os.path.exists(self.successful_proxies_file):
+                return []
+            
+            with open(self.successful_proxies_file, 'r', encoding='utf-8') as f:
+                proxies = json.load(f)
+            
+            # Фильтруем по фильтру стран если задан
+            if self.country_filter:
+                filtered = []
+                for proxy in proxies:
+                    country = proxy.get('country', '').upper()
+                    if country in self.country_filter:
+                        filtered.append(proxy)
+                return filtered
+            
+            return proxies
+            
+        except Exception as e:
+            logger.warning(f"Ошибка при загрузке успешных прокси: {e}")
+            return []
+    
+    def save_successful_proxy(self, proxy: Dict):
+        """Сохраняет успешный прокси в файл"""
+        try:
+            proxy_key = f"{proxy['ip']}:{proxy['port']}"
+            
+            # Проверяем, нет ли уже такого прокси
+            for existing in self.successful_proxies:
+                existing_key = f"{existing['ip']}:{existing['port']}"
+                if existing_key == proxy_key:
+                    # Обновляем дату последнего успешного использования
+                    existing['last_success'] = datetime.now().isoformat()
+                    self._write_successful_proxies()
+                    return
+            
+            # Добавляем новый прокси с метаданными
+            proxy_with_meta = {
+                'ip': proxy['ip'],
+                'port': proxy['port'],
+                'protocol': proxy.get('protocol', 'http'),
+                'country': proxy.get('country', 'Unknown'),
+                'first_success': datetime.now().isoformat(),
+                'last_success': datetime.now().isoformat(),
+                'success_count': 1
+            }
+            
+            self.successful_proxies.append(proxy_with_meta)
+            self._write_successful_proxies()
+            logger.info(f"Прокси {proxy_key} добавлен в список успешных")
+            
+        except Exception as e:
+            logger.warning(f"Ошибка при сохранении успешного прокси: {e}")
+    
+    def remove_failed_successful_proxy(self, proxy: Dict):
+        """Удаляет неработающий прокси из списка успешных"""
+        try:
+            proxy_key = f"{proxy['ip']}:{proxy['port']}"
+            
+            original_count = len(self.successful_proxies)
+            self.successful_proxies = [
+                p for p in self.successful_proxies 
+                if f"{p['ip']}:{p['port']}" != proxy_key
+            ]
+            
+            if len(self.successful_proxies) < original_count:
+                self._write_successful_proxies()
+                logger.info(f"Прокси {proxy_key} удален из списка успешных (перестал работать)")
+            
+        except Exception as e:
+            logger.warning(f"Ошибка при удалении неработающего прокси: {e}")
+    
+    def _write_successful_proxies(self):
+        """Записывает список успешных прокси в файл"""
+        try:
+            with open(self.successful_proxies_file, 'w', encoding='utf-8') as f:
+                json.dump(self.successful_proxies, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning(f"Ошибка при записи успешных прокси: {e}")
+    
     def validate_proxy(self, proxy: Dict, timeout: int = 5) -> bool:
         """Проверяет работоспособность прокси"""
         try:
@@ -209,7 +298,7 @@ class ProxyManager:
             
             # Тестируем прокси на простом запросе
             response = requests.get(
-                'http://httpbin.org/ip',
+                'https://ifconfig.me/ip',
                 proxies=proxies,
                 timeout=timeout
             )
@@ -240,36 +329,11 @@ class ProxyManager:
     def get_external_ip(self, proxies: dict = None, timeout: int = 10) -> str:
         """Получает внешний IP через прокси"""
         try:
-            # Пробуем несколько сервисов для получения IP
-            ip_services = [
-                "https://2ip.ru",
-                "https://api.ipify.org",
-                "https://httpbin.org/ip"
-            ]
-            
-            for service in ip_services:
-                try:
-                    response = requests.get(service, proxies=proxies, timeout=timeout, verify=False)
-                    if response.status_code == 200:
-                        if service == "https://2ip.ru":
-                            # 2ip.ru возвращает HTML, нужно извлечь IP
-                            import re
-                            ip_match = re.search(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', response.text)
-                            if ip_match:
-                                return ip_match.group(1)
-                        elif service == "https://api.ipify.org":
-                            # ipify возвращает чистый IP
-                            return response.text.strip()
-                        elif service == "https://httpbin.org/ip":
-                            # httpbin возвращает JSON
-                            data = response.json()
-                            return data.get('origin', '').split(',')[0].strip()
-                except Exception as e:
-                    logger.debug(f"Не удалось получить IP с {service}: {e}")
-                    continue
-            
+            service = "https://ifconfig.me/ip"
+            response = requests.get(service, proxies=proxies, timeout=timeout, verify=False)
+            if response.status_code == 200:
+                return response.text.strip()
             return "Не удалось определить"
-            
         except Exception as e:
             logger.debug(f"Ошибка при получении внешнего IP: {e}")
             return "Ошибка"
@@ -307,9 +371,7 @@ class ProxyManager:
             
             # Проверяем через простой тестовый сервис
             test_urls = [
-                "http://httpbin.org/ip",
-                "https://api.ipify.org",
-                "http://ifconfig.me/ip"
+                "https://ifconfig.me/ip"
             ]
             
             working_url = None
@@ -322,11 +384,7 @@ class ProxyManager:
                     if response.status_code == 200:
                         working_url = test_url
                         # Извлекаем IP из ответа
-                        if test_url == "http://httpbin.org/ip":
-                            data = response.json()
-                            external_ip = data.get('origin', '').split(',')[0].strip()
-                        else:
-                            external_ip = response.text.strip()
+                        external_ip = response.text.strip()
                         
                         if external_ip and len(external_ip.split('.')) == 4:  # Проверяем что это похоже на IP
                             logger.info(f"   [OK] Прокси РАБОТАЕТ! Внешний IP: {external_ip}")
@@ -476,7 +534,7 @@ class ProxyManager:
             # ПРОВЕРКА: Проверяем, что прокси действительно используется
             logger.debug(f"  [ПРОВЕРКА ПРОКСИ] Проверяем внешний IP через браузер...")
             try:
-                driver.get("https://api.ipify.org")
+                driver.get("https://ifconfig.me/ip")
                 time.sleep(2)
                 browser_ip = driver.page_source.strip()
                 # Пробуем извлечь IP из HTML через regex
@@ -732,7 +790,7 @@ class ProxyManager:
                 # ПРОВЕРКА: Проверяем, что прокси используется
                 logger.debug(f"  [ПРОВЕРКА ПРОКСИ] Проверяем внешний IP через Chrome...")
                 try:
-                    driver.get("https://api.ipify.org")
+                    driver.get("https://ifconfig.me/ip")
                     time.sleep(2)
                     browser_ip = driver.page_source.strip()
                     # Пробуем извлечь IP из HTML через regex
@@ -1107,12 +1165,39 @@ class ProxyManager:
             return False
     
     def get_first_working_proxy(self, max_attempts=3000):
-        """Находит первый рабочий прокси для быстрого старта"""
+        """Находит первый рабочий прокси для быстрого старта. Сначала проверяет старые успешные прокси."""
         try:
             # Обновляем прокси если нужно
             if self.should_update_proxies():
                 if not self.download_proxies():
                     logger.warning("Не удалось обновить прокси, используем кэшированные")
+            
+            # ШАГ 1: Сначала проверяем старые успешные прокси
+            if self.successful_proxies:
+                logger.info(f"Проверяем {len(self.successful_proxies)} старых успешных прокси (приоритет)...")
+                
+                # Перемешиваем для разнообразия, но проверяем все
+                shuffled_successful = self.successful_proxies.copy()
+                random.shuffle(shuffled_successful)
+                
+                for proxy in shuffled_successful:
+                    proxy_key = f"{proxy['ip']}:{proxy['port']}"
+                    logger.info(f"Проверяем старый успешный прокси: {proxy_key} ({proxy.get('protocol', 'http').upper()})")
+                    
+                    if self.validate_proxy_for_trast(proxy, timeout=30):
+                        # Обновляем дату последнего успеха
+                        proxy['last_success'] = datetime.now().isoformat()
+                        proxy['success_count'] = proxy.get('success_count', 0) + 1
+                        self._write_successful_proxies()
+                        logger.info(f"[OK] Старый успешный прокси работает: {proxy_key}")
+                        return proxy
+                    else:
+                        # Удаляем неработающий прокси из успешных
+                        self.remove_failed_successful_proxy(proxy)
+                        logger.warning(f"Старый прокси {proxy_key} перестал работать, удален из списка")
+            
+            # ШАГ 2: Если старые не сработали, проверяем новые прокси
+            logger.info("Старые успешные прокси не сработали, проверяем новые...")
             
             if not os.path.exists(self.proxies_file):
                 logger.warning("Файл прокси не найден")
@@ -1123,6 +1208,8 @@ class ProxyManager:
             
             # Фильтруем прокси по протоколу, стране и исключаем неработающие
             available_proxies = []
+            successful_keys = {f"{p['ip']}:{p['port']}" for p in self.successful_proxies}
+            
             for proxy in all_proxies:
                 protocol = proxy.get('protocol', '').lower()
                 country = proxy.get('country', '').upper()
@@ -1136,28 +1223,31 @@ class ProxyManager:
                     continue
                 
                 proxy_key = f"{proxy['ip']}:{proxy['port']}"
-                if proxy_key not in self.failed_proxies:
+                # Пропускаем уже проверенные успешные прокси и неработающие
+                if proxy_key not in self.failed_proxies and proxy_key not in successful_keys:
                     available_proxies.append(proxy)
             
             # Случайно перемешиваем
             random.shuffle(available_proxies)
             
-            logger.info(f"Ищем первый рабочий прокси из {len(available_proxies)} доступных...")
+            logger.info(f"Ищем первый рабочий прокси из {len(available_proxies)} новых доступных...")
             
             # Статистика по протоколам
             protocol_stats = {}
-            for proxy in available_proxies:  # Все прокси, не только первые 20
+            for proxy in available_proxies:
                 protocol = proxy.get('protocol', 'http').upper()
                 protocol_stats[protocol] = protocol_stats.get(protocol, 0) + 1
             
-            logger.info(f"Статистика прокси: {protocol_stats}")
-            logger.info(f"Проверяем первые {max_attempts} прокси из {len(available_proxies)} доступных")
+            logger.info(f"Статистика новых прокси: {protocol_stats}")
+            logger.info(f"Проверяем первые {max_attempts} новых прокси из {len(available_proxies)} доступных")
             
             for i, proxy in enumerate(available_proxies[:max_attempts]):
-                logger.info(f"Проверяем прокси {i+1}/{max_attempts}: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()})")
+                logger.info(f"Проверяем новый прокси {i+1}/{max_attempts}: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()})")
                 
-                if self.validate_proxy_for_trast(proxy, timeout=30):  # Проверяем ТОЛЬКО на trast-zapchast.ru
+                if self.validate_proxy_for_trast(proxy, timeout=30):
                     logger.info(f"Найден первый рабочий прокси: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()}) ({proxy.get('country', 'Unknown')})")
+                    # Сохраняем в успешные
+                    self.save_successful_proxy(proxy)
                     return proxy
                 else:
                     logger.debug(f"Прокси {proxy['ip']}:{proxy['port']} не работает")
@@ -1171,8 +1261,34 @@ class ProxyManager:
             return None
     
     def get_next_working_proxy(self, start_from_index=0, max_attempts=50):
-        """Получает следующий рабочий прокси начиная с определенного индекса"""
+        """Получает следующий рабочий прокси начиная с определенного индекса. Сначала проверяет старые успешные."""
         try:
+            # ШАГ 1: Сначала проверяем старые успешные прокси (если еще не проверяли в этом цикле)
+            if self.successful_proxies:
+                logger.info(f"Проверяем {len(self.successful_proxies)} старых успешных прокси (приоритет)...")
+                
+                shuffled_successful = self.successful_proxies.copy()
+                random.shuffle(shuffled_successful)
+                
+                for proxy in shuffled_successful:
+                    proxy_key = f"{proxy['ip']}:{proxy['port']}"
+                    logger.info(f"Проверяем старый успешный прокси: {proxy_key} ({proxy.get('protocol', 'http').upper()})")
+                    
+                    if self.validate_proxy_for_trast(proxy, timeout=30):
+                        # Обновляем дату последнего успеха
+                        proxy['last_success'] = datetime.now().isoformat()
+                        proxy['success_count'] = proxy.get('success_count', 0) + 1
+                        self._write_successful_proxies()
+                        logger.info(f"[OK] Старый успешный прокси работает: {proxy_key}")
+                        return proxy, start_from_index
+                    else:
+                        # Удаляем неработающий прокси из успешных
+                        self.remove_failed_successful_proxy(proxy)
+                        logger.warning(f"Старый прокси {proxy_key} перестал работать, удален из списка")
+            
+            # ШАГ 2: Если старые не сработали, проверяем новые прокси
+            logger.info("Старые успешные прокси не сработали, проверяем новые...")
+            
             if not os.path.exists(self.proxies_file):
                 return None, start_from_index
             
@@ -1181,6 +1297,8 @@ class ProxyManager:
             
             # Фильтруем прокси по протоколу, стране и исключаем неработающие
             available_proxies = []
+            successful_keys = {f"{p['ip']}:{p['port']}" for p in self.successful_proxies}
+            
             for proxy in all_proxies:
                 protocol = proxy.get('protocol', '').lower()
                 country = proxy.get('country', '').upper()
@@ -1194,7 +1312,8 @@ class ProxyManager:
                     continue
                 
                 proxy_key = f"{proxy['ip']}:{proxy['port']}"
-                if proxy_key not in self.failed_proxies:
+                # Пропускаем уже проверенные успешные прокси и неработающие
+                if proxy_key not in self.failed_proxies and proxy_key not in successful_keys:
                     available_proxies.append(proxy)
             
             # Начинаем поиск с указанного индекса
@@ -1203,10 +1322,12 @@ class ProxyManager:
             logger.info(f"Ищем следующий рабочий прокси (начиная с позиции {start_from_index})...")
             
             for i, proxy in enumerate(proxies_to_check):
-                logger.info(f"Проверяем прокси {i+1}/{len(proxies_to_check)}: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()})")
+                logger.info(f"Проверяем новый прокси {i+1}/{len(proxies_to_check)}: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()})")
                 
                 if self.validate_proxy_for_trast(proxy, timeout=30):  # Проверяем ТОЛЬКО на trast-zapchast.ru
                     logger.info(f"Найден рабочий прокси: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()}) ({proxy.get('country', 'Unknown')})")
+                    # Сохраняем в успешные
+                    self.save_successful_proxy(proxy)
                     return proxy, start_from_index + i + 1  # Возвращаем прокси и следующий индекс
                 else:
                     logger.debug(f"Прокси {proxy['ip']}:{proxy['port']} не работает")

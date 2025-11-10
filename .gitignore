@@ -14,6 +14,7 @@ yarn-error.log
 /python_modules/price_photo_update/.wdm
 /venv/
 /.venv/
+/python_modules/trast/proxy_cache/
 
 # Python cache files
 __pycache__/
