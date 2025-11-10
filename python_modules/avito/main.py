@@ -61,7 +61,7 @@ def main():
     script_name = "avito"
     setup_logging()
     logging.info("=== Update started ===")
-    TelegramNotifier.notify("Avito update started")
+    TelegramNotifier.notify("[Avito] Update started")
 
     start_time = datetime.now()
     set_script_start(script_name)
@@ -80,12 +80,12 @@ def main():
         set_script_end(script_name, status="done")
 
         logging.info("=== Update finished successfully ===")
-        TelegramNotifier.notify(f"Avito update completed. Duration: {duration:.2f} seconds")
+        TelegramNotifier.notify(f"[Avito] Update completed successfully — Duration: {duration:.2f}s")
 
     except Exception as e:
         logging.exception("Error occurred during update:")
         set_script_end(script_name, status="failed")
-        TelegramNotifier.notify(f"Avito update failed: {str(e)}")
+        TelegramNotifier.notify(f"[Avito] Update failed — <code>{str(e)}</code>")
 
 
 if __name__ == "__main__":

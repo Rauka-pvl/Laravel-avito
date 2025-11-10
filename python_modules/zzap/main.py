@@ -37,9 +37,10 @@ logger = logging.getLogger("zzap")
 
 def main():
     script_name = "zzap"
+    start_time = datetime.now()
     set_script_start(script_name)
     logger.info("Starting zzap update...")
-    TelegramNotifier.notify("ZZAP update started")
+    TelegramNotifier.notify("[ZZAP] Update started")
 
     try:
         if backup_combined_yml():
@@ -60,14 +61,16 @@ def main():
         save_merged_xml(tree)
         process_combined_yml()
 
+        end_time = datetime.now()
+        duration = (end_time - start_time).total_seconds()
         set_script_end(script_name, status="done")
         logger.info("ZZAP update completed.")
-        TelegramNotifier.notify("ZZAP update completed successfully")
+        TelegramNotifier.notify(f"[ZZAP] Update completed successfully — Duration: {duration:.2f}s")
 
     except Exception as e:
         logger.exception("Error during ZZAP update:")
         set_script_end(script_name, status="failed")
-        TelegramNotifier.notify(f"ZZAP update failed:\n<code>{str(e)}</code>")
+        TelegramNotifier.notify(f"[ZZAP] Update failed — <code>{str(e)}</code>")
 
 if __name__ == "__main__":
     main()

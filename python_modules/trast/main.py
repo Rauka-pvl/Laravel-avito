@@ -1100,7 +1100,7 @@ if __name__ == "__main__":
     logger.info("=== TRAST PARSER STARTED (PROXY-ONLY) ===")
     logger.info(f"Target URL: https://trast-zapchast.ru/shop/?_paged=1")
     logger.info(f"Start time: {datetime.now()}")
-    TelegramNotifier.notify("Trast update started")
+    TelegramNotifier.notify("[Trast] Update started")
     error_message = None
     
     try:
@@ -1120,7 +1120,7 @@ if __name__ == "__main__":
     except Exception as file_error:
         logger.error(f"[ERROR] Ошибка при создании временных файлов: {file_error}")
         logger.error(f"[ERROR] Traceback: {traceback.format_exc()}")
-        TelegramNotifier.notify(f"Trast update failed: {file_error}")
+        TelegramNotifier.notify(f"[Trast] Update failed — <code>{file_error}</code>")
         sys.exit(1)
 
     # Инициализируем прокси менеджер с фильтром по России
@@ -1134,7 +1134,7 @@ if __name__ == "__main__":
     except Exception as pm_error:
         logger.error(f"[ERROR] Ошибка при инициализации ProxyManager: {pm_error}")
         logger.error(f"[ERROR] Traceback: {traceback.format_exc()}")
-        TelegramNotifier.notify(f"Trast update failed: {pm_error}")
+        TelegramNotifier.notify(f"[Trast] Update failed — <code>{pm_error}</code>")
         sys.exit(1)
     
     # Стратегия ТОЛЬКО прокси - никакого прямого доступа
@@ -1152,7 +1152,7 @@ if __name__ == "__main__":
         logger.error(f"[ERROR] Traceback: {traceback.format_exc()}")
         total_products = 0
         status = 'error'
-        TelegramNotifier.notify(f"Trast update failed: {producer_error}")
+        TelegramNotifier.notify(f"[Trast] Update failed — <code>{producer_error}</code>")
         cleanup_temp_files()
         try:
             set_script_end(script_name, status='error')
@@ -1206,12 +1206,12 @@ if __name__ == "__main__":
     logger.info("============================================================")
 
     if status == 'done':
-        TelegramNotifier.notify(f"Trast update completed successfully. Duration: {duration:.2f} seconds. Products collected: {total_products}")
+        TelegramNotifier.notify(f"[Trast] Update completed successfully — Duration: {duration:.2f}s, Products: {total_products}")
     elif status == 'insufficient_data':
-        TelegramNotifier.notify(f"Trast update completed with insufficient data. Duration: {duration:.2f} seconds. Products collected: {total_products}")
+        TelegramNotifier.notify(f"[Trast] Update completed with insufficient data — Duration: {duration:.2f}s, Products: {total_products}")
     else:
         failure_details = error_message or "Unknown error"
-        TelegramNotifier.notify(f"Trast update failed: {failure_details}")
+        TelegramNotifier.notify(f"[Trast] Update failed — <code>{failure_details}</code>")
     
     # Переименовываем лог-файл на основе статуса
     rename_log_file_by_status(status, total_products=total_products)

@@ -199,7 +199,7 @@ def create_backup():
 if __name__ == "__main__":
     logger = setup_logging()  # 🔧 инициализация логгера ДО try
     script_name = "froza"
-    TelegramNotifier.notify("Starting Froza processing")
+    TelegramNotifier.notify("[Froza] Update started")
     start_time = datetime.now()
     set_script_start(script_name)
 
@@ -214,10 +214,10 @@ if __name__ == "__main__":
         set_script_end(script_name, status="done")
 
         TelegramNotifier.notify(
-            f"Froza processing completed successfully. Duration: {duration:.2f} seconds."
+            f"[Froza] Update completed successfully — Duration: {duration:.2f}s"
         )
 
     except Exception as e:
         logging.exception("Error during processing:")
         set_script_end(script_name, status="failed")
-        TelegramNotifier.notify(f"Error during Froza processing:\n<code>{str(e)}</code>")
+        TelegramNotifier.notify(f"[Froza] Update failed — <code>{str(e)}</code>")
