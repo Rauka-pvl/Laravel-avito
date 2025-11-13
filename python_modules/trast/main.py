@@ -1335,6 +1335,26 @@ def producer(proxy_manager):
                 
             except Exception as e:
                 logger.error(f"Ошибка при парсинге страницы {current_page}: {e}")
+                # Пробуем ещё раз с тем же прокси
+                logger.info(f"Повторная попытка загрузки страницы {current_page} с тем же прокси...")
+                try:
+                    driver.get(f"https://trast-zapchast.ru/shop/?_paged={current_page}")
+                    time.sleep(random.uniform(3, 6))
+                    soup_retry = BeautifulSoup(driver.page_source, "html.parser")
+                    products_retry = get_products_from_page_soup(soup_retry)
+                    if products_retry:
+                        append_to_excel(TEMP_OUTPUT_FILE, products_retry)
+                        append_to_csv(TEMP_CSV_FILE, products_retry)
+                        logger.info(f"[{thread_name}] Page {current_page} (retry): added {len(products_retry)} products")
+                        total_collected += len(products_retry)
+                        empty_pages_count = 0
+                        pages_checked += 1
+                        current_page += 1
+                        time.sleep(random.uniform(2, 4))
+                        continue
+                except Exception as retry_error:
+                    logger.warning(f"Повторная попытка страницы {current_page} не удалась: {retry_error}")
+                
                 # Запоминаем текущую страницу
                 errored_page = current_page
                 try:
