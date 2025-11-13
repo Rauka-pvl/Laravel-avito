@@ -708,46 +708,71 @@ def get_driver_with_working_proxy(proxy_manager, start_from_index=0):
         logger.error(f"[ERROR] Traceback: {traceback.format_exc()}")
         return None, start_from_index
 
-def get_driver_with_retries(proxy_manager, start_from_index=0, max_retries=20):
-    """Получает драйвер с рабочим прокси с повторными попытками и задержками
+def get_driver_until_found(proxy_manager, start_from_index=0):
+    """Получает драйвер с рабочим прокси - ищет до тех пор пока не найдёт
+    
+    Логика:
+    - Ищет рабочий прокси
+    - Если не нашли - ждем 1 минуту, обновляем список прокси, продолжаем поиск
+    - Повторяем до тех пор пока не найдем
     
     Args:
         proxy_manager: Менеджер прокси
         start_from_index: Индекс для начала поиска следующего прокси
-        max_retries: Максимальное количество попыток (по умолчанию 20)
     
     Returns:
-        tuple: (driver, start_from_index) или (None, start_from_index) если не удалось
+        tuple: (driver, start_from_index) - всегда возвращает драйвер (не возвращает None)
     """
-    for retry in range(max_retries):
-        logger.info(f"Попытка {retry + 1}/{max_retries} получить рабочий драйвер...")
+    attempt = 0
+    last_update_time = time.time()
+    update_interval = 60  # Обновляем список прокси каждую минуту
+    
+    while True:
+        attempt += 1
+        logger.info(f"Поиск рабочего прокси (попытка {attempt})...")
         
         driver, new_start_from_index = get_driver_with_working_proxy(proxy_manager, start_from_index)
         
         if driver:
-            logger.info(f"[OK] Драйвер успешно получен на попытке {retry + 1}/{max_retries}")
+            logger.info(f"[OK] Рабочий прокси найден на попытке {attempt}")
             return driver, new_start_from_index
         
-        # Если не удалось получить драйвер, ждем перед следующей попыткой
-        if retry < max_retries - 1:
-            wait_time = 5 + retry * 2  # 5, 7, 9, 11... секунд
-            logger.warning(f"[RETRY] Не удалось получить драйвер, ждем {wait_time} секунд перед следующей попыткой...")
-            time.sleep(wait_time)
-            start_from_index = new_start_from_index
-    
-    # Если все попытки исчерпаны, обновляем список прокси и пробуем еще раз
-    logger.warning(f"[WARNING]  Все {max_retries} попыток исчерпаны, обновляем список прокси...")
-    try:
-        if proxy_manager.download_proxies(force_update=True):
-            logger.info("[OK] Список прокси обновлен, пробуем еще раз с начала...")
-            # Сбрасываем индекс и пробуем заново
-            return get_driver_with_retries(proxy_manager, start_from_index=0, max_retries=max_retries)
+        # Если не нашли прокси - проверяем, нужно ли обновить список
+        current_time = time.time()
+        time_since_update = current_time - last_update_time
+        
+        if time_since_update >= update_interval:
+            logger.warning(f"[WAIT] Не найдено рабочего прокси, ждем 1 минуту и обновляем список прокси...")
+            logger.info(f"   Ожидание 60 секунд...")
+            
+            # Показываем прогресс каждые 10 секунд
+            for i in range(6):
+                remaining = 60 - i * 10
+                if remaining > 0:
+                    logger.info(f"   Осталось ждать: {remaining} секунд...")
+                    time.sleep(10)
+            
+            logger.info("[OK] Ожидание завершено, обновляем список прокси...")
+            
+            # Обновляем список прокси
+            try:
+                if proxy_manager.download_proxies(force_update=True):
+                    logger.info("[OK] Список прокси обновлен, продолжаем поиск...")
+                    last_update_time = time.time()
+                    start_from_index = 0  # Сбрасываем индекс после обновления
+                else:
+                    logger.warning("[WARNING]  Не удалось обновить список прокси, используем кэшированный")
+                    last_update_time = time.time()
+            except Exception as update_error:
+                logger.error(f"[ERROR] Ошибка при обновлении списка прокси: {update_error}")
+                last_update_time = time.time()
         else:
-            logger.warning("[WARNING]  Не удалось обновить список прокси")
-            return None, start_from_index
-    except Exception as update_error:
-        logger.error(f"[ERROR] Ошибка при обновлении списка прокси: {update_error}")
-        return None, start_from_index
+            # Если еще не прошла минута - просто ждем немного перед следующей попыткой
+            wait_time = 5
+            logger.warning(f"[RETRY] Не найдено рабочего прокси, ждем {wait_time} секунд перед следующей попыткой...")
+            time.sleep(wait_time)
+        
+        start_from_index = new_start_from_index
 
 def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
     """Получает количество страниц с улучшенной обработкой Cloudflare"""
@@ -926,16 +951,22 @@ def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
         raise
 
 def producer(proxy_manager):
-    """Основная функция парсинга ТОЛЬКО через прокси"""
+    """Основная функция парсинга ТОЛЬКО через прокси
+    
+    Логика:
+    - Ищем рабочий прокси до тех пор пока не найдем
+    - Как только нашли - начинаем парсинг
+    - При блокировке/ошибке: запоминаем страницу, ищем новый прокси до тех пор пока не найдем
+    - Продолжаем парсинг с запомненной страницы
+    - Останавливаемся только при 3 пустых страницах подряд
+    """
     thread_name = "MainThread"
     logger.info(f"[{thread_name}] Starting producer with PROXY-ONLY strategy")
     
-    # Получаем драйвер с рабочим прокси
-    driver, start_from_index = get_driver_with_working_proxy(proxy_manager)
-    
-    if not driver:
-        logger.error("Не удалось создать драйвер с прокси")
-        return 0
+    # Получаем драйвер с рабочим прокси - ищем до тех пор пока не найдем
+    logger.info("Ищем рабочий прокси...")
+    driver, start_from_index = get_driver_until_found(proxy_manager)
+    logger.info("[OK] Рабочий прокси найден, начинаем парсинг")
     
     total_collected = 0
     empty_pages_count = 0
@@ -963,35 +994,62 @@ def producer(proxy_manager):
                 if "timeout" in error_msg or "timed out" in error_msg:
                     logger.warning(f"[WARNING]  Таймаут при получении количества страниц (попытка {retry + 1}/{max_retries})")
                     if retry < max_retries - 1:
-                        logger.info(f"Пробуем другой прокси...")
+                        logger.info(f"Ищем новый прокси...")
                         try:
                             driver.quit()
                         except:
                             pass
-                        driver, start_from_index = get_driver_with_working_proxy(proxy_manager, start_from_index)
-                        if not driver:
-                            logger.error("Не удалось получить новый драйвер для повторной попытки")
-                            return 0
-                        logger.info(f"Получен новый драйвер, пробуем еще раз...")
+                        # Ищем новый прокси до тех пор пока не найдем
+                        driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
+                        logger.info(f"[OK] Новый прокси найден, пробуем еще раз получить количество страниц...")
                         continue
                     else:
                         logger.error(f"[ERROR] Все попытки получить количество страниц завершились таймаутом")
-                        return 0
-                else:
-                    logger.error(f"[ERROR] Ошибка при получении количества страниц: {e}")
-                    if retry < max_retries - 1:
-                        logger.info(f"Пробуем другой прокси...")
+                        # Даже после всех попыток ищем новый прокси и пробуем еще раз
+                        logger.info(f"Ищем новый прокси для последней попытки...")
                         try:
                             driver.quit()
                         except:
                             pass
-                        driver, start_from_index = get_driver_with_working_proxy(proxy_manager, start_from_index)
-                        if not driver:
-                            logger.error("Не удалось получить новый драйвер для повторной попытки")
+                        driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
+                        # Пробуем еще раз
+                        try:
+                            total_pages = get_pages_count_with_driver(driver)
+                            if total_pages and total_pages > 0:
+                                logger.info(f"[OK] Успешно получено количество страниц: {total_pages}")
+                                break
+                        except:
+                            logger.error(f"[ERROR] Не удалось получить количество страниц после всех попыток")
                             return 0
+                else:
+                    logger.error(f"[ERROR] Ошибка при получении количества страниц: {e}")
+                    if retry < max_retries - 1:
+                        logger.info(f"Ищем новый прокси...")
+                        try:
+                            driver.quit()
+                        except:
+                            pass
+                        # Ищем новый прокси до тех пор пока не найдем
+                        driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
+                        logger.info(f"[OK] Новый прокси найден, пробуем еще раз...")
                         continue
                     else:
-                        return 0
+                        # Даже после всех попыток ищем новый прокси и пробуем еще раз
+                        logger.info(f"Ищем новый прокси для последней попытки...")
+                        try:
+                            driver.quit()
+                        except:
+                            pass
+                        driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
+                        # Пробуем еще раз
+                        try:
+                            total_pages = get_pages_count_with_driver(driver)
+                            if total_pages and total_pages > 0:
+                                logger.info(f"[OK] Успешно получено количество страниц: {total_pages}")
+                                break
+                        except:
+                            logger.error(f"[ERROR] Не удалось получить количество страниц после всех попыток")
+                            return 0
         
         if not total_pages or total_pages <= 0:
             logger.error("[ERROR] Не удалось получить количество страниц после всех попыток")
@@ -1017,25 +1075,19 @@ def producer(proxy_manager):
                 )
                 
                 if is_blocked:
-                    logger.warning(f"Страница {page_num}: обнаружена блокировка (Cloudflare/access denied), пробуем другой прокси...")
+                    logger.warning(f"Страница {page_num}: обнаружена блокировка (Cloudflare/access denied), ищем новый прокси...")
+                    # Запоминаем текущую страницу
+                    current_page = page_num
                     try:
                         driver.quit()
                     except:
                         pass
-                    # Используем функцию с повторными попытками
-                    driver, start_from_index = get_driver_with_retries(proxy_manager, start_from_index, max_retries=20)
-                    if not driver:
-                        logger.error("Не удалось получить новый драйвер после всех попыток, продолжаем попытки...")
-                        # Не останавливаем парсинг, продолжаем попытки
-                        # Увеличиваем счетчик пустых страниц, чтобы не зациклиться
-                        empty_pages_count += 1
-                        if empty_pages_count >= max_empty_pages:
-                            logger.info(f"Найдено {max_empty_pages} пустых страниц подряд (включая блокировки). Останавливаем парсинг.")
-                            break
-                        # Пропускаем эту страницу и переходим к следующей
-                        continue
-                    # Пробуем ту же страницу с новым прокси
-                    page_num -= 1  # Уменьшаем, т.к. в конце цикла будет увеличение
+                    # Ищем новый прокси до тех пор пока не найдем
+                    logger.info(f"Ищем новый рабочий прокси для продолжения парсинга со страницы {current_page}...")
+                    driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
+                    logger.info(f"[OK] Новый прокси найден, продолжаем парсинг со страницы {current_page}")
+                    # Возвращаемся к запомненной странице
+                    page_num = current_page - 1  # Уменьшаем, т.к. в конце цикла будет увеличение
                     continue
                 
                 soup = BeautifulSoup(driver.page_source, "html.parser")
@@ -1054,24 +1106,19 @@ def producer(proxy_manager):
                     
                     # Если несколько пустых страниц подряд - возможно блокировка, пробуем новый прокси
                     if empty_pages_count >= 2 and empty_pages_count < max_empty_pages:
-                        logger.warning(f"Найдено {empty_pages_count} пустых страниц подряд. Возможна блокировка, пробуем новый прокси...")
+                        logger.warning(f"Найдено {empty_pages_count} пустых страниц подряд. Возможна блокировка, ищем новый прокси...")
+                        # Запоминаем текущую страницу
+                        current_page = page_num
                         try:
                             driver.quit()
                         except:
                             pass
-                        # Используем функцию с повторными попытками
-                        driver, start_from_index = get_driver_with_retries(proxy_manager, start_from_index, max_retries=20)
-                        if not driver:
-                            logger.error("Не удалось получить новый драйвер после всех попыток, продолжаем...")
-                            # Не останавливаем парсинг, продолжаем до условия остановки
-                            # Если достигли лимита пустых страниц - остановимся
-                            if empty_pages_count >= max_empty_pages:
-                                logger.info(f"Найдено {max_empty_pages} пустых страниц подряд. Останавливаем парсинг.")
-                                break
-                            # Пропускаем эту страницу и переходим к следующей
-                            continue
-                        # Пробуем ту же страницу с новым прокси
-                        page_num -= 1  # Уменьшаем, т.к. в конце цикла будет увеличение
+                        # Ищем новый прокси до тех пор пока не найдем
+                        logger.info(f"Ищем новый рабочий прокси для продолжения парсинга со страницы {current_page}...")
+                        driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
+                        logger.info(f"[OK] Новый прокси найден, продолжаем парсинг со страницы {current_page}")
+                        # Возвращаемся к запомненной странице
+                        page_num = current_page - 1  # Уменьшаем, т.к. в конце цикла будет увеличение
                         pages_checked -= 1  # Уменьшаем счетчик, т.к. повторяем страницу
                         empty_pages_count = 0  # Сбрасываем счетчик при смене прокси
                         continue
@@ -1086,25 +1133,18 @@ def producer(proxy_manager):
                 
             except Exception as e:
                 logger.error(f"Ошибка при парсинге страницы {page_num}: {e}")
-                # Пробуем другой прокси при ошибке
+                # Запоминаем текущую страницу
+                current_page = page_num
                 try:
                     driver.quit()
                 except:
                     pass
-                # Используем функцию с повторными попытками
-                driver, start_from_index = get_driver_with_retries(proxy_manager, start_from_index, max_retries=20)
-                if not driver:
-                    logger.error("Не удалось получить новый драйвер после ошибки, продолжаем попытки...")
-                    # Не останавливаем парсинг, продолжаем попытки
-                    # Увеличиваем счетчик пустых страниц, чтобы не зациклиться
-                    empty_pages_count += 1
-                    if empty_pages_count >= max_empty_pages:
-                        logger.info(f"Найдено {max_empty_pages} пустых страниц подряд (включая ошибки). Останавливаем парсинг.")
-                        break
-                    # Пропускаем эту страницу и переходим к следующей
-                    continue
-                # Пробуем ту же страницу с новым прокси
-                page_num -= 1  # Уменьшаем, т.к. в конце цикла будет увеличение
+                # Ищем новый прокси до тех пор пока не найдем
+                logger.info(f"Ищем новый рабочий прокси для продолжения парсинга со страницы {current_page}...")
+                driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
+                logger.info(f"[OK] Новый прокси найден, продолжаем парсинг со страницы {current_page}")
+                # Возвращаемся к запомненной странице
+                page_num = current_page - 1  # Уменьшаем, т.к. в конце цикла будет увеличение
                 pages_checked -= 1  # Уменьшаем счетчик, т.к. повторяем страницу
                 
     finally:
@@ -1250,136 +1290,30 @@ if __name__ == "__main__":
     
     logger.info("============================================================")
     
-    # Внешний цикл перезапуска при отсутствии рабочего прокси или недостаточном количестве товаров
-    # Продолжаем до тех пор, пока не будет собрано >= 100 товаров
-    outer_attempt = 1
-    max_outer_attempts = 100  # Максимум внешних попыток (защита от бесконечного цикла)
-    total_products = 0
-    
-    while outer_attempt <= max_outer_attempts:
-        logger.info(f"=== Внешний цикл перезапуска: попытка {outer_attempt}/{max_outer_attempts} ===")
-        
-        # Запускаем парсинг ТОЛЬКО через прокси с повторными попытками при 0 товаров
-        max_retries = 5  # Максимальное количество попыток
-        attempt = 1
-        
-        while attempt <= max_retries:
-            try:
-                logger.info(f"Попытка парсинга {attempt}/{max_retries}...")
-                
-                # Очищаем временные файлы перед новой попыткой (кроме первой)
-                if attempt > 1:
-                    logger.info(f"[RETRY] Перезапуск с самого начала (попытка {attempt}/{max_retries})...")
-                    cleanup_temp_files()
-                    create_new_excel(TEMP_OUTPUT_FILE)
-                    create_new_csv(TEMP_CSV_FILE)
-                    logger.info(f"[RETRY] Созданы новые временные файлы для попытки {attempt}")
-                
-                total_products = producer(proxy_manager)
-                logger.info(f"[OK] Producer завершился, собрано товаров: {total_products}")
-                
-                # Если собрано достаточно товаров (>= 100) - выходим из внутреннего цикла
-                if total_products >= 100:
-                    logger.info(f"[OK] Найдено {total_products} товаров (>= 100), завершаем парсинг")
-                    break
-                
-                # Если 0 товаров и это не последняя попытка - повторяем с самого начала
-                if total_products == 0 and attempt < max_retries:
-                    next_attempt = attempt + 1
-                    logger.warning(f"[RETRY] Найдено 0 товаров, перезапускаем с самого начала (попытка {next_attempt}/{max_retries})...")
-                    # Отправляем уведомление
-                    TelegramNotifier.notify(f"[Trast] Retry {next_attempt}/{max_retries} — 0 products found, restarting...")
-                    # Увеличиваем задержку между попытками (30, 35, 40, 45 секунд)
-                    wait_before_retry = 30 + attempt * 5
-                    logger.info(f"[RETRY] Ожидание {wait_before_retry} секунд перед следующей попыткой...")
-                    time.sleep(wait_before_retry)
-                    attempt = next_attempt
-                    continue
-                
-                # Если 0 товаров и это последняя попытка - выходим
-                if total_products == 0 and attempt >= max_retries:
-                    logger.error(f"[ERROR] После {max_retries} попыток найдено 0 товаров")
-                    break
-                    
-            except Exception as producer_error:
-                logger.error(f"[ERROR] Критическая ошибка в producer (попытка {attempt}/{max_retries}): {producer_error}")
-                logger.error(f"[ERROR] Traceback: {traceback.format_exc()}")
-                
-                # Если это не последняя попытка - пробуем еще раз с самого начала
-                if attempt < max_retries:
-                    next_attempt = attempt + 1
-                    logger.warning(f"[RETRY] Ошибка в producer, перезапускаем с самого начала ({next_attempt}/{max_retries})...")
-                    TelegramNotifier.notify(f"[Trast] Retry {next_attempt}/{max_retries} — Error: {str(producer_error)[:100]}")
-                    # Очищаем временные файлы перед повторной попыткой
-                    cleanup_temp_files()
-                    create_new_excel(TEMP_OUTPUT_FILE)
-                    create_new_csv(TEMP_CSV_FILE)
-                    # Увеличиваем задержку между попытками (30, 35, 40, 45 секунд)
-                    wait_before_retry = 30 + attempt * 5
-                    logger.info(f"[RETRY] Ожидание {wait_before_retry} секунд перед следующей попыткой...")
-                    time.sleep(wait_before_retry)
-                    attempt = next_attempt
-                    continue
-                else:
-                    # Последняя попытка завершилась ошибкой
-                    total_products = 0
-                    status = 'error'
-                    TelegramNotifier.notify(f"[Trast] Update failed — <code>{producer_error}</code>")
-                    cleanup_temp_files()
-                    try:
-                        set_script_end(script_name, status='error')
-                    except:
-                        pass
-                    # Переименовываем лог-файл перед выходом
-                    rename_log_file_by_status('error', total_products=0)
-                    sys.exit(1)
-        
-        # После завершения всех попыток проверяем результат
-        # Если собрано недостаточно товаров (< 100) и это не последний внешний цикл - перезапускаем
-        if total_products < 100 and outer_attempt < max_outer_attempts:
-            logger.warning(f"[OUTER_RETRY] Собрано только {total_products} товаров (требуется >= 100), перезапускаем с обновлением прокси...")
-            logger.info("[WAIT] Ожидаем 2-3 минуты перед обновлением списка прокси и перезапуском...")
-            
-            # Ждем 2-3 минуты
-            wait_minutes = 2 + (outer_attempt % 2)  # Чередуем 2 и 3 минуты
-            wait_seconds = wait_minutes * 60
-            logger.info(f"   Ожидание {wait_minutes} минут ({wait_seconds} секунд)...")
-            
-            # Показываем прогресс каждые 30 секунд
-            for i in range(wait_minutes * 2):
-                remaining = wait_seconds - i * 30
-                if remaining > 0:
-                    logger.info(f"   Осталось ждать: {remaining} секунд...")
-                    time.sleep(30)
-            
-            logger.info("[OK] Ожидание завершено, обновляем список прокси...")
-            
-            # Обновляем список прокси
-            try:
-                if proxy_manager.download_proxies(force_update=True):
-                    logger.info("[OK] Список прокси обновлен, перезапускаем парсинг с самого начала...")
-                    # Очищаем временные файлы
-                    cleanup_temp_files()
-                    create_new_excel(TEMP_OUTPUT_FILE)
-                    create_new_csv(TEMP_CSV_FILE)
-                    outer_attempt += 1
-                    continue
-                else:
-                    logger.warning("[WARNING]  Не удалось обновить список прокси, используем кэшированный")
-                    outer_attempt += 1
-                    continue
-            except Exception as update_error:
-                logger.error(f"[ERROR] Ошибка при обновлении списка прокси: {update_error}")
-                outer_attempt += 1
-                continue
-        else:
-            # Либо собрано >= 100 товаров, либо достигнут лимит внешних попыток
-            break
+    # Запускаем парсинг - он продолжается до 3 пустых страниц подряд
+    # При блокировке/ошибке автоматически ищется новый прокси и парсинг продолжается
+    try:
+        total_products = producer(proxy_manager)
+        logger.info(f"[OK] Producer завершился, собрано товаров: {total_products}")
+    except Exception as producer_error:
+        logger.error(f"[ERROR] Критическая ошибка в producer: {producer_error}")
+        logger.error(f"[ERROR] Traceback: {traceback.format_exc()}")
+        total_products = 0
+        status = 'error'
+        TelegramNotifier.notify(f"[Trast] Update failed — <code>{producer_error}</code>")
+        cleanup_temp_files()
+        try:
+            set_script_end(script_name, status='error')
+        except:
+            pass
+        # Переименовываем лог-файл перед выходом
+        rename_log_file_by_status('error', total_products=0)
+        sys.exit(1)
 
     # Определяем статус на основе результата
     if total_products == 0:
         status = 'insufficient_data'
-        logger.critical(f"❗ После {attempt} попыток найдено 0 товаров")
+        logger.critical(f"❗ Найдено 0 товаров")
     elif total_products >= 100:
         status = 'done'
     else:
