@@ -1127,137 +1127,104 @@ def producer(proxy_manager):
     try:
         logger.info(f"Начинаем парсинг ТОЛЬКО через прокси")
         
-        # Получаем количество страниц (с повторными попытками при таймауте)
+        # Получаем количество страниц (безлимитные повторные попытки)
         total_pages = None
-        max_retries = 3
-        
         last_page_count_error = None
         cached_context = getattr(driver, "trast_validation_context", None)
         cached_total_pages = None
         if cached_context:
             cached_total_pages = cached_context.get("total_pages")
         
-        for retry in range(max_retries):
+        fallback_mode = False
+        fallback_threshold = 10
+        proxy_refresh_every_failures = 5
+        page_count_attempts = 0
+        page_count_failures = 0
+        
+        while True:
+            use_cached_value = cached_total_pages and cached_total_pages > 0 and page_count_attempts == 0
+            page_count_attempts += 1
+            
             try:
-                if retry == 0 and cached_total_pages and cached_total_pages > 0:
-                    logger.info(f"Попытка {retry + 1}/{max_retries} получить количество страниц... [используем кеш]")
+                if use_cached_value:
+                    logger.info(f"Попытка #{page_count_attempts} получить количество страниц... [используем кеш]")
                     total_pages = cached_total_pages
+                    cached_total_pages = None  # Кеш используем только один раз
                 else:
-                    logger.info(f"Попытка {retry + 1}/{max_retries} получить количество страниц...")
+                    logger.info(f"Попытка #{page_count_attempts} получить количество страниц...")
                     total_pages = get_pages_count_with_driver(driver)
+                
                 if total_pages and total_pages > 0:
                     logger.info(f"[OK] Успешно получено количество страниц: {total_pages}")
                     break
-                else:
-                    logger.warning(f"[WARNING]  Получено некорректное количество страниц: {total_pages}")
+                
+                logger.warning(f"[WARNING]  Получено некорректное количество страниц: {total_pages}")
+                total_pages = None
+                page_count_failures += 1
             except Exception as e:
                 last_page_count_error = e
-                error_msg = str(e).lower()
-                if "timeout" in error_msg or "timed out" in error_msg:
-                    logger.warning(f"[WARNING]  Таймаут при получении количества страниц (попытка {retry + 1}/{max_retries})")
-                    if retry < max_retries - 1:
-                        logger.info(f"Ищем новый прокси...")
-                        try:
-                            driver.quit()
-                        except:
-                            pass
-                        # Ищем новый прокси до тех пор пока не найдем
-                        driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
-                        proxy_switch_count += 1
-                        forced_proxy_updates += 1
-                        logger.info(f"[OK] Новый прокси найден, пробуем еще раз получить количество страниц...")
-                        continue
-                    else:
-                        logger.error(f"[ERROR] Все попытки получить количество страниц завершились таймаутом")
-                        # Даже после всех попыток ищем новый прокси и пробуем еще раз
-                        logger.info(f"Ищем новый прокси для последней попытки...")
-                        try:
-                            driver.quit()
-                        except:
-                            pass
-                        driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
-                        proxy_switch_count += 1
-                        forced_proxy_updates += 1
-                        # Пробуем еще раз
-                        try:
-                            total_pages = get_pages_count_with_driver(driver)
-                            if total_pages and total_pages > 0:
-                                logger.info(f"[OK] Успешно получено количество страниц: {total_pages}")
-                                break
-                        except:
-                            logger.error(f"[ERROR] Не удалось получить количество страниц после всех попыток")
-                            failure_reason = "page_count_blocked" if isinstance(last_page_count_error, PaginationNotDetectedError) else "page_count_timeout"
-                            metrics = {
-                                "pages_checked": pages_checked,
-                                "proxy_switches": proxy_switch_count,
-                                "cloudflare_blocks": cloudflare_block_count,
-                                "max_empty_streak": max_empty_streak,
-                                "forced_proxy_updates": forced_proxy_updates,
-                                "failure_reason": failure_reason
-                            }
-                            return 0, metrics
+                page_count_failures += 1
+                if isinstance(e, PaginationNotDetectedError):
+                    logger.warning(f"[WARNING]  Пагинация не определена (попытка #{page_count_attempts}): {e}")
                 else:
-                    logger.error(f"[ERROR] Ошибка при получении количества страниц: {e}")
-                    if retry < max_retries - 1:
-                        logger.info(f"Ищем новый прокси...")
-                        try:
-                            driver.quit()
-                        except:
-                            pass
-                        # Ищем новый прокси до тех пор пока не найдем
-                        driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
-                        proxy_switch_count += 1
-                        forced_proxy_updates += 1
-                        logger.info(f"[OK] Новый прокси найден, пробуем еще раз...")
-                        continue
+                    logger.error(f"[ERROR] Ошибка при получении количества страниц (попытка #{page_count_attempts}): {e}")
+                total_pages = None
+            
+            if total_pages and total_pages > 0:
+                break
+            
+            stats = proxy_manager.get_proxy_queue_stats()
+            logger.info(
+                "Статус очереди прокси: всего=%s, доступно=%s, успешных=%s, исключено=%s",
+                stats.get("total"),
+                stats.get("available"),
+                stats.get("successful"),
+                stats.get("failed"),
+            )
+            
+            if page_count_failures > 0 and page_count_failures % proxy_refresh_every_failures == 0:
+                logger.warning(f"[WARNING]  {page_count_failures} неудачных попыток получить количество страниц — принудительно обновляем список прокси")
+                try:
+                    if proxy_manager.download_proxies(force_update=True):
+                        logger.info("[OK] Список прокси обновлен (page_count)")
+                        proxy_manager.reset_failed_proxies()
+                        start_from_index = 0
                     else:
-                        # Даже после всех попыток ищем новый прокси и пробуем еще раз
-                        logger.info(f"Ищем новый прокси для последней попытки...")
-                        try:
-                            driver.quit()
-                        except:
-                            pass
-                        driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
-                        proxy_switch_count += 1
-                        forced_proxy_updates += 1
-                        # Пробуем еще раз
-                        try:
-                            total_pages = get_pages_count_with_driver(driver)
-                            if total_pages and total_pages > 0:
-                                logger.info(f"[OK] Успешно получено количество страниц: {total_pages}")
-                                break
-                        except:
-                            logger.error(f"[ERROR] Не удалось получить количество страниц после всех попыток")
-                            failure_reason = "page_count_blocked" if isinstance(last_page_count_error, PaginationNotDetectedError) else "page_count_error"
-                            metrics = {
-                                "pages_checked": pages_checked,
-                                "proxy_switches": proxy_switch_count,
-                                "cloudflare_blocks": cloudflare_block_count,
-                                "max_empty_streak": max_empty_streak,
-                                "forced_proxy_updates": forced_proxy_updates,
-                                "failure_reason": failure_reason
-                            }
-                            return 0, metrics
-        
-        if not total_pages or total_pages <= 0:
-            logger.error("[ERROR] Не удалось получить количество страниц после всех попыток")
-            failure_reason = "page_count_blocked" if isinstance(last_page_count_error, PaginationNotDetectedError) else "page_count_not_available"
-            metrics = {
-                "pages_checked": pages_checked,
-                "proxy_switches": proxy_switch_count,
-                "cloudflare_blocks": cloudflare_block_count,
-                "max_empty_streak": max_empty_streak,
-                "forced_proxy_updates": forced_proxy_updates,
-                "failure_reason": failure_reason
-            }
-            return 0, metrics
+                        logger.warning("[WARNING]  Не удалось обновить список прокси принудительно (page_count)")
+                except Exception as refresh_error:
+                    logger.warning(f"[WARNING]  Ошибка при принудительном обновлении списка прокси: {refresh_error}")
+            
+            if page_count_attempts >= fallback_threshold:
+                logger.warning("[WARNING]  Не удалось определить количество страниц после множества попыток — переходим в fallback режим без total_pages")
+                fallback_mode = True
+                break
+            
+            logger.info("Ищем новый прокси для повторной попытки получить количество страниц...")
+            try:
+                driver.quit()
+            except Exception:
+                pass
+            
+            driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
+            proxy_switch_count += 1
+            forced_proxy_updates += 1
+            
+            wait_before_retry = random.uniform(5, 10)
+            logger.debug(f"Ждем {wait_before_retry:.1f} секунд перед следующей попыткой")
+            time.sleep(wait_before_retry)
         
         current_page = 1
         
-        while current_page <= total_pages:
+        while True:
+            if not fallback_mode and total_pages and current_page > total_pages:
+                break
+            
             try:
                 page_url = f"https://trast-zapchast.ru/shop/?_paged={current_page}"
-                logger.info(f"[{thread_name}] Parsing page {current_page}/{total_pages} (проверено: {pages_checked})")
+                if fallback_mode or not total_pages:
+                    logger.info(f"[{thread_name}] Parsing page {current_page} (проверено: {pages_checked}) [fallback без total_pages]")
+                else:
+                    logger.info(f"[{thread_name}] Parsing page {current_page}/{total_pages} (проверено: {pages_checked})")
                 
                 driver.get(page_url)
                 time.sleep(random.uniform(3, 6))  # Увеличиваем время ожидания
@@ -1380,7 +1347,10 @@ def producer(proxy_manager):
         "proxy_switches": proxy_switch_count,
         "cloudflare_blocks": cloudflare_block_count,
         "max_empty_streak": max_empty_streak,
-        "forced_proxy_updates": forced_proxy_updates
+        "forced_proxy_updates": forced_proxy_updates,
+        "page_count_attempts": page_count_attempts,
+        "page_count_failures": page_count_failures,
+        "fallback_mode": fallback_mode
     }
     logger.info(f"[{thread_name}] Итоговые метрики: {metrics}")
     

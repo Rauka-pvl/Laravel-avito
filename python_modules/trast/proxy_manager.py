@@ -319,6 +319,132 @@ class ProxyManager:
         except Exception as e:
             logger.debug(f"Не удалось сохранить контекст валидации для прокси: {e}")
     
+    def _analyze_trast_catalog_page(self, html: str) -> Dict[str, Optional[int]]:
+        """
+        Анализирует HTML страницы каталога Trast на предмет блокировок, наличия карточек и пагинации.
+        Возвращает словарь с флагами и извлечённым количеством страниц.
+        """
+        try:
+            from bs4 import BeautifulSoup
+        except ImportError:
+            logger.error("  [ERROR] BeautifulSoup не установлен — невозможно проанализировать HTML каталога")
+            return {
+                "is_blocked": True,
+                "has_products": False,
+                "has_pagination": False,
+                "total_pages": None,
+                "pagination_items": 0,
+            }
+        
+        soup = BeautifulSoup(html, "html.parser")
+        page_source_lower = html.lower()
+        
+        block_indicators = [
+            "cloudflare",
+            "checking your browser",
+            "just a moment",
+            "service temporarily unavailable",
+            "temporarily unavailable",
+            "temporary unavailable",
+            "access denied",
+            "ошибка 503",
+            "error 503",
+            "ошибка 403",
+            "error 403",
+            "ошибка 404",
+            "error 404",
+            "forbidden",
+            "blocked",
+            "captcha",
+            "please enable javascript",
+            "attention required",
+            "временно недоступ",
+        ]
+        
+        is_blocked = any(indicator in page_source_lower for indicator in block_indicators)
+        products = soup.select("div.product.product-plate")
+        pagination_items = soup.select(".facetwp-pager .facetwp-page")
+        has_products = bool(products)
+        has_pagination = bool(pagination_items)
+        
+        total_pages = None
+        if pagination_items:
+            last_page_el = soup.select_one(".facetwp-pager .facetwp-page.last")
+            if last_page_el and last_page_el.has_attr("data-page"):
+                try:
+                    total_pages = int(last_page_el["data-page"])
+                except (ValueError, TypeError):
+                    total_pages = None
+            else:
+                max_page = 0
+                for page_el in pagination_items:
+                    data_page = page_el.get("data-page")
+                    text_value = page_el.get_text(strip=True)
+                    candidate = None
+                    if data_page:
+                        try:
+                            candidate = int(data_page)
+                        except ValueError:
+                            candidate = None
+                    elif text_value.isdigit():
+                        candidate = int(text_value)
+                    if candidate and candidate > max_page:
+                        max_page = candidate
+                if max_page > 0:
+                    total_pages = max_page
+        
+        return {
+            "is_blocked": is_blocked,
+            "has_products": has_products,
+            "has_pagination": has_pagination,
+            "total_pages": total_pages,
+            "pagination_items": len(pagination_items),
+        }
+    
+    def get_proxy_queue_stats(self) -> Dict[str, int]:
+        """
+        Возвращает статистику очереди прокси:
+        - total: всего прокси в кэше после фильтров
+        - available: доступно для проверки (не в failed и не в successful)
+        - successful: количество успешных прокси в памяти
+        - failed: количество прокси, помеченных как неработающие
+        """
+        stats = {
+            "total": 0,
+            "available": 0,
+            "successful": len(self.successful_proxies),
+            "failed": len(self.failed_proxies),
+        }
+        
+        try:
+            if not os.path.exists(self.proxies_file):
+                return stats
+            
+            with open(self.proxies_file, 'r', encoding='utf-8') as f:
+                all_proxies = json.load(f)
+            
+            stats["total"] = len(all_proxies)
+            successful_keys = {f"{p['ip']}:{p['port']}" for p in self.successful_proxies}
+            
+            available_count = 0
+            for proxy in all_proxies:
+                protocol = proxy.get('protocol', '').lower()
+                country = proxy.get('country', '').upper()
+                if protocol not in ['http', 'https', 'socks4', 'socks5']:
+                    continue
+                if self.country_filter and country not in self.country_filter:
+                    continue
+                proxy_key = f"{proxy['ip']}:{proxy['port']}"
+                if proxy_key in self.failed_proxies or proxy_key in successful_keys:
+                    continue
+                available_count += 1
+            
+            stats["available"] = available_count
+        except Exception as stats_error:
+            logger.debug(f"Не удалось собрать статистику по очереди прокси: {stats_error}")
+        
+        return stats
+
     def validate_proxy(self, proxy: Dict, timeout: int = 5) -> bool:
         """Проверяет работоспособность прокси"""
         try:
@@ -512,7 +638,6 @@ class ProxyManager:
         from selenium.webdriver.firefox.service import Service
         from selenium.webdriver.firefox.options import Options
         import geckodriver_autoinstaller
-        from bs4 import BeautifulSoup
         import time
         import random
         
@@ -727,28 +852,37 @@ class ProxyManager:
                 logger.warning(f"  [ERROR] Cloudflare проверка не пройдена")
                 return False
             
-            # Парсим количество страниц
-            soup = BeautifulSoup(driver.page_source, 'html.parser')
-            last_page_el = soup.select_one(".facetwp-pager .facetwp-page.last")
+            page_source = driver.page_source
+            analysis = self._analyze_trast_catalog_page(page_source)
+            logger.debug(
+                "  [ANALYZE] FIREFOX: blocked=%s, products=%s, pagination=%s, items=%s, total_pages=%s",
+                analysis["is_blocked"],
+                analysis["has_products"],
+                analysis["has_pagination"],
+                analysis["pagination_items"],
+                analysis["total_pages"],
+            )
             
-            if last_page_el and last_page_el.has_attr("data-page"):
-                total_pages = int(last_page_el["data-page"])
-                logger.info(f"  [OK][OK][OK] FIREFOX УСПЕШНО! Получено количество страниц: {total_pages}")
-                if context is not None:
-                    context.setdefault("source", "selenium_firefox")
-                    context["total_pages"] = total_pages
-                    context.setdefault("html", driver.page_source)
+            if context is not None:
+                context.setdefault("source", "selenium_firefox")
+                context.setdefault("html", page_source)
+                if analysis["total_pages"]:
+                    context["total_pages"] = analysis["total_pages"]
+            
+            if analysis["is_blocked"]:
+                logger.warning("  [ERROR] FIREFOX: Страница каталога содержит признаки блокировки/заглушки")
+                return False
+            
+            if analysis["total_pages"]:
+                logger.info(f"  [OK][OK][OK] FIREFOX УСПЕШНО! Получено количество страниц: {analysis['total_pages']}")
                 return True
-            else:
-                if len(driver.page_source) > 1000 and ("shop" in driver.page_source.lower() or "товар" in driver.page_source.lower()):
-                    logger.info(f"  [OK] FIREFOX: Страница загружена")
-                    if context is not None:
-                        context.setdefault("source", "selenium_firefox")
-                        context.setdefault("html", driver.page_source)
-                    return True
-                else:
-                    logger.warning(f"  [ERROR] FIREFOX: Страница не загрузилась корректно")
-                    return False
+            
+            if analysis["has_products"]:
+                logger.info("  [OK] FIREFOX: Найдены карточки товаров, но пагинация отсутствует (будем работать в fallback режиме)")
+                return True
+            
+            logger.warning("  [ERROR] FIREFOX: Страница не содержит карточек и пагинации — считаем прокси заблокированным")
+            return False
                     
         except Exception as e:
             import traceback
@@ -767,7 +901,6 @@ class ProxyManager:
             from selenium.webdriver.chrome.options import Options
             from webdriver_manager.chrome import ChromeDriverManager
             from selenium.webdriver.common.by import By
-            from bs4 import BeautifulSoup
             import time
             import random
             import traceback
@@ -986,28 +1119,37 @@ class ProxyManager:
                     logger.warning(f"  [ERROR] Cloudflare проверка не пройдена")
                     return False
                 
-                # Парсим количество страниц
-                soup = BeautifulSoup(driver.page_source, 'html.parser')
-                last_page_el = soup.select_one(".facetwp-pager .facetwp-page.last")
+                page_source = driver.page_source
+                analysis = self._analyze_trast_catalog_page(page_source)
+                logger.debug(
+                    "  [ANALYZE] CHROME: blocked=%s, products=%s, pagination=%s, items=%s, total_pages=%s",
+                    analysis["is_blocked"],
+                    analysis["has_products"],
+                    analysis["has_pagination"],
+                    analysis["pagination_items"],
+                    analysis["total_pages"],
+                )
                 
-                if last_page_el and last_page_el.has_attr("data-page"):
-                    total_pages = int(last_page_el["data-page"])
-                    logger.info(f"  [OK][OK][OK] CHROME УСПЕШНО! Получено количество страниц: {total_pages}")
-                    if context is not None:
-                        context.setdefault("source", "selenium_chrome")
-                        context["total_pages"] = total_pages
-                        context.setdefault("html", driver.page_source)
+                if context is not None:
+                    context.setdefault("source", "selenium_chrome")
+                    context.setdefault("html", page_source)
+                    if analysis["total_pages"]:
+                        context["total_pages"] = analysis["total_pages"]
+                
+                if analysis["is_blocked"]:
+                    logger.warning("  [ERROR] CHROME: Страница каталога содержит признаки блокировки/заглушки")
+                    return False
+                
+                if analysis["total_pages"]:
+                    logger.info(f"  [OK][OK][OK] CHROME УСПЕШНО! Получено количество страниц: {analysis['total_pages']}")
                     return True
-                else:
-                    if len(driver.page_source) > 1000 and ("shop" in driver.page_source.lower() or "товар" in driver.page_source.lower()):
-                        logger.info(f"  [OK] CHROME: Страница загружена")
-                        if context is not None:
-                            context.setdefault("source", "selenium_chrome")
-                            context.setdefault("html", driver.page_source)
-                        return True
-                    else:
-                        logger.warning(f"  [ERROR] CHROME: Страница не загрузилась корректно")
-                        return False
+                
+                if analysis["has_products"]:
+                    logger.info("  [OK] CHROME: Найдены карточки товаров, но пагинация отсутствует (fallback режим)")
+                    return True
+                
+                logger.warning("  [ERROR] CHROME: Страница не содержит карточек и пагинации — считаем прокси заблокированным")
+                return False
                         
             finally:
                 driver.quit()
@@ -1195,57 +1337,38 @@ class ProxyManager:
             
             # Подробное логирование содержимого ответа
             if response.status_code == 200:
-                response_text = response.text.lower()
+                analysis = self._analyze_trast_catalog_page(response.text)
+                logger.debug(
+                    "  [ANALYZE] REQUESTS: blocked=%s, products=%s, pagination=%s, items=%s, total_pages=%s",
+                    analysis["is_blocked"],
+                    analysis["has_products"],
+                    analysis["has_pagination"],
+                    analysis["pagination_items"],
+                    analysis["total_pages"],
+                )
                 
-                # Проверяем на различные типы блокировок
-                if "403" in response_text or "forbidden" in response_text:
-                    logger.warning(f"  [ERROR] Прокси заблокирован сайтом (403 Forbidden)")
+                if analysis["is_blocked"]:
+                    logger.warning("  [ERROR] Ответ содержит признаки блокировки/заглушки — прокси отклонён")
                     logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
+                    validation_context["block_reason"] = "blocked_html"
                     return False
-                elif "cloudflare" in response_text:
-                    logger.warning(f"  [ERROR] Прокси заблокирован Cloudflare")
-                    logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
-                    return False
-                elif "blocked" in response_text or "access denied" in response_text:
-                    logger.warning(f"  [ERROR] Прокси заблокирован (Access Denied)")
-                    logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
-                    return False
-                elif "captcha" in response_text or "challenge" in response_text:
-                    logger.warning(f"  [ERROR] Требуется прохождение капчи")
-                    logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
-                    return False
-                else:
-                    # Проверяем, что это действительно страница shop и пытаемся получить количество страниц
-                    if "shop" in response_text or "товар" in response_text or "product" in response_text or "каталог" in response_text:
-                        # Пытаемся найти количество страниц
-                        from bs4 import BeautifulSoup
-                        soup = BeautifulSoup(response.text, 'html.parser')
-                        
-                        # Ищем элемент с количеством страниц (как в main.py)
-                        last_page_el = soup.select_one(".facetwp-pager .facetwp-page.last")
-                        if last_page_el and last_page_el.has_attr("data-page"):
-                            total_pages = int(last_page_el["data-page"])
-                            logger.info(f"  [OK] Прокси УСПЕШНО работает на trast-zapchast.ru!")
-                            logger.info(f"  [OK] Получено количество страниц: {total_pages}")
-                            validation_context["total_pages"] = total_pages
-                            self._store_validation_context(proxy, validation_context)
-                            return True
-                        else:
-                            # Страница загрузилась, но не нашли количество страниц
-                            # Проверяем, что это точно страница shop
-                            if len(response_text) > 1000 and ("trast" in response_text or "запчаст" in response_text):
-                                logger.info(f"  [OK] Прокси УСПЕШНО работает! Страница shop загружена")
-                                logger.info(f"  [WARNING]  Не удалось определить количество страниц автоматически, но страница доступна")
-                                self._store_validation_context(proxy, validation_context)
-                                return True
-                            else:
-                                logger.warning(f"  [ERROR] Страница загружена, но не похожа на shop каталог")
-                                logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
-                                return False
-                    else:
-                        logger.warning(f"  [ERROR] Прокси получил ответ, но не похож на страницу shop")
-                        logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
-                        return False
+                
+                if analysis["total_pages"]:
+                    logger.info(f"  [OK] Прокси УСПЕШНО работает на trast-zapchast.ru! Получено количество страниц: {analysis['total_pages']}")
+                    validation_context["total_pages"] = analysis["total_pages"]
+                    self._store_validation_context(proxy, validation_context)
+                    return True
+                
+                if analysis["has_products"] or analysis["has_pagination"]:
+                    logger.info("  [OK] Прокси УСПЕШНО работает! Страница каталога загружена, но количество страниц не определено")
+                    validation_context.setdefault("total_pages", None)
+                    self._store_validation_context(proxy, validation_context)
+                    return True
+                
+                logger.warning("  [ERROR] Ответ не похож на страницу каталога Trast")
+                logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
+                validation_context["block_reason"] = "not_catalog"
+                return False
                         
             elif response.status_code == 403:
                 logger.warning(f"  [ERROR] Прокси заблокирован (HTTP 403)")
