@@ -708,7 +708,7 @@ def get_driver_with_working_proxy(proxy_manager, start_from_index=0):
         logger.error(f"[ERROR] Traceback: {traceback.format_exc()}")
         return None, start_from_index
 
-def get_driver_until_found(proxy_manager, start_from_index=0):
+def get_driver_until_found(proxy_manager, start_from_index=0, max_no_progress_before_reset=20):
     """Получает драйвер с рабочим прокси - ищет до тех пор пока не найдёт
     
     Логика:
@@ -726,16 +726,57 @@ def get_driver_until_found(proxy_manager, start_from_index=0):
     attempt = 0
     last_update_time = time.time()
     update_interval = 60  # Обновляем список прокси каждую минуту
+    no_progress_cycles = 0
+    
+    long_search_thresholds = {50, 100, 200, 300, 400, 500}
+    max_attempts_without_success = 500
     
     while True:
         attempt += 1
         logger.info(f"Поиск рабочего прокси (попытка {attempt})...")
+        
+        if attempt in long_search_thresholds:
+            notify_msg = f"[Trast] Уже {attempt} попыток поиска прокси, продолжаем искать..."
+            logger.warning(f"[WARNING]  {notify_msg}")
+            try:
+                TelegramNotifier.notify(notify_msg)
+            except Exception as notify_error:
+                logger.debug(f"Не удалось отправить уведомление о длительном поиске прокси: {notify_error}")
         
         driver, new_start_from_index = get_driver_with_working_proxy(proxy_manager, start_from_index)
         
         if driver:
             logger.info(f"[OK] Рабочий прокси найден на попытке {attempt}")
             return driver, new_start_from_index
+        
+        if attempt >= max_attempts_without_success:
+            logger.warning(f"[WARNING]  Достигнут лимит в {max_attempts_without_success} попыток поиска прокси без успеха. Принудительно обновляем список и начинаем заново.")
+            attempt = 0
+            try:
+                if proxy_manager.download_proxies(force_update=True):
+                    logger.info("[OK] Принудительное обновление списка прокси успешно")
+                else:
+                    logger.warning("[WARNING]  Принудительное обновление не удалось, используем кэшированный список")
+            except Exception as forced_update_error:
+                logger.warning(f"[WARNING]  Ошибка при принудительном обновлении прокси: {forced_update_error}")
+            proxy_manager.reset_failed_proxies()
+            start_from_index = 0
+            last_update_time = time.time()
+            no_progress_cycles = 0
+            continue
+        
+        # Отслеживаем прогресс по индексу
+        if new_start_from_index == start_from_index:
+            no_progress_cycles += 1
+        else:
+            no_progress_cycles = 0
+            start_from_index = new_start_from_index
+        
+        if no_progress_cycles >= max_no_progress_before_reset:
+            logger.warning(f"[WARNING]  Не удаётся сделать прогресс по списку прокси ({no_progress_cycles} циклов). Сбрасываем кэш неудачных прокси и начинаем заново.")
+            proxy_manager.reset_failed_proxies()
+            start_from_index = 0
+            no_progress_cycles = 0
         
         # Если не нашли прокси - проверяем, нужно ли обновить список
         current_time = time.time()
@@ -759,6 +800,7 @@ def get_driver_until_found(proxy_manager, start_from_index=0):
                 if proxy_manager.download_proxies(force_update=True):
                     logger.info("[OK] Список прокси обновлен, продолжаем поиск...")
                     last_update_time = time.time()
+                    proxy_manager.reset_failed_proxies()
                     start_from_index = 0  # Сбрасываем индекс после обновления
                 else:
                     logger.warning("[WARNING]  Не удалось обновить список прокси, используем кэшированный")
@@ -771,8 +813,7 @@ def get_driver_until_found(proxy_manager, start_from_index=0):
             wait_time = 5
             logger.warning(f"[RETRY] Не найдено рабочего прокси, ждем {wait_time} секунд перед следующей попыткой...")
             time.sleep(wait_time)
-        
-        start_from_index = new_start_from_index
+            start_from_index = new_start_from_index
 
 def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
     """Получает количество страниц с улучшенной обработкой Cloudflare"""
@@ -972,6 +1013,10 @@ def producer(proxy_manager):
     empty_pages_count = 0
     max_empty_pages = 3
     pages_checked = 0  # Счетчик проверенных страниц
+    max_empty_streak = 0
+    proxy_switch_count = 0
+    cloudflare_block_count = 0
+    forced_proxy_updates = 0
     
     try:
         logger.info(f"Начинаем парсинг ТОЛЬКО через прокси")
@@ -1001,6 +1046,8 @@ def producer(proxy_manager):
                             pass
                         # Ищем новый прокси до тех пор пока не найдем
                         driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
+                        proxy_switch_count += 1
+                        forced_proxy_updates += 1
                         logger.info(f"[OK] Новый прокси найден, пробуем еще раз получить количество страниц...")
                         continue
                     else:
@@ -1012,6 +1059,8 @@ def producer(proxy_manager):
                         except:
                             pass
                         driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
+                        proxy_switch_count += 1
+                        forced_proxy_updates += 1
                         # Пробуем еще раз
                         try:
                             total_pages = get_pages_count_with_driver(driver)
@@ -1020,7 +1069,15 @@ def producer(proxy_manager):
                                 break
                         except:
                             logger.error(f"[ERROR] Не удалось получить количество страниц после всех попыток")
-                            return 0
+                            metrics = {
+                                "pages_checked": pages_checked,
+                                "proxy_switches": proxy_switch_count,
+                                "cloudflare_blocks": cloudflare_block_count,
+                                "max_empty_streak": max_empty_streak,
+                                "forced_proxy_updates": forced_proxy_updates,
+                                "failure_reason": "page_count_timeout"
+                            }
+                            return 0, metrics
                 else:
                     logger.error(f"[ERROR] Ошибка при получении количества страниц: {e}")
                     if retry < max_retries - 1:
@@ -1031,6 +1088,8 @@ def producer(proxy_manager):
                             pass
                         # Ищем новый прокси до тех пор пока не найдем
                         driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
+                        proxy_switch_count += 1
+                        forced_proxy_updates += 1
                         logger.info(f"[OK] Новый прокси найден, пробуем еще раз...")
                         continue
                     else:
@@ -1041,6 +1100,8 @@ def producer(proxy_manager):
                         except:
                             pass
                         driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
+                        proxy_switch_count += 1
+                        forced_proxy_updates += 1
                         # Пробуем еще раз
                         try:
                             total_pages = get_pages_count_with_driver(driver)
@@ -1049,17 +1110,34 @@ def producer(proxy_manager):
                                 break
                         except:
                             logger.error(f"[ERROR] Не удалось получить количество страниц после всех попыток")
-                            return 0
+                            metrics = {
+                                "pages_checked": pages_checked,
+                                "proxy_switches": proxy_switch_count,
+                                "cloudflare_blocks": cloudflare_block_count,
+                                "max_empty_streak": max_empty_streak,
+                                "forced_proxy_updates": forced_proxy_updates,
+                                "failure_reason": "page_count_error"
+                            }
+                            return 0, metrics
         
         if not total_pages or total_pages <= 0:
             logger.error("[ERROR] Не удалось получить количество страниц после всех попыток")
-            return 0
+            metrics = {
+                "pages_checked": pages_checked,
+                "proxy_switches": proxy_switch_count,
+                "cloudflare_blocks": cloudflare_block_count,
+                "max_empty_streak": max_empty_streak,
+                "forced_proxy_updates": forced_proxy_updates,
+                "failure_reason": "page_count_not_available"
+            }
+            return 0, metrics
         
-        for page_num in range(1, total_pages + 1):
+        current_page = 1
+        
+        while current_page <= total_pages:
             try:
-                pages_checked += 1  # Увеличиваем счетчик проверенных страниц
-                page_url = f"https://trast-zapchast.ru/shop/?_paged={page_num}"
-                logger.info(f"[{thread_name}] Parsing page {page_num}/{total_pages} (проверено: {pages_checked})")
+                page_url = f"https://trast-zapchast.ru/shop/?_paged={current_page}"
+                logger.info(f"[{thread_name}] Parsing page {current_page}/{total_pages} (проверено: {pages_checked})")
                 
                 driver.get(page_url)
                 time.sleep(random.uniform(3, 6))  # Увеличиваем время ожидания
@@ -1075,19 +1153,19 @@ def producer(proxy_manager):
                 )
                 
                 if is_blocked:
-                    logger.warning(f"Страница {page_num}: обнаружена блокировка (Cloudflare/access denied), ищем новый прокси...")
+                    logger.warning(f"Страница {current_page}: обнаружена блокировка (Cloudflare/access denied), ищем новый прокси...")
                     # Запоминаем текущую страницу
-                    current_page = page_num
+                    blocked_page = current_page
+                    cloudflare_block_count += 1
                     try:
                         driver.quit()
                     except:
                         pass
                     # Ищем новый прокси до тех пор пока не найдем
-                    logger.info(f"Ищем новый рабочий прокси для продолжения парсинга со страницы {current_page}...")
+                    logger.info(f"Ищем новый рабочий прокси для продолжения парсинга со страницы {blocked_page}...")
                     driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
-                    logger.info(f"[OK] Новый прокси найден, продолжаем парсинг со страницы {current_page}")
-                    # Возвращаемся к запомненной странице
-                    page_num = current_page - 1  # Уменьшаем, т.к. в конце цикла будет увеличение
+                    proxy_switch_count += 1
+                    logger.info(f"[OK] Новый прокси найден, продолжаем парсинг со страницы {blocked_page}")
                     continue
                 
                 soup = BeautifulSoup(driver.page_source, "html.parser")
@@ -1097,55 +1175,59 @@ def producer(proxy_manager):
                     # Пишем во временные файлы (старый файл не трогаем)
                     append_to_excel(TEMP_OUTPUT_FILE, products)
                     append_to_csv(TEMP_CSV_FILE, products)
-                    logger.info(f"[{thread_name}] Page {page_num}: added {len(products)} products")
+                    logger.info(f"[{thread_name}] Page {current_page}: added {len(products)} products")
                     total_collected += len(products)
                     empty_pages_count = 0  # Сбрасываем счетчик пустых страниц
                 else:
                     empty_pages_count += 1
-                    logger.warning(f"[{thread_name}] Page {page_num}: no products found (empty pages: {empty_pages_count})")
+                    if empty_pages_count > max_empty_streak:
+                        max_empty_streak = empty_pages_count
+                    logger.warning(f"[{thread_name}] Page {current_page}: no products found (empty pages: {empty_pages_count})")
                     
                     # Если несколько пустых страниц подряд - возможно блокировка, пробуем новый прокси
                     if empty_pages_count >= 2 and empty_pages_count < max_empty_pages:
                         logger.warning(f"Найдено {empty_pages_count} пустых страниц подряд. Возможна блокировка, ищем новый прокси...")
                         # Запоминаем текущую страницу
-                        current_page = page_num
+                        blocked_page = current_page
                         try:
                             driver.quit()
                         except:
                             pass
                         # Ищем новый прокси до тех пор пока не найдем
-                        logger.info(f"Ищем новый рабочий прокси для продолжения парсинга со страницы {current_page}...")
+                        logger.info(f"Ищем новый рабочий прокси для продолжения парсинга со страницы {blocked_page}...")
                         driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
-                        logger.info(f"[OK] Новый прокси найден, продолжаем парсинг со страницы {current_page}")
-                        # Возвращаемся к запомненной странице
-                        page_num = current_page - 1  # Уменьшаем, т.к. в конце цикла будет увеличение
-                        pages_checked -= 1  # Уменьшаем счетчик, т.к. повторяем страницу
+                        proxy_switch_count += 1
+                        logger.info(f"[OK] Новый прокси найден, продолжаем парсинг со страницы {blocked_page}")
                         empty_pages_count = 0  # Сбрасываем счетчик при смене прокси
                         continue
                     
                     # Условие остановки: если 3 страницы подряд пустые (конец данных)
                     if empty_pages_count >= max_empty_pages:
                         logger.info(f"Найдено {max_empty_pages} пустых страниц подряд. Останавливаем парсинг.")
+                        pages_checked += 1
                         break
+                
+                pages_checked += 1
+                current_page += 1
                 
                 # Случайная пауза между страницами
                 time.sleep(random.uniform(2, 4))
                 
             except Exception as e:
-                logger.error(f"Ошибка при парсинге страницы {page_num}: {e}")
+                logger.error(f"Ошибка при парсинге страницы {current_page}: {e}")
                 # Запоминаем текущую страницу
-                current_page = page_num
+                errored_page = current_page
                 try:
                     driver.quit()
                 except:
                     pass
                 # Ищем новый прокси до тех пор пока не найдем
-                logger.info(f"Ищем новый рабочий прокси для продолжения парсинга со страницы {current_page}...")
+                logger.info(f"Ищем новый рабочий прокси для продолжения парсинга со страницы {errored_page}...")
                 driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
-                logger.info(f"[OK] Новый прокси найден, продолжаем парсинг со страницы {current_page}")
-                # Возвращаемся к запомненной странице
-                page_num = current_page - 1  # Уменьшаем, т.к. в конце цикла будет увеличение
-                pages_checked -= 1  # Уменьшаем счетчик, т.к. повторяем страницу
+                proxy_switch_count += 1
+                logger.info(f"[OK] Новый прокси найден, продолжаем парсинг со страницы {errored_page}")
+                # Переходим к следующему циклу без изменения current_page
+                continue
                 
     finally:
         try:
@@ -1153,7 +1235,16 @@ def producer(proxy_manager):
         except:
             pass
     
-    return total_collected
+    metrics = {
+        "pages_checked": pages_checked,
+        "proxy_switches": proxy_switch_count,
+        "cloudflare_blocks": cloudflare_block_count,
+        "max_empty_streak": max_empty_streak,
+        "forced_proxy_updates": forced_proxy_updates
+    }
+    logger.info(f"[{thread_name}] Итоговые метрики: {metrics}")
+    
+    return total_collected, metrics
 
 def create_backup():
     """Создает бэкап основных файлов перед обновлением"""
@@ -1292,13 +1383,15 @@ if __name__ == "__main__":
     
     # Запускаем парсинг - он продолжается до 3 пустых страниц подряд
     # При блокировке/ошибке автоматически ищется новый прокси и парсинг продолжается
+    producer_metrics = {}
     try:
-        total_products = producer(proxy_manager)
+        total_products, producer_metrics = producer(proxy_manager)
         logger.info(f"[OK] Producer завершился, собрано товаров: {total_products}")
     except Exception as producer_error:
         logger.error(f"[ERROR] Критическая ошибка в producer: {producer_error}")
         logger.error(f"[ERROR] Traceback: {traceback.format_exc()}")
         total_products = 0
+        producer_metrics = {"failure": str(producer_error)}
         status = 'error'
         TelegramNotifier.notify(f"[Trast] Update failed — <code>{producer_error}</code>")
         cleanup_temp_files()
@@ -1358,12 +1451,29 @@ if __name__ == "__main__":
     logger.info(f"Время выполнения: {round(duration, 2)} секунд")
     logger.info(f"Статус: {status}")
     logger.info(f"Товаров собрано: {total_products}")
+    if producer_metrics:
+        logger.info(f"Метрики парсинга: {producer_metrics}")
     logger.info("============================================================")
 
+    metrics_suffix = ""
+    if producer_metrics:
+        pages_checked = producer_metrics.get("pages_checked")
+        proxy_switches = producer_metrics.get("proxy_switches")
+        cloudflare_blocks = producer_metrics.get("cloudflare_blocks")
+        if pages_checked is not None or proxy_switches is not None or cloudflare_blocks is not None:
+            parts = []
+            if pages_checked is not None:
+                parts.append(f"pages={pages_checked}")
+            if proxy_switches is not None:
+                parts.append(f"proxy_swaps={proxy_switches}")
+            if cloudflare_blocks is not None:
+                parts.append(f"cf_blocks={cloudflare_blocks}")
+            metrics_suffix = " (" + ", ".join(parts) + ")"
+    
     if status == 'done':
-        TelegramNotifier.notify(f"[Trast] Update completed successfully — Duration: {duration:.2f}s, Products: {total_products}")
+        TelegramNotifier.notify(f"[Trast] Update completed successfully — Duration: {duration:.2f}s, Products: {total_products}{metrics_suffix}")
     elif status == 'insufficient_data':
-        TelegramNotifier.notify(f"[Trast] Update completed with insufficient data — Duration: {duration:.2f}s, Products: {total_products}")
+        TelegramNotifier.notify(f"[Trast] Update completed with insufficient data — Duration: {duration:.2f}s, Products: {total_products}{metrics_suffix}")
     else:
         failure_details = error_message or "Unknown error"
         TelegramNotifier.notify(f"[Trast] Update failed — <code>{failure_details}</code>")

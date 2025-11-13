@@ -54,6 +54,7 @@ class ProxyManager:
         
         # Загружаем успешные прокси при инициализации
         self.successful_proxies = self.load_successful_proxies()
+        self._sort_successful_proxies()
         if self.successful_proxies:
             logger.info(f"Загружено {len(self.successful_proxies)} успешных прокси из кэша")
         
@@ -149,6 +150,9 @@ class ProxyManager:
             with open(self.last_update_file, 'w') as f:
                 f.write(datetime.now().isoformat())
             
+            # Сброс кэша неудачных прокси - новый список нужно пробовать заново
+            self.reset_failed_proxies()
+            
             logger.info(f"Сохранено {len(filtered_proxies)} прокси в файл")
             return True
             
@@ -205,8 +209,9 @@ class ProxyManager:
                     country = proxy.get('country', '').upper()
                     if country in self.country_filter:
                         filtered.append(proxy)
-                return filtered
+                proxies = filtered
             
+            proxies.sort(key=self._successful_proxy_sort_key, reverse=True)
             return proxies
             
         except Exception as e:
@@ -224,6 +229,10 @@ class ProxyManager:
                 if existing_key == proxy_key:
                     # Обновляем дату последнего успешного использования
                     existing['last_success'] = datetime.now().isoformat()
+                    existing['success_count'] = existing.get('success_count', 0) + 1
+                    existing['country'] = proxy.get('country', existing.get('country', 'Unknown'))
+                    existing['protocol'] = proxy.get('protocol', existing.get('protocol', 'http'))
+                    self._sort_successful_proxies()
                     self._write_successful_proxies()
                     return
             
@@ -239,6 +248,7 @@ class ProxyManager:
             }
             
             self.successful_proxies.append(proxy_with_meta)
+            self._sort_successful_proxies()
             self._write_successful_proxies()
             logger.info(f"Прокси {proxy_key} добавлен в список успешных")
             
@@ -266,10 +276,30 @@ class ProxyManager:
     def _write_successful_proxies(self):
         """Записывает список успешных прокси в файл"""
         try:
+            self._sort_successful_proxies()
             with open(self.successful_proxies_file, 'w', encoding='utf-8') as f:
                 json.dump(self.successful_proxies, f, ensure_ascii=False, indent=2)
         except Exception as e:
             logger.warning(f"Ошибка при записи успешных прокси: {e}")
+    
+    def _successful_proxy_sort_key(self, proxy: Dict):
+        ts_candidates = [
+            proxy.get('last_success'),
+            proxy.get('first_success')
+        ]
+        for ts in ts_candidates:
+            if ts:
+                try:
+                    return datetime.fromisoformat(ts)
+                except ValueError:
+                    continue
+        return datetime.min
+
+    def _sort_successful_proxies(self):
+        """Сортирует успешные прокси по дате последнего успеха"""
+        if not self.successful_proxies:
+            return
+        self.successful_proxies.sort(key=self._successful_proxy_sort_key, reverse=True)
     
     def validate_proxy(self, proxy: Dict, timeout: int = 5) -> bool:
         """Проверяет работоспособность прокси"""
@@ -534,23 +564,37 @@ class ProxyManager:
             # ПРОВЕРКА: Проверяем, что прокси действительно используется
             logger.debug(f"  [ПРОВЕРКА ПРОКСИ] Проверяем внешний IP через браузер...")
             try:
-                driver.get("https://ifconfig.me/ip")
-                time.sleep(2)
-                browser_ip = driver.page_source.strip()
-                # Пробуем извлечь IP из HTML через regex
+                from selenium.webdriver.common.by import By
+                from selenium.webdriver.support.ui import WebDriverWait
+                from selenium.webdriver.support import expected_conditions as EC
                 import re
+                
                 ip_pattern = r'\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b'
-                ip_matches = re.findall(ip_pattern, browser_ip)
-                extracted_ip = ip_matches[0] if ip_matches else None
+                extracted_ip = None
+                last_source_preview = ""
+                
+                for attempt_ip in range(3):
+                    driver.get("https://ifconfig.me/ip")
+                    try:
+                        body_element = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+                        page_text = body_element.text.strip()
+                    except Exception:
+                        page_text = driver.page_source.strip()
+                    
+                    ip_matches = re.findall(ip_pattern, page_text)
+                    if ip_matches:
+                        extracted_ip = ip_matches[0]
+                        break
+                    
+                    last_source_preview = page_text[:200] + "..." if len(page_text) > 200 else page_text
+                    time.sleep(1)
                 
                 if extracted_ip:
                     logger.info(f"  [OK] Прокси работает! IP браузера: {extracted_ip} (ожидалось: {ip})")
                     if extracted_ip != ip:
                         logger.debug(f"  Примечание: IP браузера ({extracted_ip}) отличается от IP прокси ({ip}) - это нормально")
                 else:
-                    # Если не нашли IP, ограничиваем вывод HTML до 200 символов
-                    browser_ip_preview = browser_ip[:200] + "..." if len(browser_ip) > 200 else browser_ip
-                    logger.warning(f"  [WARNING]  Не удалось получить IP через браузер (размер ответа: {len(browser_ip)} символов, превью: {browser_ip_preview})")
+                    logger.warning(f"  [WARNING]  Не удалось получить IP через браузер (последний ответ: {last_source_preview})")
             except Exception as ip_check_error:
                 logger.warning(f"  [WARNING]  Не удалось проверить IP через браузер: {str(ip_check_error)[:100]}")
             # В Firefox navigator.webdriver нельзя переопределить после создания драйвера
@@ -790,21 +834,35 @@ class ProxyManager:
                 # ПРОВЕРКА: Проверяем, что прокси используется
                 logger.debug(f"  [ПРОВЕРКА ПРОКСИ] Проверяем внешний IP через Chrome...")
                 try:
-                    driver.get("https://ifconfig.me/ip")
-                    time.sleep(2)
-                    browser_ip = driver.page_source.strip()
-                    # Пробуем извлечь IP из HTML через regex
+                    from selenium.webdriver.support.ui import WebDriverWait
+                    from selenium.webdriver.support import expected_conditions as EC
                     import re
+                    
                     ip_pattern = r'\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b'
-                    ip_matches = re.findall(ip_pattern, browser_ip)
-                    extracted_ip = ip_matches[0] if ip_matches else None
+                    extracted_ip = None
+                    last_source_preview = ""
+                    
+                    for attempt_ip in range(3):
+                        driver.get("https://ifconfig.me/ip")
+                        try:
+                            page_text = WebDriverWait(driver, 10).until(
+                                EC.presence_of_element_located((By.TAG_NAME, "body"))
+                            ).text.strip()
+                        except Exception:
+                            page_text = driver.page_source.strip()
+                        
+                        ip_matches = re.findall(ip_pattern, page_text)
+                        if ip_matches:
+                            extracted_ip = ip_matches[0]
+                            break
+                        
+                        last_source_preview = page_text[:200] + "..." if len(page_text) > 200 else page_text
+                        time.sleep(1)
                     
                     if extracted_ip:
                         logger.info(f"  [OK] Прокси работает! IP Chrome: {extracted_ip} (прокси: {ip})")
                     else:
-                        # Если не нашли IP, ограничиваем вывод HTML до 200 символов
-                        browser_ip_preview = browser_ip[:200] + "..." if len(browser_ip) > 200 else browser_ip
-                        logger.warning(f"  [WARNING]  Не удалось получить IP (размер ответа: {len(browser_ip)} символов, превью: {browser_ip_preview})")
+                        logger.warning(f"  [WARNING]  Не удалось получить IP (последний ответ: {last_source_preview})")
                 except Exception as ip_check_error:
                     logger.warning(f"  [WARNING]  Не удалось проверить IP: {str(ip_check_error)[:100]}")
                 
@@ -978,39 +1036,27 @@ class ProxyManager:
             if HAS_CLOUDSCRAPER:
                 logger.info(f"  Используем cloudscraper для обхода Cloudflare...")
                 try:
-                    # Создаем cloudscraper сессию с поддержкой прокси
+                    import ssl
+                    import urllib3
+                    
+                    ssl_context = ssl._create_unverified_context()
+                    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                    
+                    # Создаем cloudscraper сессию с поддержкой прокси и кастомным SSL
                     scraper = cloudscraper.create_scraper(
                         browser={
                             'browser': 'chrome',
                             'platform': 'windows',
                             'desktop': True
-                        }
+                        },
+                        ssl_context=ssl_context,
+                        allow_brotli=True
                     )
                     scraper.allow_redirects = True
-                    
-                    # Настраиваем прокси для cloudscraper
-                    # cloudscraper использует requests под капотом, поэтому прокси передаем через proxies
                     scraper.proxies.update(proxies)
+                    scraper.verify = False
                     
-                    # ВАЖНО: для cloudscraper с SOCKS прокси нужно правильно настроить SSL
-                    import urllib3
-                    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-                    
-                    # Отключаем проверку SSL через настройку адаптера
-                    import ssl
-                    ssl_context = ssl.create_default_context()
-                    ssl_context.check_hostname = False
-                    ssl_context.verify_mode = ssl.CERT_NONE
-                    
-                    # Для cloudscraper используем verify=False как параметр
-                    # Но сначала проверяем тип прокси
-                    if protocol in ['socks4', 'socks5']:
-                        # Для SOCKS прокси cloudscraper может не работать корректно
-                        # Пробуем, но ожидаем ошибку
-                        response = scraper.get(site_url, timeout=timeout, verify=False)
-                    else:
-                        # Для HTTP/HTTPS прокси должно работать
-                        response = scraper.get(site_url, timeout=timeout, verify=False)
+                    response = scraper.get(site_url, timeout=timeout)
                     logger.info(f"  [OK] cloudscraper успешно: HTTP {response.status_code}")
                 except Exception as e:
                     logger.warning(f"  [WARNING]  Ошибка cloudscraper: {e}")
