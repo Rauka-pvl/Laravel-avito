@@ -51,6 +51,52 @@ logging.basicConfig(
 
 total_products = 0
 
+
+class PaginationNotDetectedError(Exception):
+    """Поднимается, когда страница каталога выглядит заблокированной и пагинация недоступна."""
+    pass
+
+
+def is_catalog_page_loaded(soup, page_source_lower):
+    """
+    Эвристика проверки, что страница каталога загрузилась корректно.
+    Возвращает True, если найдены явные элементы каталога (пагинация или карточки),
+    и отсутствуют признаки заглушек Cloudflare/ошибок.
+    """
+    has_pagination = bool(soup.select(".facetwp-pager .facetwp-page"))
+    has_products = bool(soup.select("div.product.product-plate"))
+    
+    blocker_keywords = [
+        "cloudflare",
+        "attention required",
+        "checking your browser",
+        "just a moment",
+        "access denied",
+        "forbidden",
+        "service temporarily unavailable",
+        "temporarily unavailable",
+        "maintenance",
+        "запрос отклонен",
+        "доступ запрещен",
+        "ошибка 403",
+        "ошибка 503",
+        "error 403",
+        "error 503",
+        "captcha",
+        "please enable javascript",
+        "varnish cache server",
+        "bad gateway",
+        "gateway timeout",
+    ]
+    if any(keyword in page_source_lower for keyword in blocker_keywords):
+        return False
+    
+    # Если на странице нет ни карточек, ни пагинации, считаем что каталог не загрузился
+    if not has_products and not has_pagination:
+        return False
+    
+    return True
+
 def create_new_excel(path):
     if os.path.exists(path):
         os.remove(path)
@@ -620,20 +666,32 @@ def get_driver_with_working_proxy(proxy_manager, start_from_index=0):
                 logger.error("Не удалось найти рабочий прокси")
                 return None, start_from_index
             
-            logger.info(f"Создаем драйвер с прокси {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()})")
-            logger.info(f"Пробуем этот прокси на оба браузера (Chrome → Firefox)")
+            protocol = proxy.get('protocol', 'http').lower()
+            logger.info(f"Создаем драйвер с прокси {proxy['ip']}:{proxy['port']} ({protocol.upper()})")
             
-            # Пробуем сначала Chrome (лучше обходит Cloudflare)
             driver = None
-            chrome_worked = False
-            try:
-                logger.info(f"  [1/2] Пробуем создать Chrome драйвер с прокси {proxy['ip']}:{proxy['port']}...")
-                driver = create_driver(proxy, proxy_manager, use_chrome=True)
-                logger.info("[OK] Chrome драйвер создан")
-                chrome_worked = True
-            except Exception as chrome_error:
-                logger.warning(f"  [ERROR] Chrome не удалось создать: {str(chrome_error)[:200]}")
-                logger.info(f"  [2/2] Пробуем Firefox с тем же прокси {proxy['ip']}:{proxy['port']}...")
+            can_use_chrome = protocol in ['http', 'https']
+            
+            if can_use_chrome:
+                try:
+                    logger.info(f"Пробуем этот прокси сначала в Chrome, затем при необходимости в Firefox")
+                    logger.info(f"  [1/2] Пробуем создать Chrome драйвер с прокси {proxy['ip']}:{proxy['port']}...")
+                    driver = create_driver(proxy, proxy_manager, use_chrome=True)
+                    logger.info("[OK] Chrome драйвер создан")
+                except Exception as chrome_error:
+                    logger.warning(f"  [ERROR] Chrome не удалось создать: {str(chrome_error)[:200]}")
+                    logger.info(f"  [2/2] Пробуем Firefox с тем же прокси {proxy['ip']}:{proxy['port']}...")
+                    try:
+                        driver = create_driver(proxy, proxy_manager, use_chrome=False)
+                        logger.info("[OK] Firefox драйвер создан")
+                    except Exception as firefox_error:
+                        logger.error(f"  [ERROR] Firefox тоже не удалось создать: {str(firefox_error)[:200]}")
+                        logger.warning(f"[WARNING]  Прокси {proxy['ip']}:{proxy['port']} не работает ни в Chrome, ни в Firefox")
+                        logger.info(f"Переходим к следующему прокси...")
+                        attempt += 1
+                        continue
+            else:
+                logger.info(f"Прокси {protocol.upper()} → пропускаем Chrome и сразу используем Firefox")
                 try:
                     driver = create_driver(proxy, proxy_manager, use_chrome=False)
                     logger.info("[OK] Firefox драйвер создан")
@@ -643,7 +701,7 @@ def get_driver_with_working_proxy(proxy_manager, start_from_index=0):
                     logger.info(f"Переходим к следующему прокси...")
                     attempt += 1
                     continue
-            
+
             if not driver:
                 attempt += 1
                 continue
@@ -668,6 +726,14 @@ def get_driver_with_working_proxy(proxy_manager, start_from_index=0):
                 'protocol': proxy.get('protocol', 'http'),
                 'country': proxy.get('country', 'Unknown')
             }
+            
+            # Передаем в драйвер контекст валидации, если он есть
+            proxy_key = f"{proxy['ip']}:{proxy['port']}"
+            validation_context = proxy_manager.validation_cache.pop(proxy_key, None) if hasattr(proxy_manager, "validation_cache") else None
+            if validation_context:
+                driver.trast_validation_context = validation_context
+                if validation_context.get("total_pages"):
+                    logger.info(f"[INFO] Используем кешированное количество страниц: {validation_context['total_pages']}")
             
             return driver, start_from_index
             
@@ -914,7 +980,9 @@ def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
             logger.debug(f"WebDriverWait не помог: {wait_error}")
         
         # Метод 2: Пробуем через BeautifulSoup (fallback)
-        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        page_source = driver.page_source
+        page_source_lower = page_source.lower()
+        soup = BeautifulSoup(page_source, 'html.parser')
         last_page_el = soup.select_one(".facetwp-pager .facetwp-page.last")
         
         if last_page_el and last_page_el.has_attr("data-page"):
@@ -933,14 +1001,22 @@ def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
                     max_page = 0
                     found_pages = []
                     for page_el in last_page_els:
-                        if page_el.has_attr("data-page"):
+                        data_page = page_el.get("data-page")
+                        if data_page:
                             try:
-                                page_num = int(page_el["data-page"])
+                                page_num = int(data_page)
                                 found_pages.append(page_num)
                                 if page_num > max_page:
                                     max_page = page_num
-                            except:
-                                pass
+                            except ValueError:
+                                continue
+                        else:
+                            text_value = page_el.get_text(strip=True)
+                            if text_value.isdigit():
+                                page_num = int(text_value)
+                                found_pages.append(page_num)
+                                if page_num > max_page:
+                                    max_page = page_num
                     logger.debug(f"Найденные номера страниц через BeautifulSoup: {found_pages}")
                     if max_page > 0:
                         total_pages = max_page
@@ -955,16 +1031,46 @@ def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
                 logger.info(f"[OK] Найдено {total_pages} страниц для парсинга (альтернативный селектор)")
                 return total_pages
             
+            has_products = bool(soup.select("div.product.product-plate"))
+            has_pagination_any = bool(soup.select(".facetwp-pager .facetwp-page"))
+            
+            block_indicators = [
+                "cloudflare",
+                "checking your browser",
+                "just a moment",
+                "service temporarily unavailable",
+                "temporarily unavailable",
+                "access denied",
+                "ошибка 503",
+                "error 503",
+                "ошибка 403",
+                "error 403",
+                "captcha",
+                "please enable javascript",
+                "attention required",
+            ]
+            if any(indicator in page_source_lower for indicator in block_indicators):
+                logger.warning("[WARNING]  Обнаружены признаки заглушки или блокировки на странице каталога")
+                raise PaginationNotDetectedError("Пагинация не найдена из-за блокировки или заглушки")
+            
+            if not has_products and not has_pagination_any:
+                logger.warning("[WARNING]  Каталог не содержит карточек и пагинации — возможно, страница заблокирована")
+                raise PaginationNotDetectedError("Пагинация не найдена: отсутствуют карточки и пагинация")
+            
+            if has_products and not has_pagination_any:
+                logger.info("[INFO] Найдены карточки товаров без пагинации — предполагаем одну страницу каталога")
+                return 1
+            
             # Сохраняем HTML для отладки
             debug_file = os.path.join(LOG_DIR, f"debug_pagination_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
             try:
                 with open(debug_file, 'w', encoding='utf-8') as f:
-                    f.write(driver.page_source)
+                    f.write(page_source)
                 logger.warning(f"[WARNING]  Не удалось найти информацию о количестве страниц")
                 logger.warning(f"[WARNING]  HTML сохранен в {debug_file} для отладки")
-                logger.warning(f"[WARNING]  Размер страницы: {len(driver.page_source)} символов")
-                logger.warning(f"[WARNING]  Содержит 'facetwp': {'facetwp' in driver.page_source.lower()}")
-                logger.warning(f"[WARNING]  Содержит 'shop': {'shop' in driver.page_source.lower()}")
+                logger.warning(f"[WARNING]  Размер страницы: {len(page_source)} символов")
+                logger.warning(f"[WARNING]  Содержит 'facetwp': {'facetwp' in page_source_lower}")
+                logger.warning(f"[WARNING]  Содержит 'shop': {'shop' in page_source_lower}")
             except:
                 pass
             
@@ -1025,16 +1131,27 @@ def producer(proxy_manager):
         total_pages = None
         max_retries = 3
         
+        last_page_count_error = None
+        cached_context = getattr(driver, "trast_validation_context", None)
+        cached_total_pages = None
+        if cached_context:
+            cached_total_pages = cached_context.get("total_pages")
+        
         for retry in range(max_retries):
             try:
-                logger.info(f"Попытка {retry + 1}/{max_retries} получить количество страниц...")
-                total_pages = get_pages_count_with_driver(driver)
+                if retry == 0 and cached_total_pages and cached_total_pages > 0:
+                    logger.info(f"Попытка {retry + 1}/{max_retries} получить количество страниц... [используем кеш]")
+                    total_pages = cached_total_pages
+                else:
+                    logger.info(f"Попытка {retry + 1}/{max_retries} получить количество страниц...")
+                    total_pages = get_pages_count_with_driver(driver)
                 if total_pages and total_pages > 0:
                     logger.info(f"[OK] Успешно получено количество страниц: {total_pages}")
                     break
                 else:
                     logger.warning(f"[WARNING]  Получено некорректное количество страниц: {total_pages}")
             except Exception as e:
+                last_page_count_error = e
                 error_msg = str(e).lower()
                 if "timeout" in error_msg or "timed out" in error_msg:
                     logger.warning(f"[WARNING]  Таймаут при получении количества страниц (попытка {retry + 1}/{max_retries})")
@@ -1069,13 +1186,14 @@ def producer(proxy_manager):
                                 break
                         except:
                             logger.error(f"[ERROR] Не удалось получить количество страниц после всех попыток")
+                            failure_reason = "page_count_blocked" if isinstance(last_page_count_error, PaginationNotDetectedError) else "page_count_timeout"
                             metrics = {
                                 "pages_checked": pages_checked,
                                 "proxy_switches": proxy_switch_count,
                                 "cloudflare_blocks": cloudflare_block_count,
                                 "max_empty_streak": max_empty_streak,
                                 "forced_proxy_updates": forced_proxy_updates,
-                                "failure_reason": "page_count_timeout"
+                                "failure_reason": failure_reason
                             }
                             return 0, metrics
                 else:
@@ -1110,25 +1228,27 @@ def producer(proxy_manager):
                                 break
                         except:
                             logger.error(f"[ERROR] Не удалось получить количество страниц после всех попыток")
+                            failure_reason = "page_count_blocked" if isinstance(last_page_count_error, PaginationNotDetectedError) else "page_count_error"
                             metrics = {
                                 "pages_checked": pages_checked,
                                 "proxy_switches": proxy_switch_count,
                                 "cloudflare_blocks": cloudflare_block_count,
                                 "max_empty_streak": max_empty_streak,
                                 "forced_proxy_updates": forced_proxy_updates,
-                                "failure_reason": "page_count_error"
+                                "failure_reason": failure_reason
                             }
                             return 0, metrics
         
         if not total_pages or total_pages <= 0:
             logger.error("[ERROR] Не удалось получить количество страниц после всех попыток")
+            failure_reason = "page_count_blocked" if isinstance(last_page_count_error, PaginationNotDetectedError) else "page_count_not_available"
             metrics = {
                 "pages_checked": pages_checked,
                 "proxy_switches": proxy_switch_count,
                 "cloudflare_blocks": cloudflare_block_count,
                 "max_empty_streak": max_empty_streak,
                 "forced_proxy_updates": forced_proxy_updates,
-                "failure_reason": "page_count_not_available"
+                "failure_reason": failure_reason
             }
             return 0, metrics
         

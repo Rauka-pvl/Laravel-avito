@@ -39,6 +39,7 @@ class ProxyManager:
         self.failed_proxies = set()
         self.proxies = []
         self.successful_proxies = []  # Список успешных прокси в памяти
+        self.validation_cache = {}
         
         # Нормализуем country_filter - всегда список (uppercase)
         if country_filter is None:
@@ -301,6 +302,23 @@ class ProxyManager:
             return
         self.successful_proxies.sort(key=self._successful_proxy_sort_key, reverse=True)
     
+    def _store_validation_context(self, proxy: Dict, context: Dict):
+        """Сохраняет результат последней удачной валидации прокси для дальнейшего использования"""
+        try:
+            proxy_key = f"{proxy['ip']}:{proxy['port']}"
+            enriched_context = {
+                "proxy": proxy_key,
+                "ip": proxy.get('ip'),
+                "port": proxy.get('port'),
+                "protocol": proxy.get('protocol'),
+                "timestamp": datetime.now().isoformat(),
+            }
+            if context:
+                enriched_context.update({k: v for k, v in context.items() if v is not None})
+            self.validation_cache[proxy_key] = enriched_context
+        except Exception as e:
+            logger.debug(f"Не удалось сохранить контекст валидации для прокси: {e}")
+    
     def validate_proxy(self, proxy: Dict, timeout: int = 5) -> bool:
         """Проверяет работоспособность прокси"""
         try:
@@ -437,8 +455,13 @@ class ProxyManager:
             logger.error(f"   [ERROR] Ошибка при базовой проверке прокси: {e}")
             return False, {}
     
-    def validate_proxy_for_trast_selenium(self, proxy: Dict, timeout: int = 60, use_chrome: bool = False) -> bool:
+    def validate_proxy_for_trast_selenium(self, proxy: Dict, timeout: int = 60, use_chrome: bool = False):
         """Проверяет прокси через Selenium (Firefox или Chrome/Chromium)"""
+        context = {
+            "total_pages": None,
+            "html": None,
+            "source": None,
+        }
         try:
             from selenium import webdriver
             from bs4 import BeautifulSoup
@@ -449,7 +472,9 @@ class ProxyManager:
             # Пробуем Chrome, если не получилось - Firefox
             if use_chrome:
                 try:
-                    return self._validate_with_chrome(proxy, timeout)
+                    if self._validate_with_chrome(proxy, timeout, context):
+                        context.setdefault("source", "selenium_chrome")
+                        return True, context
                 except Exception as e:
                     logger.warning(f"  [WARNING]  Chrome не доступен: {str(e)[:200]}")
                     logger.info(f"  Пробуем Firefox...")
@@ -457,25 +482,31 @@ class ProxyManager:
             
             # Используем Firefox
             try:
-                return self._validate_with_firefox(proxy, timeout)
+                if self._validate_with_firefox(proxy, timeout, context):
+                    context.setdefault("source", "selenium_firefox")
+                    return True, context
             except Exception as e:
                 logger.error(f"  [ERROR] Ошибка Firefox: {str(e)}")
                 logger.debug(f"  Traceback: {traceback.format_exc()}")
                 # Пробуем Chrome как fallback
                 try:
                     logger.info(f"  Пробуем Chrome как альтернативу...")
-                    return self._validate_with_chrome(proxy, timeout)
+                    if self._validate_with_chrome(proxy, timeout, context):
+                        context.setdefault("source", "selenium_chrome")
+                        return True, context
                 except Exception as chrome_error:
                     logger.error(f"  [ERROR] Chrome тоже не работает: {str(chrome_error)[:200]}")
                     logger.debug(f"  Chrome traceback: {traceback.format_exc()}")
-                    return False
+                    return False, context
                     
         except Exception as e:
             logger.error(f"  [ERROR] Критическая ошибка Selenium: {str(e)}")
             logger.debug(f"  Полный traceback: {traceback.format_exc()}")
-            return False
+            return False, context
+        
+        return False, context
     
-    def _validate_with_firefox(self, proxy: Dict, timeout: int) -> bool:
+    def _validate_with_firefox(self, proxy: Dict, timeout: int, context: Optional[Dict] = None) -> bool:
         """Проверка через Firefox"""
         from selenium import webdriver
         from selenium.webdriver.firefox.service import Service
@@ -703,10 +734,17 @@ class ProxyManager:
             if last_page_el and last_page_el.has_attr("data-page"):
                 total_pages = int(last_page_el["data-page"])
                 logger.info(f"  [OK][OK][OK] FIREFOX УСПЕШНО! Получено количество страниц: {total_pages}")
+                if context is not None:
+                    context.setdefault("source", "selenium_firefox")
+                    context["total_pages"] = total_pages
+                    context.setdefault("html", driver.page_source)
                 return True
             else:
                 if len(driver.page_source) > 1000 and ("shop" in driver.page_source.lower() or "товар" in driver.page_source.lower()):
                     logger.info(f"  [OK] FIREFOX: Страница загружена")
+                    if context is not None:
+                        context.setdefault("source", "selenium_firefox")
+                        context.setdefault("html", driver.page_source)
                     return True
                 else:
                     logger.warning(f"  [ERROR] FIREFOX: Страница не загрузилась корректно")
@@ -721,7 +759,7 @@ class ProxyManager:
             if driver:
                 driver.quit()
     
-    def _validate_with_chrome(self, proxy: Dict, timeout: int) -> bool:
+    def _validate_with_chrome(self, proxy: Dict, timeout: int, context: Optional[Dict] = None) -> bool:
         """Проверка через Chrome/Chromium"""
         try:
             from selenium import webdriver
@@ -955,10 +993,17 @@ class ProxyManager:
                 if last_page_el and last_page_el.has_attr("data-page"):
                     total_pages = int(last_page_el["data-page"])
                     logger.info(f"  [OK][OK][OK] CHROME УСПЕШНО! Получено количество страниц: {total_pages}")
+                    if context is not None:
+                        context.setdefault("source", "selenium_chrome")
+                        context["total_pages"] = total_pages
+                        context.setdefault("html", driver.page_source)
                     return True
                 else:
                     if len(driver.page_source) > 1000 and ("shop" in driver.page_source.lower() or "товар" in driver.page_source.lower()):
                         logger.info(f"  [OK] CHROME: Страница загружена")
+                        if context is not None:
+                            context.setdefault("source", "selenium_chrome")
+                            context.setdefault("html", driver.page_source)
                         return True
                     else:
                         logger.warning(f"  [ERROR] CHROME: Страница не загрузилась корректно")
@@ -997,6 +1042,13 @@ class ProxyManager:
             logger.info(f"[OK] Базовая проверка пройдена! Внешний IP: {external_ip}")
             logger.info(f"[ШАГ 2] Теперь проверяем доступ к trast-zapchast.ru...")
             
+            validation_context = {
+                "total_pages": None,
+                "html": None,
+                "source": None,
+                "external_ip": external_ip,
+            }
+            
             # СНАЧАЛА пробуем Selenium (самый эффективный способ обхода Cloudflare)
             logger.info(f"  [ШАГ 2.1] Пробуем Selenium (наиболее эффективный обход Cloudflare)...")
             
@@ -1005,10 +1057,11 @@ class ProxyManager:
             use_chrome_first = protocol in ['http', 'https']  # Chrome только для HTTP/HTTPS
             
             selenium_result = False
+            selenium_context = {}
             if use_chrome_first:
                 try:
                     logger.info(f"  Пробуем Chrome/Chromium...")
-                    selenium_result = self.validate_proxy_for_trast_selenium(proxy, timeout=60, use_chrome=True)
+                    selenium_result, selenium_context = self.validate_proxy_for_trast_selenium(proxy, timeout=60, use_chrome=True)
                 except Exception as chrome_error:
                     logger.debug(f"  Chrome не доступен: {str(chrome_error)[:200]}")
                     selenium_result = False
@@ -1018,10 +1071,14 @@ class ProxyManager:
                     logger.info(f"  Chrome не сработал, пробуем Firefox...")
                 else:
                     logger.info(f"  Для {protocol.upper()} прокси используем Firefox (Chrome не рекомендуется для SOCKS)...")
-                selenium_result = self.validate_proxy_for_trast_selenium(proxy, timeout=60, use_chrome=False)
+                selenium_result, selenium_context = self.validate_proxy_for_trast_selenium(proxy, timeout=60, use_chrome=False)
             
             if selenium_result:
                 logger.info(f"  [OK][OK][OK] Прокси работает через Selenium! Количество страниц получено!")
+                if selenium_context:
+                    validation_context.update({k: v for k, v in selenium_context.items() if v is not None})
+                validation_context.setdefault("source", selenium_context.get("source", "selenium"))
+                self._store_validation_context(proxy, validation_context)
                 return True
             
             logger.info(f"  [ШАГ 2.2] Selenium не сработал, пробуем cloudscraper/requests...")
@@ -1058,6 +1115,10 @@ class ProxyManager:
                     
                     response = scraper.get(site_url, timeout=timeout)
                     logger.info(f"  [OK] cloudscraper успешно: HTTP {response.status_code}")
+                    validation_context.update({
+                        "source": "cloudscraper",
+                        "html": response.text
+                    })
                 except Exception as e:
                     logger.warning(f"  [WARNING]  Ошибка cloudscraper: {e}")
                     logger.debug(f"  Детали ошибки: {str(e)}")
@@ -1090,6 +1151,10 @@ class ProxyManager:
                     }
                     session.headers.update(headers)
                     response = session.get(site_url, timeout=timeout)
+                    validation_context.update({
+                        "source": "requests",
+                        "html": response.text
+                    })
             else:
                 # Обычный requests с заголовками (fallback если cloudscraper не установлен)
                 logger.warning(f"  [WARNING]  cloudscraper не установлен, используем requests с заголовками...")
@@ -1120,6 +1185,10 @@ class ProxyManager:
                 }
                 session.headers.update(headers)
                 response = session.get(site_url, timeout=timeout)
+                validation_context.update({
+                    "source": "requests",
+                    "html": response.text
+                })
             
             logger.debug(f"  HTTP статус: {response.status_code}")
             logger.debug(f"  Размер ответа: {len(response.text)} байт")
@@ -1158,6 +1227,8 @@ class ProxyManager:
                             total_pages = int(last_page_el["data-page"])
                             logger.info(f"  [OK] Прокси УСПЕШНО работает на trast-zapchast.ru!")
                             logger.info(f"  [OK] Получено количество страниц: {total_pages}")
+                            validation_context["total_pages"] = total_pages
+                            self._store_validation_context(proxy, validation_context)
                             return True
                         else:
                             # Страница загрузилась, но не нашли количество страниц
@@ -1165,6 +1236,7 @@ class ProxyManager:
                             if len(response_text) > 1000 and ("trast" in response_text or "запчаст" in response_text):
                                 logger.info(f"  [OK] Прокси УСПЕШНО работает! Страница shop загружена")
                                 logger.info(f"  [WARNING]  Не удалось определить количество страниц автоматически, но страница доступна")
+                                self._store_validation_context(proxy, validation_context)
                                 return True
                             else:
                                 logger.warning(f"  [ERROR] Страница загружена, но не похожа на shop каталог")
