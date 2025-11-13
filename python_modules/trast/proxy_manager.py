@@ -1282,7 +1282,7 @@ class ProxyManager:
             logger.debug(f"  Полный traceback:\n{traceback.format_exc()}")
             return False
     
-    def get_first_working_proxy(self, max_attempts=3000):
+    def get_first_working_proxy(self, max_attempts=None):
         """Находит первый рабочий прокси для быстрого старта. Сначала проверяет старые успешные прокси."""
         try:
             # Обновляем прокси если нужно
@@ -1357,10 +1357,18 @@ class ProxyManager:
                 protocol_stats[protocol] = protocol_stats.get(protocol, 0) + 1
             
             logger.info(f"Статистика новых прокси: {protocol_stats}")
-            logger.info(f"Проверяем первые {max_attempts} новых прокси из {len(available_proxies)} доступных")
             
-            for i, proxy in enumerate(available_proxies[:max_attempts]):
-                logger.info(f"Проверяем новый прокси {i+1}/{max_attempts}: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()})")
+            if max_attempts is not None:
+                limit = min(max_attempts, len(available_proxies))
+                proxies_to_check = available_proxies[:limit]
+            else:
+                proxies_to_check = available_proxies
+                limit = len(proxies_to_check)
+            
+            logger.info(f"Проверяем {limit} новых прокси (всего доступно: {len(available_proxies)})")
+            
+            for i, proxy in enumerate(proxies_to_check):
+                logger.info(f"Проверяем новый прокси {i+1}/{limit}: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()})")
                 
                 if self.validate_proxy_for_trast(proxy, timeout=30):
                     logger.info(f"Найден первый рабочий прокси: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()}) ({proxy.get('country', 'Unknown')})")
@@ -1371,14 +1379,14 @@ class ProxyManager:
                     logger.debug(f"Прокси {proxy['ip']}:{proxy['port']} не работает")
                     self.failed_proxies.add(f"{proxy['ip']}:{proxy['port']}")
             
-            logger.warning("Не удалось найти рабочий прокси")
+            logger.warning("Не удалось найти рабочий прокси в текущем списке")
             return None
             
         except Exception as e:
             logger.error(f"Ошибка при поиске первого прокси: {e}")
             return None
     
-    def get_next_working_proxy(self, start_from_index=0, max_attempts=50):
+    def get_next_working_proxy(self, start_from_index=0, max_attempts=None):
         """Получает следующий рабочий прокси начиная с определенного индекса. Сначала проверяет старые успешные."""
         try:
             # ШАГ 1: Сначала проверяем старые успешные прокси (если еще не проверяли в этом цикле)
@@ -1434,25 +1442,37 @@ class ProxyManager:
                 if proxy_key not in self.failed_proxies and proxy_key not in successful_keys:
                     available_proxies.append(proxy)
             
-            # Начинаем поиск с указанного индекса
-            proxies_to_check = available_proxies[start_from_index:start_from_index + max_attempts]
+            total_available = len(available_proxies)
+            if total_available == 0:
+                logger.warning("Нет доступных новых прокси для проверки")
+                return None, start_from_index
             
-            logger.info(f"Ищем следующий рабочий прокси (начиная с позиции {start_from_index})...")
+            if start_from_index >= total_available:
+                start_from_index = 0
             
-            for i, proxy in enumerate(proxies_to_check):
-                logger.info(f"Проверяем новый прокси {i+1}/{len(proxies_to_check)}: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()})")
+            if max_attempts is not None:
+                end_index = min(start_from_index + max_attempts, total_available)
+            else:
+                end_index = total_available
+            
+            proxies_to_check = available_proxies[start_from_index:end_index]
+            
+            logger.info(f"Ищем следующий рабочий прокси (позиции {start_from_index}..{end_index - 1}, всего {total_available})...")
+            
+            for offset, proxy in enumerate(proxies_to_check):
+                logger.info(f"Проверяем новый прокси {start_from_index + offset + 1}/{total_available}: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()})")
                 
                 if self.validate_proxy_for_trast(proxy, timeout=30):  # Проверяем ТОЛЬКО на trast-zapchast.ru
                     logger.info(f"Найден рабочий прокси: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()}) ({proxy.get('country', 'Unknown')})")
                     # Сохраняем в успешные
                     self.save_successful_proxy(proxy)
-                    return proxy, start_from_index + i + 1  # Возвращаем прокси и следующий индекс
+                    return proxy, start_from_index + offset + 1  # Возвращаем прокси и следующий индекс
                 else:
                     logger.debug(f"Прокси {proxy['ip']}:{proxy['port']} не работает")
                     self.failed_proxies.add(f"{proxy['ip']}:{proxy['port']}")
             
             logger.warning("Не удалось найти рабочий прокси в текущем диапазоне")
-            return None, start_from_index + max_attempts
+            return None, end_index
             
         except Exception as e:
             logger.error(f"Ошибка при поиске следующего прокси: {e}")

@@ -657,10 +657,10 @@ def get_driver_with_working_proxy(proxy_manager, start_from_index=0):
         try:
             if attempt == 0:
                 # Первая попытка - ищем первый рабочий прокси
-                proxy = proxy_manager.get_first_working_proxy(max_attempts=100)
+                proxy = proxy_manager.get_first_working_proxy()
             else:
                 # Последующие попытки - ищем следующий рабочий прокси
-                proxy, start_from_index = proxy_manager.get_next_working_proxy(start_from_index, max_attempts=50)
+                proxy, start_from_index = proxy_manager.get_next_working_proxy(start_from_index)
             
             if not proxy:
                 logger.error("Не удалось найти рабочий прокси")
