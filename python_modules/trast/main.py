@@ -1512,7 +1512,7 @@ def worker_thread(thread_id, page_queue, proxy_manager, total_pages, proxy_pool=
                                     except:
                                         pass
                                     # Создаем драйвер БЕЗ блокировки для параллельной работы
-                                    driver = create_driver(proxy, proxy_manager, use_chrome=(proxy.get('protocol', 'http').lower() in ['http', 'https']))
+                                        driver = create_driver(proxy, proxy_manager, use_chrome=(proxy.get('protocol', 'http').lower() in ['http', 'https']))
                                     if driver:
                                         logger.info(f"[{thread_name}] Новый прокси получен после таймаута")
                                 continue
@@ -1534,7 +1534,7 @@ def worker_thread(thread_id, page_queue, proxy_manager, total_pages, proxy_pool=
                             except:
                                 pass
                             # Создаем драйвер БЕЗ блокировки для параллельной работы
-                            driver = create_driver(proxy, proxy_manager, use_chrome=(proxy.get('protocol', 'http').lower() in ['http', 'https']))
+                                driver = create_driver(proxy, proxy_manager, use_chrome=(proxy.get('protocol', 'http').lower() in ['http', 'https']))
                             if driver:
                                 logger.info(f"[{thread_name}] Новый прокси получен, продолжаем")
                                 page_queue.task_done()
@@ -1591,7 +1591,7 @@ def worker_thread(thread_id, page_queue, proxy_manager, total_pages, proxy_pool=
                             except:
                                 pass
                             # Создаем драйвер БЕЗ блокировки для параллельной работы
-                            driver = create_driver(proxy, proxy_manager, use_chrome=(proxy.get('protocol', 'http').lower() in ['http', 'https']))
+                                driver = create_driver(proxy, proxy_manager, use_chrome=(proxy.get('protocol', 'http').lower() in ['http', 'https']))
                             if driver:
                                 logger.info(f"[{thread_name}] Новый прокси получен, продолжаем")
                                 page_queue.task_done()
@@ -1642,7 +1642,7 @@ def worker_thread(thread_id, page_queue, proxy_manager, total_pages, proxy_pool=
                             except:
                                 pass
                             # Создаем драйвер БЕЗ блокировки для параллельной работы
-                            driver = create_driver(proxy, proxy_manager, use_chrome=(proxy.get('protocol', 'http').lower() in ['http', 'https']))
+                                driver = create_driver(proxy, proxy_manager, use_chrome=(proxy.get('protocol', 'http').lower() in ['http', 'https']))
                             if driver:
                                 logger.info(f"[{thread_name}] Новый прокси получен после ошибки")
                     
@@ -1694,8 +1694,9 @@ def producer(proxy_manager):
     logger.info(f"[{thread_name}] Ищем 3 рабочих прокси в 3 потоках...")
     
     # Запускаем поиск прокси в отдельном потоке, чтобы не блокировать
-    # Используем список внутри proxy_manager для thread-safe доступа
+    # Используем shared list для немедленного обновления найденных прокси
     found_proxies_list = []
+    found_proxies_lock = threading.Lock()  # Отдельный lock для callback_list
     proxy_search_thread = None
     first_proxy_ready = threading.Event()
     
@@ -1703,10 +1704,21 @@ def producer(proxy_manager):
         """Фоновая функция поиска прокси"""
         nonlocal found_proxies_list
         try:
-            proxies = proxy_manager.get_working_proxies_parallel(count=3, max_attempts_per_thread=50)
-            # Thread-safe добавление в список
-            with proxy_manager.lock:
-                found_proxies_list.extend(proxies)
+            # Передаем callback_list, callback_event и callback_lock для немедленного обновления
+            proxies = proxy_manager.get_working_proxies_parallel(
+                count=3, 
+                max_attempts_per_thread=50,
+                callback_list=found_proxies_list,
+                callback_event=first_proxy_ready,
+                callback_lock=found_proxies_lock
+            )
+            # Дополнительно добавляем все найденные прокси (на случай если что-то пропустили)
+            with found_proxies_lock:
+                for proxy in proxies:
+                    proxy_key = f"{proxy['ip']}:{proxy['port']}"
+                    existing_keys = {f"{p['ip']}:{p['port']}" for p in found_proxies_list}
+                    if proxy_key not in existing_keys:
+                        found_proxies_list.append(proxy)
             if proxies:
                 logger.info(f"[{thread_name}] Многопоточный поиск завершен: найдено {len(proxies)} прокси")
                 first_proxy_ready.set()
@@ -1714,39 +1726,69 @@ def producer(proxy_manager):
                 logger.warning(f"[{thread_name}] Многопоточный поиск не нашел рабочих прокси")
         except Exception as e:
             logger.error(f"[{thread_name}] Ошибка в фоновом поиске прокси: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
     
     # Запускаем поиск прокси в фоне
     proxy_search_thread = threading.Thread(target=search_proxies_background, daemon=False, name="ProxySearch-Background")
     proxy_search_thread.start()
     logger.info(f"[{thread_name}] Фоновый поиск прокси запущен")
     
-    # Ждем первого прокси (с таймаутом)
+    # Ждем первого прокси (с увеличенным таймаутом и улучшенной проверкой)
     logger.info(f"[{thread_name}] Ожидаем первый рабочий прокси...")
-    wait_timeout = 300  # 5 минут максимум
+    wait_timeout = 600  # 10 минут максимум (увеличено с 5 минут)
     start_wait = time.time()
+    last_log_time = start_wait
+    log_interval = 30  # Логируем прогресс каждые 30 секунд
     
     # Периодически проверяем, найден ли первый прокси
     while not first_proxy_ready.is_set() and (time.time() - start_wait) < wait_timeout:
         time.sleep(1)
+        
         # Проверяем, есть ли уже найденные прокси (thread-safe)
-        with proxy_manager.lock:
-            if found_proxies_list:
+        current_count = 0
+        with found_proxies_lock:
+            current_count = len(found_proxies_list)
+            if current_count > 0:
                 first_proxy_ready.set()
+                logger.info(f"[{thread_name}] [OK] Найден первый прокси через callback_list! (всего найдено: {current_count})")
                 break
+        
+        # Логируем прогресс каждые 30 секунд
+        current_time = time.time()
+        if current_time - last_log_time >= log_interval:
+            elapsed = int(current_time - start_wait)
+            remaining = int(wait_timeout - elapsed)
+            logger.info(f"[{thread_name}] Ожидание прокси... (прошло: {elapsed}с, осталось: {remaining}с, найдено: {current_count})")
+            last_log_time = current_time
     
     # Получаем найденные прокси (thread-safe)
-    with proxy_manager.lock:
+    with found_proxies_lock:
         found_proxies = found_proxies_list.copy()
     
     if not found_proxies:
-        logger.error(f"[{thread_name}] Не удалось найти рабочий прокси за {wait_timeout} секунд")
-        # Ждем завершения фонового потока
-        if proxy_search_thread:
-            proxy_search_thread.join(timeout=10)
-        return 0, {"pages_checked": 0, "proxy_switches": 0, "cloudflare_blocks": 0, "max_empty_streak": 0}
+        elapsed = int(time.time() - start_wait)
+        logger.error(f"[{thread_name}] Не удалось найти рабочий прокси за {elapsed} секунд (таймаут: {wait_timeout}с)")
+        # Ждем завершения фонового потока еще немного
+        if proxy_search_thread and proxy_search_thread.is_alive():
+            logger.info(f"[{thread_name}] Ждем завершения фонового поиска прокси...")
+            proxy_search_thread.join(timeout=30)
+            # Проверяем еще раз после ожидания
+            with found_proxies_lock:
+                found_proxies = found_proxies_list.copy()
+            if found_proxies:
+                logger.info(f"[{thread_name}] [OK] Прокси найдены после ожидания завершения потока: {len(found_proxies)}")
+            else:
+                return 0, {"pages_checked": 0, "proxy_switches": 0, "cloudflare_blocks": 0, "max_empty_streak": 0}
+        else:
+            return 0, {"pages_checked": 0, "proxy_switches": 0, "cloudflare_blocks": 0, "max_empty_streak": 0}
     
     logger.info(f"[{thread_name}] [OK] Найден первый рабочий прокси: {found_proxies[0]['ip']}:{found_proxies[0]['port']}")
     logger.info(f"[{thread_name}] Всего найдено прокси: {len(found_proxies)} (поиск продолжается в фоне)")
+    
+    # Логируем все найденные прокси
+    for i, p in enumerate(found_proxies):
+        logger.info(f"[{thread_name}]   Прокси {i+1}: {p['ip']}:{p['port']} ({p.get('protocol', 'http').upper()}) ({p.get('country', 'Unknown')})")
     
     # Получаем драйвер с первым найденным прокси для получения total_pages
     proxy = found_proxies[0]
@@ -1881,14 +1923,14 @@ def producer(proxy_manager):
             # Ждем завершения поиска прокси или используем уже найденные
             if proxy_search_thread and proxy_search_thread.is_alive():
                 # Получаем текущий список (thread-safe)
-                with proxy_manager.lock:
+                with found_proxies_lock:
                     current_count = len(found_proxies_list)
                 logger.info(f"[{thread_name}] Ожидаем завершения поиска прокси (найдено: {current_count})...")
                 # Ждем максимум 60 секунд для завершения поиска
                 proxy_search_thread.join(timeout=60)
             
             # Обновляем список найденных прокси (thread-safe)
-            with proxy_manager.lock:
+            with found_proxies_lock:
                 current_found_proxies = found_proxies_list.copy()
             
             logger.info(f"[{thread_name}] Пул прокси для парсинга: {len(current_found_proxies)} прокси")

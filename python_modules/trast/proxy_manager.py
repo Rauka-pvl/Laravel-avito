@@ -1724,8 +1724,19 @@ class ProxyManager:
                 self.thread_proxies[thread_id] = proxy
         return proxy
     
-    def _proxy_search_worker(self, thread_id, proxy_queue, found_proxies, stop_event, stats):
-        """Worker функция для многопоточного поиска прокси"""
+    def _proxy_search_worker(self, thread_id, proxy_queue, found_proxies, stop_event, stats, callback_list=None, callback_event=None, callback_lock=None):
+        """Worker функция для многопоточного поиска прокси
+        
+        Args:
+            thread_id: ID потока
+            proxy_queue: Очередь прокси для проверки
+            found_proxies: Список найденных прокси (локальный для этой функции)
+            stop_event: Event для остановки поиска
+            stats: Статистика поиска
+            callback_list: Опциональный shared list для немедленного обновления (для MainThread)
+            callback_event: Опциональный Event для сигнализации о найденном прокси
+            callback_lock: Опциональный Lock для thread-safe доступа к callback_list
+        """
         thread_name = f"ProxySearch-{thread_id}"
         checked_count = 0
         failed_count = 0
@@ -1757,6 +1768,22 @@ class ProxyManager:
                     with self.lock:
                         found_proxies.append(proxy)
                         stats['found'] += 1
+                        
+                        # НЕМЕДЛЕННО добавляем в callback_list для MainThread (если передан)
+                        if callback_list is not None:
+                            # Используем callback_lock если передан, иначе self.lock
+                            lock_to_use = callback_lock if callback_lock is not None else self.lock
+                            with lock_to_use:
+                                # Проверяем, нет ли уже такого прокси в callback_list
+                                proxy_key_check = f"{proxy['ip']}:{proxy['port']}"
+                                existing_keys = {f"{p['ip']}:{p['port']}" for p in callback_list}
+                                if proxy_key_check not in existing_keys:
+                                    callback_list.append(proxy)
+                                    logger.info(f"[{thread_name}] Прокси немедленно добавлен в callback_list для MainThread (всего в callback: {len(callback_list)})")
+                                    
+                                    # Сигнализируем через Event о найденном прокси
+                                    if callback_event is not None:
+                                        callback_event.set()
                     
                     logger.info(f"[{thread_name}] Прокси добавлен в пул найденных (всего найдено: {len(found_proxies)})")
                     
@@ -1793,12 +1820,15 @@ class ProxyManager:
         
         logger.info(f"[{thread_name}] Поток поиска прокси завершен (проверено: {checked_count}, неуспешных: {failed_count})")
     
-    def get_working_proxies_parallel(self, count=3, max_attempts_per_thread=None):
+    def get_working_proxies_parallel(self, count=3, max_attempts_per_thread=None, callback_list=None, callback_event=None, callback_lock=None):
         """Находит несколько рабочих прокси параллельно в 3 потоках
         
         Args:
             count: Количество прокси для поиска (по умолчанию 3)
             max_attempts_per_thread: Максимум попыток на поток (None = без ограничений)
+            callback_list: Опциональный shared list для немедленного обновления найденных прокси
+            callback_event: Опциональный Event для сигнализации о найденном прокси
+            callback_lock: Опциональный Lock для thread-safe доступа к callback_list
         
         Returns:
             List[Dict]: Список найденных рабочих прокси (до count штук)
@@ -1840,6 +1870,21 @@ class ProxyManager:
                                     break
                         logger.info(f"[OK] Старый успешный прокси работает: {proxy_key}")
                         found_proxies.append(proxy)
+                        
+                        # НЕМЕДЛЕННО добавляем в callback_list для MainThread (если передан)
+                        if callback_list is not None:
+                            # Используем callback_lock если передан, иначе self.lock
+                            lock_to_use = callback_lock if callback_lock is not None else self.lock
+                            with lock_to_use:
+                                proxy_key_check = f"{proxy['ip']}:{proxy['port']}"
+                                existing_keys = {f"{p['ip']}:{p['port']}" for p in callback_list}
+                                if proxy_key_check not in existing_keys:
+                                    callback_list.append(proxy)
+                                    logger.info(f"Старый прокси немедленно добавлен в callback_list для MainThread (всего в callback: {len(callback_list)})")
+                                    
+                                    # Сигнализируем через Event о найденном прокси
+                                    if callback_event is not None:
+                                        callback_event.set()
                     else:
                         self.remove_failed_successful_proxy(proxy)
                         logger.warning(f"Старый прокси {proxy_key} перестал работать, удален из списка")
@@ -1909,7 +1954,7 @@ class ProxyManager:
             for thread_id in range(3):
                 thread = threading.Thread(
                     target=self._proxy_search_worker,
-                    args=(thread_id, proxy_queue, found_proxies, stop_event, stats),
+                    args=(thread_id, proxy_queue, found_proxies, stop_event, stats, callback_list, callback_event, callback_lock),
                     daemon=False,
                     name=f"ProxySearch-{thread_id}"
                 )
