@@ -248,6 +248,16 @@ def is_page_empty(soup, page_source, products_count=0):
             "reason": None
         }
 
+def is_tab_crashed_error(error):
+    """Проверяет, является ли ошибка связанной с крашем вкладки Chrome"""
+    error_msg = str(error).lower()
+    return (
+        "tab crashed" in error_msg or
+        "session deleted" in error_msg or
+        "target frame detached" in error_msg or
+        "no such session" in error_msg
+    )
+
 def reload_page_if_needed(driver, page_url, max_retries=1):
     """
     Перезагружает страницу если нужно (при частичной загрузке).
@@ -288,6 +298,13 @@ def reload_page_if_needed(driver, page_url, max_retries=1):
             
         except Exception as e:
             error_msg = str(e).lower()
+            
+            # Проверяем, является ли ошибка связанной с крашем вкладки
+            if is_tab_crashed_error(e):
+                logger.error(f"[TAB CRASH] Обнаружен краш вкладки при перезагрузке страницы (попытка {attempt + 1}): {e}")
+                # Возвращаем специальный результат, чтобы вызвавший код мог обработать это
+                raise e  # Пробрасываем ошибку, чтобы вызвавший код мог пересоздать драйвер
+            
             # Проверяем, является ли ошибка связанной с прокси
             is_proxy_error = (
                 "proxyconnectfailure" in error_msg or
@@ -1495,10 +1512,48 @@ def worker_thread(thread_id, page_queue, proxy_manager, total_pages, proxy_pool=
                     except TimeoutException:
                         logger.warning(f"[{thread_name}] Таймаут при загрузке страницы {page_num}")
                         # Пробуем перезагрузить
-                        soup, products_count = reload_page_if_needed(driver, page_url, max_retries=1)
+                        try:
+                            soup, products_count = reload_page_if_needed(driver, page_url, max_retries=1)
+                        except Exception as reload_error:
+                            # Проверяем, не краш ли это вкладки
+                            if is_tab_crashed_error(reload_error):
+                                logger.error(f"[{thread_name}] [TAB CRASH] Краш вкладки при перезагрузке после таймаута, пересоздаем драйвер...")
+                                try:
+                                    driver.quit()
+                                except:
+                                    pass
+                                proxy = proxy_manager.get_proxy_for_thread(thread_id)
+                                if proxy:
+                                    driver = create_driver(proxy, proxy_manager, use_chrome=(proxy.get('protocol', 'http').lower() in ['http', 'https']))
+                                    if driver:
+                                        logger.info(f"[{thread_name}] [TAB CRASH] Драйвер пересоздан после таймаута")
+                                        continue
+                                page_queue.task_done()
+                                continue
+                            else:
+                                # Другая ошибка - пробрасываем дальше
+                                raise reload_error
+                        
                         if products_count == 0:
                             # Проверяем на блокировку
-                            page_source = driver.page_source if hasattr(driver, 'page_source') else ""
+                            try:
+                                page_source = driver.page_source if hasattr(driver, 'page_source') else ""
+                            except Exception:
+                                # Если не можем получить page_source, возможно драйвер сломан
+                                logger.warning(f"[{thread_name}] Не удалось получить page_source после таймаута, пересоздаем драйвер...")
+                                try:
+                                    driver.quit()
+                                except:
+                                    pass
+                                proxy = proxy_manager.get_proxy_for_thread(thread_id)
+                                if proxy:
+                                    driver = create_driver(proxy, proxy_manager, use_chrome=(proxy.get('protocol', 'http').lower() in ['http', 'https']))
+                                    if driver:
+                                        logger.info(f"[{thread_name}] Драйвер пересоздан после ошибки получения page_source")
+                                        continue
+                                page_queue.task_done()
+                                continue
+                            
                             block_check = is_page_blocked(soup, page_source)
                             if block_check["blocked"]:
                                 logger.warning(f"[{thread_name}] Page {page_num}: blocked after timeout")
@@ -1520,7 +1575,27 @@ def worker_thread(thread_id, page_queue, proxy_manager, total_pages, proxy_pool=
                     page_load_time = time.time() - page_load_start
                     
                     # Проверяем на блокировку
-                    page_source = driver.page_source
+                    try:
+                        page_source = driver.page_source
+                    except Exception as page_source_error:
+                        # Если не можем получить page_source, возможно драйвер сломан (краш вкладки)
+                        if is_tab_crashed_error(page_source_error):
+                            logger.error(f"[{thread_name}] [TAB CRASH] Краш вкладки при получении page_source, пересоздаем драйвер...")
+                        else:
+                            logger.warning(f"[{thread_name}] Ошибка при получении page_source: {page_source_error}, пересоздаем драйвер...")
+                        try:
+                            driver.quit()
+                        except:
+                            pass
+                        proxy = proxy_manager.get_proxy_for_thread(thread_id)
+                        if proxy:
+                            driver = create_driver(proxy, proxy_manager, use_chrome=(proxy.get('protocol', 'http').lower() in ['http', 'https']))
+                            if driver:
+                                logger.info(f"[{thread_name}] Драйвер пересоздан после ошибки получения page_source")
+                                continue
+                        page_queue.task_done()
+                        continue
+                    
                     soup = BeautifulSoup(page_source, "html.parser")
                     block_check = is_page_blocked(soup, page_source)
                     
@@ -1570,7 +1645,28 @@ def worker_thread(thread_id, page_queue, proxy_manager, total_pages, proxy_pool=
                     elif page_status["status"] == "partial":
                         # Частичная загрузка - пробуем перезагрузить
                         logger.warning(f"[{thread_name}] Page {page_num}: partial → retrying")
-                        soup, products_count = reload_page_if_needed(driver, page_url, max_retries=1)
+                        try:
+                            soup, products_count = reload_page_if_needed(driver, page_url, max_retries=1)
+                        except Exception as reload_error:
+                            # Проверяем, не краш ли это вкладки
+                            if is_tab_crashed_error(reload_error):
+                                logger.error(f"[{thread_name}] [TAB CRASH] Краш вкладки при перезагрузке частичной страницы, пересоздаем драйвер...")
+                                try:
+                                    driver.quit()
+                                except:
+                                    pass
+                                proxy = proxy_manager.get_proxy_for_thread(thread_id)
+                                if proxy:
+                                    driver = create_driver(proxy, proxy_manager, use_chrome=(proxy.get('protocol', 'http').lower() in ['http', 'https']))
+                                    if driver:
+                                        logger.info(f"[{thread_name}] [TAB CRASH] Драйвер пересоздан после частичной загрузки")
+                                        continue
+                                page_queue.task_done()
+                                continue
+                            else:
+                                # Другая ошибка - пробрасываем дальше
+                                raise reload_error
+                        
                         products = get_products_from_page_soup(soup)
                         if products:
                             local_buffer.extend(products)
@@ -1607,6 +1703,31 @@ def worker_thread(thread_id, page_queue, proxy_manager, total_pages, proxy_pool=
                     error_msg = str(e).lower()
                     logger.error(f"[{thread_name}] Ошибка при парсинге страницы {page_num}: {e}")
                     
+                    # Проверяем на краш вкладки - это критическая ошибка, требующая пересоздания драйвера
+                    if is_tab_crashed_error(e):
+                        logger.error(f"[{thread_name}] [TAB CRASH] Обнаружен краш вкладки на странице {page_num}, пересоздаем драйвер...")
+                        try:
+                            driver.quit()
+                        except:
+                            pass
+                        
+                        # Получаем новый прокси и пересоздаем драйвер
+                        proxy = proxy_manager.get_proxy_for_thread(thread_id)
+                        if proxy:
+                            driver = create_driver(proxy, proxy_manager, use_chrome=(proxy.get('protocol', 'http').lower() in ['http', 'https']))
+                            if driver:
+                                logger.info(f"[{thread_name}] [TAB CRASH] Драйвер пересоздан, продолжаем со страницы {page_num}")
+                                # Не помечаем страницу как обработанную, чтобы попробовать снова
+                                continue
+                            else:
+                                logger.error(f"[{thread_name}] [TAB CRASH] Не удалось пересоздать драйвер")
+                                page_queue.task_done()
+                                continue
+                        else:
+                            logger.error(f"[{thread_name}] [TAB CRASH] Не удалось получить прокси для пересоздания драйвера")
+                            page_queue.task_done()
+                            continue
+                    
                     # Проверяем на ошибку прокси
                     is_proxy_error = (
                         "proxyconnectfailure" in error_msg or
@@ -1631,6 +1752,19 @@ def worker_thread(thread_id, page_queue, proxy_manager, total_pages, proxy_pool=
                                 pages_parsed += 1
                                 continue
                         except Exception as retry_error:
+                            # Проверяем, не краш ли это вкладки при retry
+                            if is_tab_crashed_error(retry_error):
+                                logger.error(f"[{thread_name}] [TAB CRASH] Краш вкладки при retry, пересоздаем драйвер...")
+                                try:
+                                    driver.quit()
+                                except:
+                                    pass
+                                proxy = proxy_manager.get_proxy_for_thread(thread_id)
+                                if proxy:
+                                    driver = create_driver(proxy, proxy_manager, use_chrome=(proxy.get('protocol', 'http').lower() in ['http', 'https']))
+                                    if driver:
+                                        logger.info(f"[{thread_name}] [TAB CRASH] Драйвер пересоздан после retry")
+                                        continue
                             logger.warning(f"[{thread_name}] Retry failed: {retry_error}")
                         
                         # Если retry не помог - получаем новый прокси
@@ -2182,6 +2316,20 @@ def producer(proxy_manager):
                         time.sleep(random.uniform(2, 4))
                         continue
                 except Exception as retry_error:
+                    # Проверяем, не краш ли это вкладки при retry после таймаута
+                    if is_tab_crashed_error(retry_error):
+                        logger.error(f"[TAB CRASH] Краш вкладки при retry после таймаута на странице {current_page}, пересоздаем драйвер...")
+                        try:
+                            driver.quit()
+                        except:
+                            pass
+                        errored_page = current_page
+                        logger.info(f"Ищем новый рабочий прокси для продолжения парсинга со страницы {errored_page}...")
+                        driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
+                        proxy_switch_count += 1
+                        proxy_switch_times.append(time.time())
+                        logger.info(f"[OK] [TAB CRASH] Новый прокси найден, драйвер пересоздан после таймаута, продолжаем парсинг со страницы {errored_page}")
+                        continue
                     logger.warning(f"[WARNING] Повторная попытка страницы {current_page} после таймаута не удалась: {retry_error}")
                 
                 # Если повторная попытка не удалась - проверяем на блокировку и меняем прокси
@@ -2193,7 +2341,21 @@ def producer(proxy_manager):
                     if block_check["blocked"]:
                         logger.warning(f"[BLOCKED] Page {errored_page}: блокировка после таймаута → switching proxy")
                         cloudflare_block_count += 1
-                except:
+                except Exception as page_source_error:
+                    # Если не можем получить page_source, возможно драйвер сломан (краш вкладки)
+                    if is_tab_crashed_error(page_source_error):
+                        logger.error(f"[TAB CRASH] Краш вкладки при получении page_source после таймаута, пересоздаем драйвер...")
+                        try:
+                            driver.quit()
+                        except:
+                            pass
+                        logger.info(f"Ищем новый рабочий прокси для продолжения парсинга со страницы {errored_page}...")
+                        driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
+                        proxy_switch_count += 1
+                        proxy_switch_times.append(time.time())
+                        logger.info(f"[OK] [TAB CRASH] Новый прокси найден, драйвер пересоздан, продолжаем парсинг со страницы {errored_page}")
+                        continue
+                    # Другая ошибка - просто логируем
                     pass
                 
                 # Проверяем защиту от бесконечной смены прокси
@@ -2216,6 +2378,23 @@ def producer(proxy_manager):
             except Exception as e:
                 error_msg = str(e).lower()
                 error_type = type(e).__name__
+                
+                # Проверяем на краш вкладки - это критическая ошибка, требующая пересоздания драйвера
+                if is_tab_crashed_error(e):
+                    logger.error(f"[TAB CRASH] Обнаружен краш вкладки на странице {current_page}, пересоздаем драйвер...")
+                    try:
+                        driver.quit()
+                    except:
+                        pass
+                    
+                    # Ищем новый прокси и пересоздаем драйвер
+                    errored_page = current_page
+                    logger.info(f"Ищем новый рабочий прокси для продолжения парсинга со страницы {errored_page}...")
+                    driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
+                    proxy_switch_count += 1
+                    proxy_switch_times.append(time.time())
+                    logger.info(f"[OK] [TAB CRASH] Новый прокси найден, драйвер пересоздан, продолжаем парсинг со страницы {errored_page}")
+                    continue
                 
                 # Проверяем, является ли ошибка связанной с прокси (прокси отказал в соединении)
                 is_proxy_error = (
@@ -2247,6 +2426,21 @@ def producer(proxy_manager):
                         time.sleep(random.uniform(2, 4))
                         retry_success = True
                 except Exception as retry_error:
+                    # Проверяем, не краш ли это вкладки при retry
+                    if is_tab_crashed_error(retry_error):
+                        logger.error(f"[TAB CRASH] Краш вкладки при retry на странице {current_page}, пересоздаем драйвер...")
+                        try:
+                            driver.quit()
+                        except:
+                            pass
+                        errored_page = current_page
+                        logger.info(f"Ищем новый рабочий прокси для продолжения парсинга со страницы {errored_page}...")
+                        driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
+                        proxy_switch_count += 1
+                        proxy_switch_times.append(time.time())
+                        logger.info(f"[OK] [TAB CRASH] Новый прокси найден, драйвер пересоздан после retry, продолжаем парсинг со страницы {errored_page}")
+                        continue
+                    
                     retry_error_msg = str(retry_error).lower()
                     retry_is_proxy_error = (
                         "proxyconnectfailure" in retry_error_msg or
