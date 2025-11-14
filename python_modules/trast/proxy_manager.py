@@ -854,7 +854,7 @@ class ProxyManager:
             
             for test_url in test_urls:
                 try:
-                    logger.info(f"   Тестируем через {test_url}...")
+                    logger.debug(f"   Тестируем через {test_url}...")
                     response = requests.get(test_url, proxies=proxies, timeout=timeout, verify=False)
                     if response.status_code == 200:
                         working_url = test_url
@@ -875,7 +875,7 @@ class ProxyManager:
                     logger.debug(f"   Не удалось подключиться через {test_url}: {e}")
                     continue
             
-            logger.warning(f"   [ERROR] Прокси НЕ РАБОТАЕТ (не смог подключиться к тестовым сервисам)")
+            logger.debug(f"   Прокси НЕ РАБОТАЕТ (не смог подключиться к тестовым сервисам)")
             return False, {}
             
         except Exception as e:
@@ -1468,22 +1468,20 @@ class ProxyManager:
             ip = proxy['ip']
             port = proxy['port']
             
-            logger.info(f"Проверяем прокси {ip}:{port} ({protocol.upper()})")
-            logger.info(f"=" * 60)
+            logger.debug(f"Проверяем прокси {ip}:{port} ({protocol.upper()})")
             
             # ШАГ 1: Базовая проверка работоспособности прокси
             is_basic_working, proxy_info = self.validate_proxy_basic(proxy, timeout=10)
             
             if not is_basic_working:
-                logger.warning(f"[ERROR] Прокси {ip}:{port} не прошел базовую проверку - пропускаем проверку trast-zapchast.ru")
+                logger.debug(f"Прокси {ip}:{port} не прошел базовую проверку")
                 return False
             
             # Получаем proxies из базовой проверки
             proxies = proxy_info['proxies']
             external_ip = proxy_info.get('external_ip', 'Unknown')
             
-            logger.info(f"[OK] Базовая проверка пройдена! Внешний IP: {external_ip}")
-            logger.info(f"[ШАГ 2] Теперь проверяем доступ к trast-zapchast.ru...")
+            logger.debug(f"Базовая проверка пройдена! Внешний IP: {external_ip}, проверяем доступ к trast-zapchast.ru...")
             
             validation_context = {
                 "total_pages": None,
@@ -1503,7 +1501,7 @@ class ProxyManager:
             selenium_context = {}
             if use_chrome_first:
                 try:
-                    logger.info(f"  Пробуем Chrome/Chromium...")
+                    logger.debug(f"  Пробуем Chrome/Chromium...")
                     selenium_result, selenium_context = self.validate_proxy_for_trast_selenium(proxy, timeout=60, use_chrome=True)
                 except Exception as chrome_error:
                     logger.debug(f"  Chrome не доступен: {str(chrome_error)[:200]}")
@@ -1511,30 +1509,29 @@ class ProxyManager:
             
             if not selenium_result:
                 if use_chrome_first:
-                    logger.info(f"  Chrome не сработал, пробуем Firefox...")
+                    logger.debug(f"  Chrome не сработал, пробуем Firefox...")
                 else:
-                    logger.info(f"  Для {protocol.upper()} прокси используем Firefox (Chrome не рекомендуется для SOCKS)...")
+                    logger.debug(f"  Для {protocol.upper()} прокси используем Firefox (Chrome не рекомендуется для SOCKS)...")
                 selenium_result, selenium_context = self.validate_proxy_for_trast_selenium(proxy, timeout=60, use_chrome=False)
             
             if selenium_result:
-                logger.info(f"  [OK][OK][OK] Прокси работает через Selenium! Количество страниц получено!")
+                logger.info(f"[SUCCESS] Прокси {ip}:{port} работает через Selenium! Внешний IP: {external_ip}, количество страниц получено!")
                 if selenium_context:
                     validation_context.update({k: v for k, v in selenium_context.items() if v is not None})
                 validation_context.setdefault("source", selenium_context.get("source", "selenium"))
                 self._store_validation_context(proxy, validation_context)
                 return True
             
-            logger.info(f"  [ШАГ 2.2] Selenium не сработал, пробуем cloudscraper/requests...")
+            logger.debug(f"  Selenium не сработал, пробуем cloudscraper/requests...")
             
             # Проверяем доступ к странице shop и пытаемся получить количество страниц
             site_url = "https://trast-zapchast.ru/shop/"
             
-            logger.info(f"Отправляем запрос к {site_url} через прокси {ip}:{port}...")
-            logger.info(f"  Цель: получить количество страниц каталога")
+            logger.debug(f"Отправляем запрос к {site_url} через прокси {ip}:{port}...")
             
             # Используем cloudscraper для обхода Cloudflare (приоритет)
             if HAS_CLOUDSCRAPER:
-                logger.info(f"  Используем cloudscraper для обхода Cloudflare...")
+                logger.debug(f"  Используем cloudscraper для обхода Cloudflare...")
                 try:
                     import ssl
                     import urllib3
@@ -1557,15 +1554,14 @@ class ProxyManager:
                     scraper.verify = False
                     
                     response = scraper.get(site_url, timeout=timeout)
-                    logger.info(f"  [OK] cloudscraper успешно: HTTP {response.status_code}")
+                    logger.debug(f"  cloudscraper успешно: HTTP {response.status_code}")
                     validation_context.update({
                         "source": "cloudscraper",
                         "html": response.text
                     })
                 except Exception as e:
-                    logger.warning(f"  [WARNING]  Ошибка cloudscraper: {e}")
-                    logger.debug(f"  Детали ошибки: {str(e)}")
-                    logger.info(f"  Пробуем обычный requests...")
+                    logger.debug(f"  Ошибка cloudscraper: {e}")
+                    logger.debug(f"  Пробуем обычный requests...")
                     # Fallback на обычный requests
                     session = requests.Session()
                     session.proxies.update(proxies)
@@ -1649,61 +1645,50 @@ class ProxyManager:
                 )
                 
                 if analysis["is_blocked"]:
-                    logger.warning("  [ERROR] Ответ содержит признаки блокировки/заглушки — прокси отклонён")
-                    logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
+                    logger.debug("  Ответ содержит признаки блокировки/заглушки — прокси отклонён")
                     validation_context["block_reason"] = "blocked_html"
                     return False
                 
                 if analysis["total_pages"]:
-                    logger.info(f"  [OK] Прокси УСПЕШНО работает на trast-zapchast.ru! Получено количество страниц: {analysis['total_pages']}")
+                    logger.info(f"[SUCCESS] Прокси {ip}:{port} работает на trast-zapchast.ru! Внешний IP: {external_ip}, количество страниц: {analysis['total_pages']}")
                     validation_context["total_pages"] = analysis["total_pages"]
                     self._store_validation_context(proxy, validation_context)
                     return True
                 
                 if analysis["has_products"] or analysis["has_pagination"]:
-                    logger.info("  [OK] Прокси УСПЕШНО работает! Страница каталога загружена, но количество страниц не определено")
+                    logger.info(f"[SUCCESS] Прокси {ip}:{port} работает! Внешний IP: {external_ip}, страница каталога загружена (количество страниц не определено)")
                     validation_context.setdefault("total_pages", None)
                     self._store_validation_context(proxy, validation_context)
                     return True
                 
-                logger.warning("  [ERROR] Ответ не похож на страницу каталога Trast")
-                logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
+                logger.debug("  Ответ не похож на страницу каталога Trast")
                 validation_context["block_reason"] = "not_catalog"
                 return False
                         
             elif response.status_code == 403:
-                logger.warning(f"  [ERROR] Прокси заблокирован (HTTP 403)")
-                logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
+                logger.debug(f"  Прокси заблокирован (HTTP 403)")
                 return False
             elif response.status_code == 429:
-                logger.warning(f"  [ERROR] Rate Limit (HTTP 429)")
-                logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
+                logger.debug(f"  Rate Limit (HTTP 429)")
                 return False
             else:
-                logger.warning(f"  [ERROR] HTTP статус {response.status_code}")
-                logger.debug(f"  Первые 500 символов ответа: {response.text[:500]}")
+                logger.debug(f"  HTTP статус {response.status_code}")
                 return False
                 
         except requests.exceptions.ConnectTimeout:
-            logger.warning(f"  [ERROR] Таймаут подключения (прокси не отвечает)")
+            logger.debug(f"  Таймаут подключения (прокси не отвечает)")
             return False
         except requests.exceptions.ReadTimeout:
-            logger.warning(f"  [ERROR] Таймаут чтения (прокси медленно отвечает)")
+            logger.debug(f"  Таймаут чтения (прокси медленно отвечает)")
             return False
         except requests.exceptions.ConnectionError as e:
-            import traceback
-            logger.warning(f"  [ERROR] Ошибка подключения: {str(e)}")
-            logger.debug(f"  Traceback:\n{traceback.format_exc()}")
+            logger.debug(f"  Ошибка подключения: {str(e)[:200]}")
             return False
         except requests.exceptions.ProxyError as e:
-            import traceback
-            logger.warning(f"  [ERROR] Ошибка прокси: {str(e)}")
-            logger.debug(f"  Traceback:\n{traceback.format_exc()}")
+            logger.debug(f"  Ошибка прокси: {str(e)[:200]}")
             return False
         except Exception as e:
-            import traceback
-            logger.error(f"  [ERROR] Неизвестная ошибка: {str(e)}")
-            logger.debug(f"  Полный traceback:\n{traceback.format_exc()}")
+            logger.debug(f"  Неожиданная ошибка при проверке прокси: {str(e)[:200]}")
             return False
     
     def get_first_working_proxy(self, max_attempts=None):
@@ -1791,19 +1776,24 @@ class ProxyManager:
             
             logger.info(f"Проверяем {limit} новых прокси (всего доступно: {len(available_proxies)})")
             
+            failed_count = 0
+            stats_interval = 20  # Выводим статистику каждые 20 прокси
+            
             for i, proxy in enumerate(proxies_to_check):
-                logger.info(f"Проверяем новый прокси {i+1}/{limit}: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()})")
-                
                 if self.validate_proxy_for_trast(proxy, timeout=30):
-                    logger.info(f"Найден первый рабочий прокси: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()}) ({proxy.get('country', 'Unknown')})")
+                    logger.info(f"[SUCCESS] Найден первый рабочий прокси: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()}) ({proxy.get('country', 'Unknown')}) (проверено: {i+1}, неуспешных: {failed_count})")
                     # Сохраняем в успешные
                     self.save_successful_proxy(proxy)
                     return proxy
                 else:
-                    logger.debug(f"Прокси {proxy['ip']}:{proxy['port']} не работает")
+                    failed_count += 1
                     self.failed_proxies.add(f"{proxy['ip']}:{proxy['port']}")
+                    
+                    # Выводим статистику каждые N прокси
+                    if (i + 1) % stats_interval == 0:
+                        logger.info(f"Проверено {i+1}/{limit} прокси: успешных 0, неуспешных {failed_count}")
             
-            logger.warning("Не удалось найти рабочий прокси в текущем списке")
+            logger.warning(f"Не удалось найти рабочий прокси в текущем списке (проверено: {limit}, неуспешных: {failed_count})")
             return None
             
         except Exception as e:
@@ -1883,19 +1873,24 @@ class ProxyManager:
             
             logger.info(f"Ищем следующий рабочий прокси (позиции {start_from_index}..{end_index - 1}, всего {total_available})...")
             
+            failed_count = 0
+            stats_interval = 20  # Выводим статистику каждые 20 прокси
+            
             for offset, proxy in enumerate(proxies_to_check):
-                logger.info(f"Проверяем новый прокси {start_from_index + offset + 1}/{total_available}: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()})")
-                
                 if self.validate_proxy_for_trast(proxy, timeout=30):  # Проверяем ТОЛЬКО на trast-zapchast.ru
-                    logger.info(f"Найден рабочий прокси: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()}) ({proxy.get('country', 'Unknown')})")
+                    logger.info(f"[SUCCESS] Найден рабочий прокси: {proxy['ip']}:{proxy['port']} ({proxy.get('protocol', 'http').upper()}) ({proxy.get('country', 'Unknown')}) (проверено: {offset+1}, неуспешных: {failed_count})")
                     # Сохраняем в успешные
                     self.save_successful_proxy(proxy)
                     return proxy, start_from_index + offset + 1  # Возвращаем прокси и следующий индекс
                 else:
-                    logger.debug(f"Прокси {proxy['ip']}:{proxy['port']} не работает")
+                    failed_count += 1
                     self.failed_proxies.add(f"{proxy['ip']}:{proxy['port']}")
+                    
+                    # Выводим статистику каждые N прокси
+                    if (offset + 1) % stats_interval == 0:
+                        logger.info(f"Проверено {offset+1}/{len(proxies_to_check)} прокси: успешных 0, неуспешных {failed_count}")
             
-            logger.warning("Не удалось найти рабочий прокси в текущем диапазоне")
+            logger.warning(f"Не удалось найти рабочий прокси в текущем диапазоне (проверено: {len(proxies_to_check)}, неуспешных: {failed_count})")
             return None, end_index
             
         except Exception as e:
