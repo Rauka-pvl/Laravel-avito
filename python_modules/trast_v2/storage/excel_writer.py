@@ -1,16 +1,16 @@
 """Excel writer for products"""
 
+import sys
 import threading
 from pathlib import Path
 from typing import List, Dict, Any
 from openpyxl import Workbook, load_workbook
 
-import sys
-from pathlib import Path
-sys.path.append(str(Path(__file__).parent.parent))
+if str(Path(__file__).parent.parent) not in sys.path:
+    sys.path.append(str(Path(__file__).parent.parent))
 
 from logger import get_logger
-from config import TEMP_EXCEL, EXCEL_FILE, TEMP_CSV
+from config import TEMP_EXCEL, EXCEL_FILE, TEMP_CSV, CSV_FILE
 from storage.csv_writer import get_total_products
 
 logger = get_logger("storage.excel_writer")

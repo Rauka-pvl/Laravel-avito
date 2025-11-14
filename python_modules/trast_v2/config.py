@@ -22,6 +22,10 @@ TEMP_CSV = STORAGE_DIR / "trast_temp.csv"
 BACKUP_EXCEL = STORAGE_DIR / "trast_backup.xlsx"
 BACKUP_CSV = STORAGE_DIR / "trast_backup.csv"
 
+# Aliases for compatibility
+EXCEL_FILE = OUTPUT_EXCEL
+CSV_FILE = OUTPUT_CSV
+
 # Proxy configuration
 PROXY_CACHE_DIR = Path(__file__).parent / "proxy_cache"
 PROXY_CACHE_DIR.mkdir(parents=True, exist_ok=True)
