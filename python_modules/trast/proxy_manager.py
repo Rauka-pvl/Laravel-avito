@@ -367,14 +367,21 @@ class ProxyManager:
                         'source': 'proxifly'
                     })
                 
-                logger.info(f"С Proxifly получено {len(all_proxies)} прокси")
+                proxifly_count = len(all_proxies)
+                logger.info(f"[PROXIFLY] Получено {proxifly_count} прокси с Proxifly")
                 
             except Exception as e:
-                logger.warning(f"Ошибка при загрузке прокси с Proxifly: {e}")
+                logger.warning(f"[PROXIFLY] Ошибка при загрузке прокси с Proxifly: {e}")
+                proxifly_count = 0
             
             # 2. Загружаем прокси с proxymania.su
+            proxymania_count_before_filter = 0
+            proxymania_count_after_filter = 0
             try:
+                logger.info("[PROXYMANIA] Начинаем парсинг прокси с proxymania.su...")
                 proxymania_proxies = self._download_proxies_from_proxymania()
+                proxymania_count_before_filter = len(proxymania_proxies)
+                logger.info(f"[PROXYMANIA] Спарсено {proxymania_count_before_filter} прокси с proxymania.su (до фильтрации)")
                 
                 # Фильтруем прокси с proxymania по странам
                 for proxy in proxymania_proxies:
@@ -386,11 +393,14 @@ class ProxyManager:
                             continue
                     
                     all_proxies.append(proxy)
+                    proxymania_count_after_filter += 1
                 
-                logger.info(f"С proxymania.su добавлено {len([p for p in proxymania_proxies if (not self.country_filter or p.get('country', '').upper() in self.country_filter)])} прокси после фильтрации")
+                logger.info(f"[PROXYMANIA] Добавлено {proxymania_count_after_filter} прокси с proxymania.su после фильтрации по странам (отфильтровано: {proxymania_count_before_filter - proxymania_count_after_filter})")
                 
             except Exception as e:
-                logger.warning(f"Ошибка при загрузке прокси с proxymania.su: {e}")
+                logger.warning(f"[PROXYMANIA] Ошибка при загрузке прокси с proxymania.su: {e}")
+                import traceback
+                logger.debug(f"[PROXYMANIA] Traceback: {traceback.format_exc()}")
             
             # Удаляем дубликаты (по IP:PORT)
             seen = set()
@@ -401,7 +411,8 @@ class ProxyManager:
                     seen.add(proxy_key)
                     filtered_proxies.append(proxy)
             
-            logger.info(f"После удаления дубликатов: {len(filtered_proxies)} уникальных прокси (было {len(all_proxies)})")
+            duplicates_removed = len(all_proxies) - len(filtered_proxies)
+            logger.info(f"[MERGE] После удаления дубликатов: {len(filtered_proxies)} уникальных прокси (было {len(all_proxies)}, удалено дубликатов: {duplicates_removed})")
             
             # Статистика по странам и протоколам
             country_stats = {}
@@ -415,11 +426,21 @@ class ProxyManager:
                 protocol_stats[protocol] = protocol_stats.get(protocol, 0) + 1
                 source_stats[source] = source_stats.get(source, 0) + 1
             
-            logger.info(f"Всего уникальных прокси: {len(filtered_proxies)}")
-            logger.info(f"По источникам: {source_stats}")
+            logger.info("=" * 60)
+            logger.info(f"[SUMMARY] ИТОГОВАЯ СТАТИСТИКА ПРОКСИ:")
+            logger.info(f"  Всего уникальных прокси: {len(filtered_proxies)}")
+            logger.info(f"  По источникам:")
+            for source, count in source_stats.items():
+                logger.info(f"    - {source}: {count} прокси")
             if self.country_filter:
-                logger.info(f"Прокси по странам: {dict(sorted(country_stats.items(), key=lambda x: x[1], reverse=True)[:10])}")  # Топ-10 стран
-            logger.info(f"Статистика по протоколам: {protocol_stats}")
+                top_countries = dict(sorted(country_stats.items(), key=lambda x: x[1], reverse=True)[:15])
+                logger.info(f"  Топ-15 стран по количеству прокси:")
+                for country, count in top_countries.items():
+                    logger.info(f"    - {country}: {count} прокси")
+            logger.info(f"  По протоколам:")
+            for protocol, count in sorted(protocol_stats.items(), key=lambda x: x[1], reverse=True):
+                logger.info(f"    - {protocol}: {count} прокси")
+            logger.info("=" * 60)
             
             # Сохраняем прокси в файл
             with open(self.proxies_file, 'w', encoding='utf-8') as f:
@@ -432,7 +453,7 @@ class ProxyManager:
             # Сброс кэша неудачных прокси - новый список нужно пробовать заново
             self.reset_failed_proxies()
             
-            logger.info(f"Сохранено {len(filtered_proxies)} прокси в файл")
+            logger.info(f"[SAVE] Сохранено {len(filtered_proxies)} прокси в файл: {self.proxies_file}")
             return True
             
         except Exception as e:
