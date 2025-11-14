@@ -97,6 +97,198 @@ def is_catalog_page_loaded(soup, page_source_lower):
     
     return True
 
+def has_catalog_structure(soup):
+    """
+    Проверяет наличие структуры каталога на странице.
+    Возвращает True, если найдена хотя бы одна из структурных элементов каталога.
+    
+    Args:
+        soup: BeautifulSoup объект страницы
+        
+    Returns:
+        bool: True если структура каталога присутствует, False иначе
+    """
+    # Проверяем блок товаров
+    has_products_grid = bool(soup.select(".products-grid, .products, .shop-container, .woocommerce-products-header"))
+    
+    # Проверяем пагинацию
+    has_pagination = bool(soup.select(".woocommerce-pagination, .page-numbers, .facetwp-pager, .facetwp-pager .facetwp-page"))
+    
+    # Проверяем элементы меню/навигации
+    has_menu = bool(soup.select("header, .site-header, .main-navigation, nav, .menu, .navigation"))
+    
+    # Проверяем footer
+    has_footer = bool(soup.select("footer, .site-footer, .footer"))
+    
+    # Проверяем title и meta
+    has_title = bool(soup.select("title"))
+    has_meta = bool(soup.select("meta"))
+    
+    # Если есть хотя бы несколько элементов структуры - страница имеет структуру каталога
+    structure_count = sum([has_products_grid, has_pagination, has_menu, has_footer, has_title, has_meta])
+    
+    # Если найдено 3+ элемента структуры - точно есть структура каталога
+    # Если найдено 1-2 элемента - возможно частичная загрузка
+    return structure_count >= 3
+
+def is_page_blocked(soup, page_source):
+    """
+    Проверяет, заблокирована ли страница Cloudflare или другими механизмами защиты.
+    
+    Args:
+        soup: BeautifulSoup объект страницы
+        page_source: Исходный HTML страницы (строка)
+        
+    Returns:
+        dict: {
+            "blocked": bool,
+            "reason": str | None
+        }
+    """
+    page_source_lower = page_source.lower() if page_source else ""
+    
+    # Проверяем ключевые слова блокировки
+    blocker_keywords = [
+        "cloudflare",
+        "attention required",
+        "checking your browser",
+        "just a moment",
+        "access denied",
+        "forbidden",
+        "service temporarily unavailable",
+        "temporarily unavailable",
+        "maintenance",
+        "запрос отклонен",
+        "доступ запрещен",
+        "ошибка 403",
+        "ошибка 503",
+        "error 403",
+        "error 503",
+        "captcha",
+        "please enable javascript",
+        "varnish cache server",
+        "bad gateway",
+        "gateway timeout",
+    ]
+    
+    for keyword in blocker_keywords:
+        if keyword in page_source_lower:
+            return {
+                "blocked": True,
+                "reason": keyword
+            }
+    
+    # Проверяем отсутствие структуры каталога
+    if not has_catalog_structure(soup):
+        return {
+            "blocked": True,
+            "reason": "no_catalog_structure"
+        }
+    
+    return {
+        "blocked": False,
+        "reason": None
+    }
+
+def is_page_empty(soup, page_source, products_count=0):
+    """
+    Определяет статус страницы: пустая (конец данных), заблокированная или частично загруженная.
+    
+    Args:
+        soup: BeautifulSoup объект страницы
+        page_source: Исходный HTML страницы (строка)
+        products_count: Количество найденных товаров на странице
+        
+    Returns:
+        dict: {
+            "status": "empty" | "blocked" | "partial",
+            "reason": "no_items" | "no_dom" | "cloudflare" | "timeout" | "partial_dom" | "few_items"
+        }
+    """
+    # Сначала проверяем на блокировку
+    block_check = is_page_blocked(soup, page_source)
+    if block_check["blocked"]:
+        return {
+            "status": "blocked",
+            "reason": block_check["reason"] or "no_dom"
+        }
+    
+    # Проверяем количество товаров
+    if products_count == 0:
+        # Проверяем наличие структуры каталога
+        if has_catalog_structure(soup):
+            # Есть структура, но нет товаров - это конец данных
+            return {
+                "status": "empty",
+                "reason": "no_items"
+            }
+        else:
+            # Нет структуры - частичная загрузка или блокировка
+            return {
+                "status": "partial",
+                "reason": "partial_dom"
+            }
+    elif products_count < 3:
+        # Мало товаров (1-2) - подозрение на частичную загрузку или блокировку
+        return {
+            "status": "partial",
+            "reason": "few_items"
+        }
+    else:
+        # Товары есть - страница нормальная
+        return {
+            "status": "normal",
+            "reason": None
+        }
+
+def reload_page_if_needed(driver, page_url, max_retries=1):
+    """
+    Перезагружает страницу если нужно (при частичной загрузке).
+    
+    Args:
+        driver: WebDriver объект
+        page_url: URL страницы для загрузки
+        max_retries: Максимальное количество попыток перезагрузки
+        
+    Returns:
+        tuple: (soup, products_count) - BeautifulSoup объект и количество товаров
+    """
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.webdriver.common.by import By
+    from selenium.common.exceptions import TimeoutException
+    
+    for attempt in range(max_retries + 1):
+        try:
+            if attempt > 0:
+                logger.info(f"[RETRY] Перезагружаем страницу {page_url} (попытка {attempt + 1}/{max_retries + 1})...")
+                time.sleep(random.uniform(1, 2))
+            
+            driver.get(page_url)
+            time.sleep(random.uniform(3, 6))
+            
+            # Ждем загрузки страницы
+            try:
+                wait = WebDriverWait(driver, 15)
+                wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+            except TimeoutException:
+                logger.warning(f"[WARNING] Таймаут при ожидании загрузки страницы {page_url}")
+            
+            soup = BeautifulSoup(driver.page_source, "html.parser")
+            products = get_products_from_page_soup(soup)
+            
+            return soup, len(products)
+            
+        except Exception as e:
+            logger.warning(f"[WARNING] Ошибка при перезагрузке страницы (попытка {attempt + 1}): {e}")
+            if attempt < max_retries:
+                continue
+            else:
+                # Последняя попытка не удалась - возвращаем пустой результат
+                return BeautifulSoup("", "html.parser"), 0
+    
+    return BeautifulSoup("", "html.parser"), 0
+
 def create_new_excel(path):
     if os.path.exists(path):
         os.remove(path)
@@ -890,8 +1082,8 @@ def get_pages_count_with_driver(driver, url="https://trast-zapchast.ru/shop/"):
         
         logger.info("Получаем количество страниц для парсинга...")
         
-        # Устанавливаем таймаут для загрузки страницы (увеличен для медленных прокси)
-        driver.set_page_load_timeout(90)  # 90 секунд вместо 60 для медленных прокси
+        # Устанавливаем таймаут для загрузки страницы
+        driver.set_page_load_timeout(25)  # 25 секунд - оптимальный баланс
         try:
             driver.get(url)
         except Exception as get_error:
@@ -1105,7 +1297,8 @@ def producer(proxy_manager):
     - Как только нашли - начинаем парсинг
     - При блокировке/ошибке: запоминаем страницу, ищем новый прокси до тех пор пока не найдем
     - Продолжаем парсинг с запомненной страницы
-    - Останавливаемся только при 3 пустых страницах подряд
+    - Останавливаемся при 2 пустых страницах подряд (конец данных)
+    - Различаем пустую страницу (конец данных) от блокировки (нет структуры DOM)
     """
     thread_name = "MainThread"
     logger.info(f"[{thread_name}] Starting producer with PROXY-ONLY strategy")
@@ -1117,12 +1310,17 @@ def producer(proxy_manager):
     
     total_collected = 0
     empty_pages_count = 0
-    max_empty_pages = 3
+    max_empty_pages = 2  # Изменено с 3 на 2 - оптимальный баланс
     pages_checked = 0  # Счетчик проверенных страниц
     max_empty_streak = 0
     proxy_switch_count = 0
     cloudflare_block_count = 0
     forced_proxy_updates = 0
+    
+    # Защита от бесконечной смены прокси
+    proxy_switch_times = []  # Список времен смены прокси
+    max_proxy_switches_per_period = 20  # Максимум смен прокси за период
+    proxy_switch_period_seconds = 600  # 10 минут
     
     try:
         logger.info(f"Начинаем парсинг ТОЛЬКО через прокси")
@@ -1220,30 +1418,77 @@ def producer(proxy_manager):
                 break
             
             try:
+                from selenium.common.exceptions import TimeoutException
+                
                 page_url = f"https://trast-zapchast.ru/shop/?_paged={current_page}"
                 if fallback_mode or not total_pages:
                     logger.info(f"[{thread_name}] Parsing page {current_page} (проверено: {pages_checked}) [fallback без total_pages]")
                 else:
                     logger.info(f"[{thread_name}] Parsing page {current_page}/{total_pages} (проверено: {pages_checked})")
                 
-                driver.get(page_url)
-                time.sleep(random.uniform(3, 6))  # Увеличиваем время ожидания
+                # Устанавливаем таймаут для загрузки страницы
+                try:
+                    driver.set_page_load_timeout(25)
+                except:
+                    pass
                 
-                # Проверяем на блокировку (расширенная проверка)
-                page_source_lower = driver.page_source.lower()
-                is_blocked = (
-                    "cloudflare" in page_source_lower or 
-                    "checking your browser" in page_source_lower or
-                    "access denied" in page_source_lower or
-                    "blocked" in page_source_lower or
-                    "forbidden" in page_source_lower
-                )
+                page_load_start = time.time()
+                try:
+                    driver.get(page_url)
+                    time.sleep(random.uniform(3, 6))
+                except TimeoutException:
+                    logger.warning(f"[WARNING] Таймаут при загрузке страницы {current_page} (25 сек)")
+                    # Пробуем перезагрузить страницу
+                    soup, products_count = reload_page_if_needed(driver, page_url, max_retries=1)
+                    if products_count == 0:
+                        # Страница не загрузилась - проверяем на блокировку
+                        page_source = driver.page_source if hasattr(driver, 'page_source') else ""
+                        block_check = is_page_blocked(soup, page_source)
+                        if block_check["blocked"]:
+                            logger.warning(f"[BLOCKED] Page {current_page}: DOM missing → proxy blocked → switching proxy")
+                            blocked_page = current_page
+                            cloudflare_block_count += 1
+                            # Проверяем защиту от бесконечной смены прокси
+                            current_time = time.time()
+                            proxy_switch_times[:] = [t for t in proxy_switch_times if current_time - t < proxy_switch_period_seconds]
+                            if len(proxy_switch_times) >= max_proxy_switches_per_period:
+                                logger.error(f"[ERROR] Превышен лимит смен прокси ({max_proxy_switches_per_period} за {proxy_switch_period_seconds} сек). Аварийное завершение.")
+                                break
+                            
+                            try:
+                                driver.quit()
+                            except:
+                                pass
+                            driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
+                            proxy_switch_count += 1
+                            proxy_switch_times.append(time.time())
+                            logger.info(f"[OK] Новый прокси найден, продолжаем парсинг со страницы {blocked_page}")
+                            continue
+                        else:
+                            # Частичная загрузка - продолжаем
+                            logger.warning(f"[PARTIAL] Page {current_page}: DOM incomplete → retrying load")
+                            continue
                 
-                if is_blocked:
-                    logger.warning(f"Страница {current_page}: обнаружена блокировка (Cloudflare/access denied), ищем новый прокси...")
+                page_load_time = time.time() - page_load_start
+                
+                # Проверяем на блокировку используя новые функции
+                page_source = driver.page_source
+                soup = BeautifulSoup(page_source, "html.parser")
+                block_check = is_page_blocked(soup, page_source)
+                
+                if block_check["blocked"]:
+                    logger.warning(f"[BLOCKED] Page {current_page}: DOM missing → proxy blocked → switching proxy (reason: {block_check['reason']})")
                     # Запоминаем текущую страницу
                     blocked_page = current_page
                     cloudflare_block_count += 1
+                    
+                    # Проверяем защиту от бесконечной смены прокси
+                    current_time = time.time()
+                    proxy_switch_times[:] = [t for t in proxy_switch_times if current_time - t < proxy_switch_period_seconds]
+                    if len(proxy_switch_times) >= max_proxy_switches_per_period:
+                        logger.error(f"[ERROR] Превышен лимит смен прокси ({max_proxy_switches_per_period} за {proxy_switch_period_seconds} сек). Аварийное завершение.")
+                        break
+                    
                     try:
                         driver.quit()
                     except:
@@ -1252,47 +1497,99 @@ def producer(proxy_manager):
                     logger.info(f"Ищем новый рабочий прокси для продолжения парсинга со страницы {blocked_page}...")
                     driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
                     proxy_switch_count += 1
+                    proxy_switch_times.append(time.time())
                     logger.info(f"[OK] Новый прокси найден, продолжаем парсинг со страницы {blocked_page}")
                     continue
                 
-                soup = BeautifulSoup(driver.page_source, "html.parser")
+                # Получаем товары
                 products = get_products_from_page_soup(soup)
+                products_count = len(products)
                 
-                if products:
+                # Проверяем статус страницы
+                page_status = is_page_empty(soup, page_source, products_count)
+                
+                if page_status["status"] == "normal" and products:
                     # Пишем во временные файлы (старый файл не трогаем)
                     append_to_excel(TEMP_OUTPUT_FILE, products)
                     append_to_csv(TEMP_CSV_FILE, products)
-                    logger.info(f"[{thread_name}] Page {current_page}: added {len(products)} products")
+                    logger.info(f"[{thread_name}] Page {current_page}: added {len(products)} products (load time: {page_load_time:.2f}s)")
                     total_collected += len(products)
-                    empty_pages_count = 0  # Сбрасываем счетчик пустых страниц
-                else:
+                    empty_pages_count = 0  # Сбрасываем счетчик пустых страниц только при успешном получении товаров
+                elif page_status["status"] == "partial":
+                    # Частичная загрузка - повторяем попытку
+                    logger.warning(f"[PARTIAL] Page {current_page}: DOM incomplete → retrying load (reason: {page_status['reason']})")
+                    soup, products_count = reload_page_if_needed(driver, page_url, max_retries=1)
+                    products = get_products_from_page_soup(soup)
+                    if products:
+                        append_to_excel(TEMP_OUTPUT_FILE, products)
+                        append_to_csv(TEMP_CSV_FILE, products)
+                        logger.info(f"[{thread_name}] Page {current_page} (retry): added {len(products)} products")
+                        total_collected += len(products)
+                        empty_pages_count = 0
+                    else:
+                        # После повторной попытки все еще нет товаров - проверяем статус
+                        page_status = is_page_empty(soup, page_source, 0)
+                        if page_status["status"] == "empty":
+                            empty_pages_count += 1
+                            if empty_pages_count > max_empty_streak:
+                                max_empty_streak = empty_pages_count
+                            logger.warning(f"[EMPTY PAGE] Page {current_page}: no items but catalog structure exists → end of data logic triggered (empty pages: {empty_pages_count})")
+                        elif page_status["status"] == "blocked":
+                            # Блокировка после повторной попытки
+                            logger.warning(f"[BLOCKED] Page {current_page}: DOM missing after retry → proxy blocked → switching proxy")
+                            blocked_page = current_page
+                            cloudflare_block_count += 1
+                            
+                            # Проверяем защиту от бесконечной смены прокси
+                            current_time = time.time()
+                            proxy_switch_times[:] = [t for t in proxy_switch_times if current_time - t < proxy_switch_period_seconds]
+                            if len(proxy_switch_times) >= max_proxy_switches_per_period:
+                                logger.error(f"[ERROR] Превышен лимит смен прокси ({max_proxy_switches_per_period} за {proxy_switch_period_seconds} сек). Аварийное завершение.")
+                                break
+                            
+                            try:
+                                driver.quit()
+                            except:
+                                pass
+                            driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
+                            proxy_switch_count += 1
+                            proxy_switch_times.append(time.time())
+                            logger.info(f"[OK] Новый прокси найден, продолжаем парсинг со страницы {blocked_page}")
+                            continue
+                elif page_status["status"] == "empty":
+                    # Пустая страница (конец данных) - НЕ меняем прокси
                     empty_pages_count += 1
                     if empty_pages_count > max_empty_streak:
                         max_empty_streak = empty_pages_count
-                    logger.warning(f"[{thread_name}] Page {current_page}: no products found (empty pages: {empty_pages_count})")
+                    logger.warning(f"[EMPTY PAGE] Page {current_page}: no items but catalog structure exists → end of data logic triggered (empty pages: {empty_pages_count})")
                     
-                    # Если несколько пустых страниц подряд - возможно блокировка, пробуем новый прокси
-                    if empty_pages_count >= 2 and empty_pages_count < max_empty_pages:
-                        logger.warning(f"Найдено {empty_pages_count} пустых страниц подряд. Возможна блокировка, ищем новый прокси...")
-                        # Запоминаем текущую страницу
-                        blocked_page = current_page
-                        try:
-                            driver.quit()
-                        except:
-                            pass
-                        # Ищем новый прокси до тех пор пока не найдем
-                        logger.info(f"Ищем новый рабочий прокси для продолжения парсинга со страницы {blocked_page}...")
-                        driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
-                        proxy_switch_count += 1
-                        logger.info(f"[OK] Новый прокси найден, продолжаем парсинг со страницы {blocked_page}")
-                        empty_pages_count = 0  # Сбрасываем счетчик при смене прокси
-                        continue
-                    
-                    # Условие остановки: если 3 страницы подряд пустые (конец данных)
+                    # Условие остановки: если 2 страницы подряд пустые (конец данных)
                     if empty_pages_count >= max_empty_pages:
-                        logger.info(f"Найдено {max_empty_pages} пустых страниц подряд. Останавливаем парсинг.")
+                        logger.info(f"[EMPTY PAGE] Найдено {max_empty_pages} пустых страниц подряд. Останавливаем парсинг.")
                         pages_checked += 1
                         break
+                elif page_status["status"] == "blocked":
+                    # Блокировка - меняем прокси
+                    logger.warning(f"[BLOCKED] Page {current_page}: DOM missing → proxy blocked → switching proxy (reason: {page_status['reason']})")
+                    blocked_page = current_page
+                    cloudflare_block_count += 1
+                    
+                    # Проверяем защиту от бесконечной смены прокси
+                    current_time = time.time()
+                    proxy_switch_times[:] = [t for t in proxy_switch_times if current_time - t < proxy_switch_period_seconds]
+                    if len(proxy_switch_times) >= max_proxy_switches_per_period:
+                        logger.error(f"[ERROR] Превышен лимит смен прокси ({max_proxy_switches_per_period} за {proxy_switch_period_seconds} сек). Аварийное завершение.")
+                        break
+                    
+                    try:
+                        driver.quit()
+                    except:
+                        pass
+                    driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
+                    proxy_switch_count += 1
+                    proxy_switch_times.append(time.time())
+                    logger.info(f"[OK] Новый прокси найден, продолжаем парсинг со страницы {blocked_page}")
+                    continue
                 
                 pages_checked += 1
                 current_page += 1
@@ -1300,15 +1597,63 @@ def producer(proxy_manager):
                 # Случайная пауза между страницами
                 time.sleep(random.uniform(2, 4))
                 
-            except Exception as e:
-                logger.error(f"Ошибка при парсинге страницы {current_page}: {e}")
-                # Пробуем ещё раз с тем же прокси
-                logger.info(f"Повторная попытка загрузки страницы {current_page} с тем же прокси...")
+            except TimeoutException as e:
+                logger.error(f"[ERROR] TimeoutException при парсинге страницы {current_page}: {e}")
+                # Таймаут - пробуем перезагрузить страницу
+                logger.info(f"[RETRY] Повторная попытка загрузки страницы {current_page} после таймаута...")
                 try:
-                    driver.get(f"https://trast-zapchast.ru/shop/?_paged={current_page}")
-                    time.sleep(random.uniform(3, 6))
-                    soup_retry = BeautifulSoup(driver.page_source, "html.parser")
-                    products_retry = get_products_from_page_soup(soup_retry)
+                    soup, products_count = reload_page_if_needed(driver, page_url, max_retries=1)
+                    products_retry = get_products_from_page_soup(soup)
+                    if products_retry:
+                        append_to_excel(TEMP_OUTPUT_FILE, products_retry)
+                        append_to_csv(TEMP_CSV_FILE, products_retry)
+                        logger.info(f"[{thread_name}] Page {current_page} (retry after timeout): added {len(products_retry)} products")
+                        total_collected += len(products_retry)
+                        empty_pages_count = 0
+                        pages_checked += 1
+                        current_page += 1
+                        time.sleep(random.uniform(2, 4))
+                        continue
+                except Exception as retry_error:
+                    logger.warning(f"[WARNING] Повторная попытка страницы {current_page} после таймаута не удалась: {retry_error}")
+                
+                # Если повторная попытка не удалась - проверяем на блокировку и меняем прокси
+                errored_page = current_page
+                try:
+                    page_source = driver.page_source if hasattr(driver, 'page_source') else ""
+                    soup = BeautifulSoup(page_source, "html.parser")
+                    block_check = is_page_blocked(soup, page_source)
+                    if block_check["blocked"]:
+                        logger.warning(f"[BLOCKED] Page {errored_page}: блокировка после таймаута → switching proxy")
+                        cloudflare_block_count += 1
+                except:
+                    pass
+                
+                # Проверяем защиту от бесконечной смены прокси
+                current_time = time.time()
+                proxy_switch_times[:] = [t for t in proxy_switch_times if current_time - t < proxy_switch_period_seconds]
+                if len(proxy_switch_times) >= max_proxy_switches_per_period:
+                    logger.error(f"[ERROR] Превышен лимит смен прокси ({max_proxy_switches_per_period} за {proxy_switch_period_seconds} сек). Аварийное завершение.")
+                    break
+                
+                try:
+                    driver.quit()
+                except:
+                    pass
+                logger.info(f"Ищем новый рабочий прокси для продолжения парсинга со страницы {errored_page}...")
+                driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
+                proxy_switch_count += 1
+                proxy_switch_times.append(time.time())
+                logger.info(f"[OK] Новый прокси найден, продолжаем парсинг со страницы {errored_page}")
+                continue
+            except Exception as e:
+                logger.error(f"[ERROR] Ошибка при парсинге страницы {current_page}: {e}")
+                logger.error(f"[ERROR] Traceback: {traceback.format_exc()}")
+                # Пробуем ещё раз с тем же прокси
+                logger.info(f"[RETRY] Повторная попытка загрузки страницы {current_page} с тем же прокси...")
+                try:
+                    soup, products_count = reload_page_if_needed(driver, page_url, max_retries=1)
+                    products_retry = get_products_from_page_soup(soup)
                     if products_retry:
                         append_to_excel(TEMP_OUTPUT_FILE, products_retry)
                         append_to_csv(TEMP_CSV_FILE, products_retry)
@@ -1320,10 +1665,18 @@ def producer(proxy_manager):
                         time.sleep(random.uniform(2, 4))
                         continue
                 except Exception as retry_error:
-                    logger.warning(f"Повторная попытка страницы {current_page} не удалась: {retry_error}")
+                    logger.warning(f"[WARNING] Повторная попытка страницы {current_page} не удалась: {retry_error}")
                 
                 # Запоминаем текущую страницу
                 errored_page = current_page
+                
+                # Проверяем защиту от бесконечной смены прокси
+                current_time = time.time()
+                proxy_switch_times[:] = [t for t in proxy_switch_times if current_time - t < proxy_switch_period_seconds]
+                if len(proxy_switch_times) >= max_proxy_switches_per_period:
+                    logger.error(f"[ERROR] Превышен лимит смен прокси ({max_proxy_switches_per_period} за {proxy_switch_period_seconds} сек). Аварийное завершение.")
+                    break
+                
                 try:
                     driver.quit()
                 except:
@@ -1332,6 +1685,7 @@ def producer(proxy_manager):
                 logger.info(f"Ищем новый рабочий прокси для продолжения парсинга со страницы {errored_page}...")
                 driver, start_from_index = get_driver_until_found(proxy_manager, start_from_index)
                 proxy_switch_count += 1
+                proxy_switch_times.append(time.time())
                 logger.info(f"[OK] Новый прокси найден, продолжаем парсинг со страницы {errored_page}")
                 # Переходим к следующему циклу без изменения current_page
                 continue
@@ -1473,11 +1827,21 @@ if __name__ == "__main__":
 
     # Инициализируем прокси менеджер с фильтром по России
     logger.info("Step 1: Updating proxy list...")
-    # Страны СНГ: Россия, Беларусь, Казахстан, Армения, Азербайджан, Грузия, Кыргызстан, Молдова, Таджикистан, Туркменистан, Узбекистан, Украина
+    # Расширенный список стран: СНГ + Европа + Азия
+    # СНГ: Россия, Беларусь, Казахстан, Армения, Азербайджан, Грузия, Кыргызстан, Молдова, Таджикистан, Туркменистан, Узбекистан, Украина
     CIS_COUNTRIES = ["RU", "BY", "KZ", "AM", "AZ", "GE", "KG", "MD", "TJ", "TM", "UZ", "UA"]
-    logger.info(f"Используем прокси из стран СНГ: {', '.join(CIS_COUNTRIES)}")
+    # Европа (близко к России, часто работают с российскими сайтами)
+    EUROPE_COUNTRIES = ["PL", "LT", "LV", "EE", "FI", "CZ", "SK", "HU", "RO", "BG", "DE", "NL", "SE", "FR"]
+    # Азия (близко географически)
+    ASIA_COUNTRIES = ["CN", "MN"]
+    # Объединенный список
+    EXTENDED_COUNTRIES = CIS_COUNTRIES + EUROPE_COUNTRIES + ASIA_COUNTRIES
+    logger.info(f"Используем прокси из расширенного списка стран ({len(EXTENDED_COUNTRIES)} стран):")
+    logger.info(f"  СНГ ({len(CIS_COUNTRIES)}): {', '.join(CIS_COUNTRIES)}")
+    logger.info(f"  Европа ({len(EUROPE_COUNTRIES)}): {', '.join(EUROPE_COUNTRIES)}")
+    logger.info(f"  Азия ({len(ASIA_COUNTRIES)}): {', '.join(ASIA_COUNTRIES)}")
     try:
-        proxy_manager = ProxyManager(country_filter=CIS_COUNTRIES)
+        proxy_manager = ProxyManager(country_filter=EXTENDED_COUNTRIES)
         logger.info("[OK] ProxyManager инициализирован")
     except Exception as pm_error:
         logger.error(f"[ERROR] Ошибка при инициализации ProxyManager: {pm_error}")
@@ -1486,7 +1850,7 @@ if __name__ == "__main__":
         sys.exit(1)
     
     # Стратегия ТОЛЬКО прокси - никакого прямого доступа
-    logger.info("СТРАТЕГИЯ: ТОЛЬКО ПРОКСИ СНГ - никакого прямого доступа!")
+    logger.info("СТРАТЕГИЯ: ТОЛЬКО ПРОКСИ (расширенный список) - никакого прямого доступа!")
     logger.info("Прокси проверяются ТОЛЬКО на способность получить количество страниц с trast-zapchast.ru")
     
     logger.info("============================================================")
@@ -1590,3 +1954,4 @@ if __name__ == "__main__":
     
     # Переименовываем лог-файл на основе статуса
     rename_log_file_by_status(status, total_products=total_products)
+

@@ -1,6 +1,7 @@
 import os
 import json
 import random
+import re
 import requests
 import logging
 import urllib3
@@ -8,6 +9,7 @@ import time
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from bs4 import BeautifulSoup
 
 # Пробуем импортировать cloudscraper для обхода Cloudflare
 try:
@@ -65,8 +67,241 @@ class ProxyManager:
         else:
             logger.info("ProxyManager инициализирован без фильтра по стране")
         
+    def _parse_proxymania_page(self, page_num: int = 1) -> List[Dict]:
+        """Парсит одну страницу прокси с proxymania.su
+        
+        Args:
+            page_num: Номер страницы (начинается с 1)
+            
+        Returns:
+            List[Dict]: Список прокси с этой страницы
+        """
+        try:
+            url = f"https://proxymania.su/free-proxy?page={page_num}"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
+            }
+            
+            response = requests.get(url, headers=headers, timeout=15)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Находим таблицу
+            table = soup.select_one('table.table_proxychecker')
+            if not table:
+                logger.debug(f"Таблица не найдена на странице {page_num} proxymania.su")
+                return []
+            
+            # Находим все строки в tbody
+            rows = table.select('tbody#resultTable tr')
+            proxies = []
+            
+            # Маппинг названий стран в коды ISO
+            country_name_to_code = {
+                'Russia': 'RU', 'Russian Federation': 'RU',
+                'Poland': 'PL', 'Polska': 'PL',
+                'Czech Republic': 'CZ', 'Czechia': 'CZ',
+                'Germany': 'DE', 'Deutschland': 'DE',
+                'Netherlands': 'NL', 'Holland': 'NL',
+                'Sweden': 'SE', 'Sverige': 'SE',
+                'France': 'FR', 'France': 'FR',
+                'Romania': 'RO', 'România': 'RO',
+                'Bulgaria': 'BG', 'България': 'BG',
+                'Belarus': 'BY', 'Беларусь': 'BY',
+                'Ukraine': 'UA', 'Україна': 'UA',
+                'Kazakhstan': 'KZ', 'Казахстан': 'KZ',
+                'Moldova': 'MD', 'Молдова': 'MD',
+                'Georgia': 'GE', 'საქართველო': 'GE',
+                'Armenia': 'AM', 'Հայաստան': 'AM',
+                'Azerbaijan': 'AZ', 'Azərbaycan': 'AZ',
+                'Lithuania': 'LT', 'Lietuva': 'LT',
+                'Latvia': 'LV', 'Latvija': 'LV',
+                'Estonia': 'EE', 'Eesti': 'EE',
+                'Finland': 'FI', 'Suomi': 'FI',
+                'Slovakia': 'SK', 'Slovensko': 'SK',
+                'Hungary': 'HU', 'Magyarország': 'HU',
+                'China': 'CN', '中国': 'CN',
+                'Mongolia': 'MN', 'Монгол': 'MN',
+                'United States': 'US', 'USA': 'US',
+                'Indonesia': 'ID',
+                'Vietnam': 'VN', 'Việt Nam': 'VN',
+                'Bangladesh': 'BD',
+                'Brazil': 'BR', 'Brasil': 'BR',
+                'Singapore': 'SG',
+                'Japan': 'JP', '日本': 'JP',
+                'South Korea': 'KR', '한국': 'KR',
+                'Hong Kong': 'HK',
+                'Turkey': 'TR', 'Türkiye': 'TR',
+                'Ecuador': 'EC',
+                'Peru': 'PE',
+                'Colombia': 'CO',
+                'Iran': 'IR',
+                'United Kingdom': 'GB', 'UK': 'GB',
+                'Croatia': 'HR',
+                'Spain': 'ES', 'España': 'ES',
+                'Kenya': 'KE',
+                'Venezuela': 'VE',
+                'Costa Rica': 'CR',
+                'Argentina': 'AR',
+                'India': 'IN',
+                'Ghana': 'GH',
+                'Canada': 'CA',
+                'Montenegro': 'ME',
+                'Philippines': 'PH',
+            }
+            
+            for row in rows:
+                try:
+                    cells = row.select('td')
+                    if len(cells) < 5:
+                        continue
+                    
+                    # Прокси (IP:PORT)
+                    proxy_cell = cells[0]
+                    proxy_text = proxy_cell.get_text(strip=True)
+                    if ':' not in proxy_text:
+                        continue
+                    
+                    ip, port = proxy_text.split(':', 1)
+                    
+                    # Страна
+                    country_cell = cells[1]
+                    country_name = country_cell.get_text(strip=True)
+                    # Убираем флаг и оставляем только название
+                    country_name = country_name.strip()
+                    country_code = country_name_to_code.get(country_name, country_name[:2].upper() if len(country_name) >= 2 else 'UN')
+                    
+                    # Тип (SOCKS4, SOCKS5, HTTPS)
+                    protocol_text = cells[2].get_text(strip=True).upper()
+                    protocol_map = {
+                        'SOCKS4': 'socks4',
+                        'SOCKS5': 'socks5',
+                        'HTTPS': 'https',
+                        'HTTP': 'http',
+                    }
+                    protocol = protocol_map.get(protocol_text, protocol_text.lower())
+                    
+                    if protocol not in ['http', 'https', 'socks4', 'socks5']:
+                        continue
+                    
+                    # Анонимность
+                    anonymity = cells[3].get_text(strip=True)
+                    
+                    # Скорость (может быть "60 ms" или просто число)
+                    speed_text = cells[4].get_text(strip=True)
+                    speed = 0
+                    try:
+                        # Извлекаем число из строки типа "60 ms"
+                        speed_match = re.search(r'(\d+)', speed_text)
+                        if speed_match:
+                            speed = int(speed_match.group(1))
+                    except:
+                        pass
+                    
+                    proxies.append({
+                        'ip': ip,
+                        'port': port,
+                        'protocol': protocol,
+                        'country': country_code,
+                        'anonymity': anonymity,
+                        'speed': speed,
+                        'source': 'proxymania'
+                    })
+                    
+                except Exception as e:
+                    logger.debug(f"Ошибка при парсинге строки прокси с proxymania.su: {e}")
+                    continue
+            
+            logger.debug(f"Страница {page_num} proxymania.su: найдено {len(proxies)} прокси")
+            return proxies
+            
+        except Exception as e:
+            logger.warning(f"Ошибка при парсинге страницы {page_num} proxymania.su: {e}")
+            return []
+    
+    def _download_proxies_from_proxymania(self) -> List[Dict]:
+        """Парсит все страницы прокси с proxymania.su
+        
+        Returns:
+            List[Dict]: Список всех найденных прокси
+        """
+        all_proxies = []
+        max_pages = 15  # Максимум страниц по информации пользователя
+        
+        logger.info("Парсинг прокси с proxymania.su...")
+        
+        # Пробуем определить количество страниц на первой странице
+        try:
+            url = "https://proxymania.su/free-proxy?page=1"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
+            }
+            response = requests.get(url, headers=headers, timeout=15)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Ищем пагинацию (например, "Последняя" или номера страниц)
+            pagination = soup.select('.pagination a, .pager a, a[href*="page="]')
+            if pagination:
+                # Пробуем найти максимальный номер страницы
+                page_numbers = []
+                for link in pagination:
+                    href = link.get('href', '')
+                    text = link.get_text(strip=True)
+                    # Ищем номер страницы в href или тексте
+                    page_match = re.search(r'page=(\d+)', href)
+                    if page_match:
+                        page_numbers.append(int(page_match.group(1)))
+                    elif text.isdigit():
+                        page_numbers.append(int(text))
+                
+                if page_numbers:
+                    detected_max = max(page_numbers)
+                    if detected_max > 0 and detected_max < max_pages:
+                        max_pages = detected_max
+                        logger.info(f"Обнаружено {max_pages} страниц на proxymania.su")
+        except Exception as e:
+            logger.debug(f"Не удалось определить количество страниц на proxymania.su, используем максимум {max_pages}: {e}")
+        
+        for page_num in range(1, max_pages + 1):
+            try:
+                proxies = self._parse_proxymania_page(page_num)
+                if not proxies:
+                    # Если страница пустая, возможно достигли конца
+                    logger.debug(f"Страница {page_num} пустая, возможно достигли конца")
+                    # Проверяем еще одну страницу на всякий случай
+                    if page_num < max_pages:
+                        next_proxies = self._parse_proxymania_page(page_num + 1)
+                        if not next_proxies:
+                            logger.debug(f"Следующая страница {page_num + 1} тоже пустая, завершаем парсинг")
+                            break
+                    else:
+                        break
+                
+                all_proxies.extend(proxies)
+                logger.info(f"Страница {page_num}/{max_pages}: добавлено {len(proxies)} прокси, всего: {len(all_proxies)}")
+                
+                # Небольшая задержка между страницами
+                time.sleep(random.uniform(1, 2))
+                
+            except Exception as e:
+                logger.warning(f"Ошибка при парсинге страницы {page_num} proxymania.su: {e}")
+                # Если ошибка на первой странице - прекращаем
+                if page_num == 1:
+                    logger.warning("Ошибка на первой странице proxymania.su, пропускаем этот источник")
+                    break
+                continue
+        
+        logger.info(f"С proxymania.su получено {len(all_proxies)} прокси")
+        return all_proxies
+
     def download_proxies(self, force_update=False) -> bool:
-        """Скачивает свежие прокси с Proxifly репозитория
+        """Скачивает свежие прокси с Proxifly репозитория и proxymania.su
         
         Args:
             force_update: Если True, обновляет прокси даже если они свежие
@@ -74,73 +309,116 @@ class ProxyManager:
         try:
             if force_update:
                 logger.info("[UPDATE] Принудительное обновление списка прокси...")
-            # Страны СНГ
-            CIS_COUNTRIES = ["RU", "BY", "KZ", "AM", "AZ", "GE", "KG", "MD", "TJ", "TM", "UZ", "UA"]
             
-            # Если фильтр - одна страна из СНГ, можем использовать прямой URL
-            # Но для списка стран загружаем все и фильтруем
-            if self.country_filter and len(self.country_filter) == 1 and self.country_filter[0] in CIS_COUNTRIES:
-                country = self.country_filter[0]
-                logger.info(f"Скачивание прокси для страны {country} с Proxifly (прямая ссылка)...")
-                url = f"https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/countries/{country}/data.json"
-                response = requests.get(url, timeout=30)
-                response.raise_for_status()
-                proxies_data = response.json()
-            else:
-                # Загружаем ВСЕ прокси и фильтруем по списку стран
-                logger.info("Скачивание всех прокси с Proxifly для фильтрации по странам СНГ...")
-                url = "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/all/data.json"
-                response = requests.get(url, timeout=30)
-                response.raise_for_status()
-                proxies_data = response.json()
+            all_proxies = []
             
-            # Обрабатываем прокси
-            filtered_proxies = []
-            total_proxies = len(proxies_data)
-            
-            for proxy in proxies_data:
-                protocol = proxy.get('protocol', '').lower()
+            # 1. Загружаем прокси с Proxifly
+            try:
+                logger.info("Загрузка прокси с Proxifly...")
+                # Страны СНГ
+                CIS_COUNTRIES = ["RU", "BY", "KZ", "AM", "AZ", "GE", "KG", "MD", "TJ", "TM", "UZ", "UA"]
                 
-                # Извлекаем страну из geolocation или напрямую
-                geolocation = proxy.get('geolocation', {})
-                country = (geolocation.get('country', '') or proxy.get('country', '')).upper()
+                # Если фильтр - одна страна из СНГ, можем использовать прямой URL
+                # Но для списка стран загружаем все и фильтруем
+                if self.country_filter and len(self.country_filter) == 1 and self.country_filter[0] in CIS_COUNTRIES:
+                    country = self.country_filter[0]
+                    logger.info(f"Скачивание прокси для страны {country} с Proxifly (прямая ссылка)...")
+                    url = f"https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/countries/{country}/data.json"
+                    response = requests.get(url, timeout=30)
+                    response.raise_for_status()
+                    proxies_data = response.json()
+                else:
+                    # Загружаем ВСЕ прокси и фильтруем по списку стран
+                    logger.info("Скачивание всех прокси с Proxifly для фильтрации...")
+                    url = "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/all/data.json"
+                    response = requests.get(url, timeout=30)
+                    response.raise_for_status()
+                    proxies_data = response.json()
                 
-                # Фильтр по странам (если задан)
-                if self.country_filter:
-                    if country not in self.country_filter:
+                # Обрабатываем прокси с Proxifly
+                for proxy in proxies_data:
+                    protocol = proxy.get('protocol', '').lower()
+                    
+                    # Извлекаем страну из geolocation или напрямую
+                    geolocation = proxy.get('geolocation', {})
+                    country = (geolocation.get('country', '') or proxy.get('country', '')).upper()
+                    
+                    # Фильтр по странам (если задан)
+                    if self.country_filter:
+                        if country not in self.country_filter:
+                            continue
+                    
+                    # Фильтр по протоколу
+                    if protocol not in ['http', 'https', 'socks4', 'socks5']:
                         continue
+                    
+                    port = proxy.get('port', '')
+                    # Преобразуем порт в строку, если это число
+                    if isinstance(port, int):
+                        port = str(port)
+                    
+                    all_proxies.append({
+                        'ip': proxy.get('ip', ''),
+                        'port': port,
+                        'protocol': protocol,
+                        'country': country,
+                        'anonymity': proxy.get('anonymity', ''),
+                        'speed': proxy.get('speed', 0),
+                        'source': 'proxifly'
+                    })
                 
-                # Фильтр по протоколу
-                if protocol not in ['http', 'https', 'socks4', 'socks5']:
-                    continue
+                logger.info(f"С Proxifly получено {len(all_proxies)} прокси")
                 
-                port = proxy.get('port', '')
-                # Преобразуем порт в строку, если это число
-                if isinstance(port, int):
-                    port = str(port)
+            except Exception as e:
+                logger.warning(f"Ошибка при загрузке прокси с Proxifly: {e}")
+            
+            # 2. Загружаем прокси с proxymania.su
+            try:
+                proxymania_proxies = self._download_proxies_from_proxymania()
                 
-                filtered_proxies.append({
-                    'ip': proxy.get('ip', ''),
-                    'port': port,
-                    'protocol': protocol,
-                    'country': country,
-                    'anonymity': proxy.get('anonymity', ''),
-                    'speed': proxy.get('speed', 0)
-                })
+                # Фильтруем прокси с proxymania по странам
+                for proxy in proxymania_proxies:
+                    country = proxy.get('country', '').upper()
+                    
+                    # Фильтр по странам (если задан)
+                    if self.country_filter:
+                        if country not in self.country_filter:
+                            continue
+                    
+                    all_proxies.append(proxy)
+                
+                logger.info(f"С proxymania.su добавлено {len([p for p in proxymania_proxies if (not self.country_filter or p.get('country', '').upper() in self.country_filter)])} прокси после фильтрации")
+                
+            except Exception as e:
+                logger.warning(f"Ошибка при загрузке прокси с proxymania.su: {e}")
+            
+            # Удаляем дубликаты (по IP:PORT)
+            seen = set()
+            filtered_proxies = []
+            for proxy in all_proxies:
+                proxy_key = f"{proxy['ip']}:{proxy['port']}"
+                if proxy_key not in seen:
+                    seen.add(proxy_key)
+                    filtered_proxies.append(proxy)
+            
+            logger.info(f"После удаления дубликатов: {len(filtered_proxies)} уникальных прокси (было {len(all_proxies)})")
             
             # Статистика по странам и протоколам
             country_stats = {}
             protocol_stats = {}
+            source_stats = {}
             for p in filtered_proxies:
                 country = p['country']
                 protocol = p['protocol'].upper()
+                source = p.get('source', 'unknown')
                 country_stats[country] = country_stats.get(country, 0) + 1
                 protocol_stats[protocol] = protocol_stats.get(protocol, 0) + 1
+                source_stats[source] = source_stats.get(source, 0) + 1
             
-            logger.info(f"Всего прокси в репозитории: {total_proxies}")
-            logger.info(f"Отфильтровано прокси: {len(filtered_proxies)}")
+            logger.info(f"Всего уникальных прокси: {len(filtered_proxies)}")
+            logger.info(f"По источникам: {source_stats}")
             if self.country_filter:
-                logger.info(f"Прокси для страны {self.country_filter}: {country_stats}")
+                logger.info(f"Прокси по странам: {dict(sorted(country_stats.items(), key=lambda x: x[1], reverse=True)[:10])}")  # Топ-10 стран
             logger.info(f"Статистика по протоколам: {protocol_stats}")
             
             # Сохраняем прокси в файл
@@ -159,6 +437,8 @@ class ProxyManager:
             
         except Exception as e:
             logger.error(f"Ошибка при скачивании прокси: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return False
     
     def load_proxies(self) -> List[Dict]:
