@@ -283,8 +283,30 @@ def _create_chrome_driver(proxy: Optional[Dict] = None) -> webdriver.Chrome:
             else:
                 raise ValueError(f"Chrome не поддерживает {protocol.upper()} прокси. Используйте Firefox.")
         
-        driver = uc.Chrome(options=options, version_main=None)
-        return driver
+        # Пробуем создать драйвер с автоматическим определением версии
+        try:
+            # version_main=None позволяет автоматически определить версию Chrome
+            driver = uc.Chrome(options=options, version_main=None)
+            return driver
+        except Exception as e:
+            error_msg = str(e).lower()
+            # Если ошибка связана с версией ChromeDriver
+            if "version" in error_msg and ("chrome" in error_msg or "chromedriver" in error_msg):
+                logger.warning(f"Проблема с версией ChromeDriver: {e}")
+                logger.info("Пробуем создать драйвер с use_subprocess=True для автоматического обновления...")
+                try:
+                    # use_subprocess=True может помочь с автоматическим обновлением ChromeDriver
+                    driver = uc.Chrome(options=options, version_main=None, use_subprocess=True)
+                    return driver
+                except Exception as e2:
+                    logger.warning(f"Не удалось создать драйвер с use_subprocess: {e2}")
+                    logger.info("Рекомендуется запустить скрипт установки: python install.py")
+                    logger.info("Или обновить вручную: pip install --upgrade --force-reinstall undetected-chromedriver")
+                    # Пробрасываем исходную ошибку
+                    raise e
+            else:
+                # Другая ошибка - пробрасываем
+                raise
     else:
         # Fallback на обычный Selenium Chrome
         from selenium.webdriver.chrome.service import Service as ChromeService

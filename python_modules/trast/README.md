@@ -14,14 +14,50 @@
 
 ## Установка
 
+### Автоматическая установка (рекомендуется)
+
+Используйте скрипты установки для автоматической настройки всех зависимостей:
+
+**Windows:**
+```bash
+install.bat
+```
+
+**Linux/Mac:**
+```bash
+chmod +x install.sh
+./install.sh
+```
+
+**Или через Python (кроссплатформенно):**
+```bash
+python install.py
+```
+
+Скрипты автоматически:
+- Обновят pip
+- Установят все зависимости из `requirements.txt`
+- Обновят `undetected-chromedriver` для совместимости с Chrome
+- Проверят установку пакетов
+
+### Ручная установка
+
 1. Установите зависимости:
 ```bash
 pip install -r requirements.txt
+pip install --upgrade --force-reinstall undetected-chromedriver
 ```
 
 2. Убедитесь, что установлены браузеры:
 - Chrome/Chromium (для HTTP/HTTPS прокси)
 - Firefox (для SOCKS прокси)
+
+### Решение проблем с версией ChromeDriver
+
+Если возникает ошибка несовместимости версий Chrome и ChromeDriver:
+1. Обновите Chrome до последней версии
+2. Запустите скрипт установки снова: `python install.py`
+3. Парсер автоматически использует Firefox при ошибках Chrome
 
 ## Использование
 
