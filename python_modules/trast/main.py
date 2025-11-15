@@ -33,7 +33,11 @@ from config import (
 # Добавляем обработчики логирования после импорта config
 LOG_FILE = os.path.join(LOG_DIR, f"trast_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
 logger.add(LOG_FILE, encoding='utf-8', rotation='10 MB', retention='7 days')
-logger.add(sys.stderr, level='INFO')
+# Настраиваем stderr для правильной кодировки UTF-8
+if sys.stderr.encoding != 'utf-8':
+    import io
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+logger.add(sys.stderr, level='INFO', encoding='utf-8')
 from proxy_manager import ProxyManager
 from utils import (
     create_driver, get_pages_count_with_driver, get_products_from_page_soup,
@@ -439,8 +443,17 @@ def worker_thread(
     # ФАЗА 1: Поиск рабочего прокси
     logger.info(f"[{thread_name}] Фаза 1: Поиск рабочего прокси...")
     proxy_index = thread_id  # Начинаем с thread_id (0 или 1), затем +2
+    max_search_time = 1800  # Максимум 30 минут на поиск прокси
+    search_start_time = time.time()
+    last_list_size = 0
+    consecutive_empty_checks = 0
     
     while True:
+        # Проверяем таймаут
+        if time.time() - search_start_time >= max_search_time:
+            logger.error(f"[{thread_name}] Превышено время поиска прокси ({max_search_time}с), завершаем поток")
+            return
+        
         # Проверяем, есть ли уже total_pages от другого потока
         with total_pages_lock:
             if total_pages_shared.get('value') and total_pages_shared['value'] > 0:
@@ -450,11 +463,24 @@ def worker_thread(
         
         # Получаем прокси из списка
         with proxies_lock:
-            if proxy_index >= len(proxies_list):
-                logger.warning(f"[{thread_name}] Достигнут конец списка прокси (индекс {proxy_index}), ждем обновления...")
+            current_list_size = len(proxies_list)
+            if proxy_index >= current_list_size:
+                # Если список не обновился после нескольких проверок - возможно, прокси закончились
+                if current_list_size == last_list_size:
+                    consecutive_empty_checks += 1
+                    if consecutive_empty_checks >= 6:  # 30 секунд ожидания
+                        logger.warning(f"[{thread_name}] Список прокси не обновляется, возможно все прокси проверены. Ожидаем обновления...")
+                        consecutive_empty_checks = 0
+                else:
+                    consecutive_empty_checks = 0
+                    last_list_size = current_list_size
+                
+                logger.debug(f"[{thread_name}] Достигнут конец списка прокси (индекс {proxy_index}, размер списка: {current_list_size}), ждем обновления...")
                 time.sleep(5)
                 continue
             
+            consecutive_empty_checks = 0
+            last_list_size = current_list_size
             proxy = proxies_list[proxy_index]
             proxy_index += 2  # Следующий прокси для этого потока (четный/нечетный)
         
@@ -604,10 +630,17 @@ def worker_thread(
                 
                 # Ищем новый прокси (продолжаем с текущего индекса)
                 found_new_proxy = False
+                proxy_search_start = time.time()
+                max_proxy_search_time = 300  # Максимум 5 минут на поиск нового прокси
+                
                 while not found_new_proxy:
+                    if time.time() - proxy_search_start >= max_proxy_search_time:
+                        logger.error(f"[{thread_name}] Превышено время поиска нового прокси ({max_proxy_search_time}с), завершаем поток")
+                        break
+                    
                     with proxies_lock:
                         if proxy_index >= len(proxies_list):
-                            logger.warning(f"[{thread_name}] Достигнут конец списка прокси, ждем обновления...")
+                            logger.debug(f"[{thread_name}] Достигнут конец списка прокси, ждем обновления...")
                             time.sleep(5)
                             continue
                         
