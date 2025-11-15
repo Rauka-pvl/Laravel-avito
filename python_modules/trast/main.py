@@ -583,7 +583,7 @@ def parse_all_pages(
                     proxy_switches += 1
                     
                     driver, current_proxy, cookies = recreate_driver_with_new_proxy(
-                        proxy_manager, current_proxy, working_proxies, driver, cookies
+                        proxy_manager, current_proxy, working_proxies_list, driver, cookies, proxies_lock
                     )
                     
                     if not driver or not current_proxy:
@@ -675,7 +675,7 @@ def parse_all_pages(
                             proxy_switches += 1
                             
                             driver, current_proxy, cookies = recreate_driver_with_new_proxy(
-                                proxy_manager, current_proxy, working_proxies, driver, cookies
+                                proxy_manager, current_proxy, working_proxies_list, driver, cookies, proxies_lock
                             )
                             
                             if not driver or not current_proxy:
@@ -754,7 +754,7 @@ def parse_all_pages(
                             proxy_switches += 1
                             
                             driver, current_proxy, cookies = recreate_driver_with_new_proxy(
-                                proxy_manager, current_proxy, working_proxies, driver, cookies
+                                proxy_manager, current_proxy, working_proxies_list, driver, cookies, proxies_lock
                             )
                             
                             if not driver or not current_proxy:
@@ -879,26 +879,36 @@ def main():
             
             # Берем первый рабочий прокси
             proxy = working_proxies[0]
-            protocol = proxy.get('protocol', 'http').lower()
-            use_chrome = protocol in ['http', 'https']
             
-            logger.info(f"Попытка {attempt}: получаем количество страниц через прокси {proxy['ip']}:{proxy['port']}...")
-            
-            driver = create_driver(proxy, use_chrome=use_chrome)
-            if not driver:
-                logger.warning(f"Не удалось создать драйвер для прокси {proxy['ip']}:{proxy['port']}")
-                time.sleep(2)
-                continue
-            
-            total_pages = get_pages_count_with_driver(driver)
-            
-            if total_pages and total_pages > 0:
-                logger.info(f"✓ Найдено {total_pages} страниц для парсинга (попытка {attempt})")
+            # Проверяем, есть ли уже полученное количество страниц из проверки прокси
+            if 'total_pages' in proxy and proxy.get('total_pages') and proxy.get('total_pages') > 0:
+                total_pages = proxy['total_pages']
+                logger.info(f"✓ Используем уже полученное количество страниц: {total_pages} (попытка {attempt}, прокси {proxy['ip']}:{proxy['port']})")
                 # Сохраняем прокси, который успешно получил количество страниц
                 successful_proxy = proxy.copy()
                 break
             else:
-                logger.warning(f"Не удалось определить количество страниц (попытка {attempt}) - прокси не работает, ищем другой")
+                # Fallback: получаем количество страниц через драйвер
+                protocol = proxy.get('protocol', 'http').lower()
+                use_chrome = protocol in ['http', 'https']
+                
+                logger.info(f"Попытка {attempt}: получаем количество страниц через прокси {proxy['ip']}:{proxy['port']} (кэшированное значение отсутствует)...")
+                
+                driver = create_driver(proxy, use_chrome=use_chrome)
+                if not driver:
+                    logger.warning(f"Не удалось создать драйвер для прокси {proxy['ip']}:{proxy['port']}")
+                    time.sleep(2)
+                    continue
+                
+                total_pages = get_pages_count_with_driver(driver)
+                
+                if total_pages and total_pages > 0:
+                    logger.info(f"✓ Найдено {total_pages} страниц для парсинга (попытка {attempt})")
+                    # Сохраняем прокси, который успешно получил количество страниц
+                    successful_proxy = proxy.copy()
+                    break
+                else:
+                    logger.warning(f"Не удалось определить количество страниц (попытка {attempt}) - прокси не работает, ищем другой")
                 
         except PaginationNotDetectedError as e:
             # Страница заблокирована - прокси не работает, ищем другой
