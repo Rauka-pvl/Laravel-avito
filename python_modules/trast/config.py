@@ -62,6 +62,11 @@ PROXY_SOURCES = {
         'url': 'https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/all/data.json',
         'type': 'json',
         'active': True
+    },
+    'proxyscrape': {
+        'url': 'https://api.proxyscrape.com/v2/?request=get&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all',
+        'type': 'proxyscrape',
+        'active': True
     }
 }
 

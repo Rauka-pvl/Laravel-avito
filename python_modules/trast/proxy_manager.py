@@ -212,6 +212,105 @@ class ProxyManager:
             logger.warning(f"Ошибка при загрузке прокси с Proxifly: {e}")
             return []
     
+    def _download_proxies_from_proxyscrape(self) -> List[Dict]:
+        """Загружает прокси с ProxyScrape API"""
+        try:
+            logger.info("Загрузка прокси с ProxyScrape...")
+            # Получаем HTTP прокси
+            url_http = "https://api.proxyscrape.com/v2/?request=get&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all"
+            # Получаем SOCKS4 прокси
+            url_socks4 = "https://api.proxyscrape.com/v2/?request=get&protocol=socks4&timeout=10000&country=all"
+            # Получаем SOCKS5 прокси
+            url_socks5 = "https://api.proxyscrape.com/v2/?request=get&protocol=socks5&timeout=10000&country=all"
+            
+            proxies = []
+            
+            # Загружаем HTTP/HTTPS прокси
+            try:
+                response = requests.get(url_http, timeout=30)
+                response.raise_for_status()
+                text = response.text.strip()
+                if text:
+                    for line in text.split('\n'):
+                        line = line.strip()
+                        if not line or ':' not in line:
+                            continue
+                        try:
+                            ip, port = line.split(':', 1)
+                            # HTTP прокси могут использоваться как HTTP и HTTPS
+                            for protocol in ['http', 'https']:
+                                proxies.append({
+                                    'ip': ip.strip(),
+                                    'port': port.strip(),
+                                    'protocol': protocol,
+                                    'country': '',  # ProxyScrape не предоставляет страну в этом формате
+                                    'source': 'proxyscrape'
+                                })
+                        except ValueError:
+                            continue
+            except Exception as e:
+                logger.debug(f"Ошибка при загрузке HTTP прокси с ProxyScrape: {e}")
+            
+            # Загружаем SOCKS4 прокси
+            try:
+                response = requests.get(url_socks4, timeout=30)
+                response.raise_for_status()
+                text = response.text.strip()
+                if text:
+                    for line in text.split('\n'):
+                        line = line.strip()
+                        if not line or ':' not in line:
+                            continue
+                        try:
+                            ip, port = line.split(':', 1)
+                            proxies.append({
+                                'ip': ip.strip(),
+                                'port': port.strip(),
+                                'protocol': 'socks4',
+                                'country': '',
+                                'source': 'proxyscrape'
+                            })
+                        except ValueError:
+                            continue
+            except Exception as e:
+                logger.debug(f"Ошибка при загрузке SOCKS4 прокси с ProxyScrape: {e}")
+            
+            # Загружаем SOCKS5 прокси
+            try:
+                response = requests.get(url_socks5, timeout=30)
+                response.raise_for_status()
+                text = response.text.strip()
+                if text:
+                    for line in text.split('\n'):
+                        line = line.strip()
+                        if not line or ':' not in line:
+                            continue
+                        try:
+                            ip, port = line.split(':', 1)
+                            proxies.append({
+                                'ip': ip.strip(),
+                                'port': port.strip(),
+                                'protocol': 'socks5',
+                                'country': '',
+                                'source': 'proxyscrape'
+                            })
+                        except ValueError:
+                            continue
+            except Exception as e:
+                logger.debug(f"Ошибка при загрузке SOCKS5 прокси с ProxyScrape: {e}")
+            
+            # Фильтруем по странам (если указан фильтр, но ProxyScrape не предоставляет страну, пропускаем фильтрацию)
+            if self.country_filter:
+                # Оставляем только прокси без указания страны или те, которые могут быть из нужных стран
+                # Так как ProxyScrape не предоставляет страну, оставляем все
+                pass
+            
+            logger.info(f"Получено {len(proxies)} прокси с ProxyScrape")
+            return proxies
+        except Exception as e:
+            logger.warning(f"Ошибка при загрузке прокси с ProxyScrape: {e}")
+            return []
+    
     def download_proxies(self, force_update: bool = False) -> bool:
         """Скачивает свежие прокси из всех источников"""
         try:
@@ -229,6 +328,11 @@ class ProxyManager:
             if PROXY_SOURCES['proxifly']['active']:
                 proxifly_proxies = self._download_proxies_from_proxifly()
                 all_proxies.extend(proxifly_proxies)
+            
+            # Загружаем с proxyscrape
+            if PROXY_SOURCES.get('proxyscrape', {}).get('active', False):
+                proxyscrape_proxies = self._download_proxies_from_proxyscrape()
+                all_proxies.extend(proxyscrape_proxies)
             
             # Удаляем дубликаты
             seen = set()
