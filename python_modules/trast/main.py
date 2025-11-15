@@ -15,24 +15,30 @@ from selenium.common.exceptions import TimeoutException
 from loguru import logger
 import cloudscraper
 
+# Настройка логирования ДО импорта других модулей
+# Удаляем дефолтный обработчик (id=0) чтобы избежать дублирования
+try:
+    logger.remove(0)  # Удаляем дефолтный обработчик stderr
+except ValueError:
+    pass  # Обработчик уже удален или не существует
+
 from config import (
     TARGET_URL, MAX_EMPTY_PAGES, MIN_WORKING_PROXIES, MAX_PROXIES_TO_CHECK,
     PREFERRED_COUNTRIES, TEMP_CSV_FILE, OUTPUT_FILE, CSV_FILE,
     MIN_DELAY_BETWEEN_PAGES, MAX_DELAY_BETWEEN_PAGES,
     MIN_DELAY_AFTER_LOAD, MAX_DELAY_AFTER_LOAD, LOG_DIR
 )
+
+# Добавляем обработчики логирования после импорта config
+LOG_FILE = os.path.join(LOG_DIR, f"trast_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+logger.add(LOG_FILE, encoding='utf-8', rotation='10 MB', retention='7 days')
+logger.add(sys.stderr, level='INFO')
 from proxy_manager import ProxyManager
 from utils import (
     create_driver, get_pages_count_with_driver, get_products_from_page_soup,
     is_page_blocked, is_page_empty, create_new_csv, append_to_csv,
     finalize_output_files, cleanup_temp_files, create_backup
 )
-
-
-# Настройка логирования
-LOG_FILE = os.path.join(LOG_DIR, f"trast_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
-logger.add(LOG_FILE, encoding='utf-8', rotation='10 MB', retention='7 days')
-logger.add(sys.stderr, level='INFO')
 
 
 def is_tab_crashed_error(error) -> bool:

@@ -306,7 +306,10 @@ def _create_chrome_driver(proxy: Optional[Dict] = None) -> webdriver.Chrome:
 
 def _create_firefox_driver(proxy: Optional[Dict] = None) -> webdriver.Firefox:
     """Создает Firefox драйвер с прокси."""
-    geckodriver_autoinstaller.install()
+    try:
+        geckodriver_autoinstaller.install()
+    except Exception as e:
+        logger.warning(f"Ошибка при установке geckodriver: {e}, пробуем продолжить...")
     
     options = FirefoxOptions()
     options.add_argument("--headless")
@@ -344,13 +347,22 @@ def _create_firefox_driver(proxy: Optional[Dict] = None) -> webdriver.Firefox:
                 options.set_preference("network.proxy.socks_version", 4)
             options.set_preference("network.proxy.socks_remote_dns", True)
     
-    service = Service()
-    driver = webdriver.Firefox(service=service, options=options)
-    
-    # Дополнительные скрипты для обхода детекции
-    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-    
-    return driver
+    try:
+        service = Service()
+        driver = webdriver.Firefox(service=service, options=options)
+        
+        # Дополнительные скрипты для обхода детекции
+        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        
+        return driver
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "connection refused" in error_msg or "failed to establish" in error_msg:
+            logger.error(f"Ошибка подключения к geckodriver: {e}")
+            logger.error("Возможно, geckodriver не запущен или недоступен. Попробуйте переустановить geckodriver.")
+        else:
+            logger.error(f"Ошибка при создании Firefox драйвера: {e}")
+        raise
 
 
 def get_pages_count_with_driver(driver: webdriver.Remote, url: str = "https://trast-zapchast.ru/shop/") -> int:
