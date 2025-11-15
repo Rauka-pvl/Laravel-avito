@@ -1,39 +1,66 @@
-# Trast Parser
+# Парсер trast-zapchast.ru
 
-## Установка на Ubuntu/VPS
+Однопоточный парсер товаров с сайта trast-zapchast.ru с улучшенным обходом Cloudflare.
 
+## Особенности
+
+- ✅ Однопоточность для лучшего обхода Cloudflare
+- ✅ Использование undetected-chromedriver для Chrome
+- ✅ Умное переиспользование cookies через cloudscraper
+- ✅ Fallback на Selenium при необходимости
+- ✅ Только через прокси (никакого прямого соединения)
+- ✅ Экспорт в XLSX и CSV
+- ✅ Логирование через loguru
+
+## Установка
+
+1. Установите зависимости:
 ```bash
-# Установка Firefox для Selenium
-sudo apt-get update
-sudo apt-get install -y firefox
-
-# Установка зависимостей
-pip3 install -r ../requirements.txt
+pip install -r requirements.txt
 ```
 
-## Запуск
+2. Убедитесь, что установлены браузеры:
+- Chrome/Chromium (для HTTP/HTTPS прокси)
+- Firefox (для SOCKS прокси)
 
+## Использование
+
+Просто запустите:
 ```bash
-cd python_modules/trast
-python3 main.py
+python main.py
 ```
 
-## Что делает парсер
+Парсер автоматически:
+1. Загрузит прокси из источников (proxymania.su, proxifly)
+2. Проверит прокси на доступность trast-zapchast.ru
+3. Получит количество страниц
+4. Начнет парсинг товаров
+5. Сохранит результаты в `output/trast.csv` и `output/trast.xlsx`
 
-1. Автоматически скачивает российские прокси из репозитория Proxifly
-2. Проверяет их работоспособность (базовая + доступ к сайту через Selenium)
-3. Парсит товары с сайта trast-zapchast.ru через рабочие прокси
-4. Сохраняет результаты в Excel и CSV
+## Структура проекта
 
-## Файлы
+```
+trast_parser/
+├── main.py              # Главный файл
+├── proxy_manager.py     # Менеджер прокси
+├── utils.py             # Вспомогательные функции
+├── config.py            # Конфигурация
+├── requirements.txt     # Зависимости
+├── proxy_cache/         # Кэш прокси
+├── output/              # Результаты парсинга
+└── logs/                # Логи
+```
 
-- `main.py` - основной файл для запуска
-- `proxy_manager.py` - управление прокси
-- `.gitignore` - исключает временные файлы
+## Логика пустой страницы
 
-## Результаты
+Пустая страница определяется как страница с 16 товарами, но все НЕ в наличии.
+Парсинг останавливается после 2 пустых страниц подряд.
 
-- Excel: `storage/app/public/output/trast.xlsx`
-- CSV: `storage/app/public/output/trast.csv`
-- Логи: `storage/app/public/output/logs-trast/`
+## Настройки
+
+Все настройки находятся в `config.py`:
+- Таймауты
+- Количество рабочих прокси
+- Фильтры по странам
+- Пути к файлам
 

@@ -3,8 +3,7 @@ requests>=2.31.0
 beautifulsoup4>=4.12.0
 certifi>=2023.11.17
 urllib3>=2.0.0
-pysocks>=1.7.1  # Для полной поддержки SOCKS
-requests[socks]  # Интеграция requests + socks
+pysocks>=1.7.1  # Для полной поддержки SOCKS (используется с requests)
 cloudscraper>=1.2.69  # Обход Cloudflare защиты
 
 # Excel and CSV processing
@@ -33,6 +32,3 @@ croniter
 
 # XML processing
 lxml
-
-# Additional utilities
-pathlib
