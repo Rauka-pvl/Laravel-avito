@@ -37,20 +37,9 @@ from proxy_manager import ProxyManager
 from utils import (
     create_driver, get_pages_count_with_driver, get_products_from_page_soup,
     is_page_blocked, is_page_empty, create_new_csv, append_to_csv,
-    finalize_output_files, cleanup_temp_files, create_backup
+    finalize_output_files, cleanup_temp_files, create_backup,
+    safe_get_page_source, is_tab_crashed_error
 )
-
-
-def is_tab_crashed_error(error) -> bool:
-    """Проверяет, является ли ошибка связанной с крашем вкладки Chrome"""
-    error_msg = str(error).lower()
-    return (
-        "tab crashed" in error_msg or
-        "session deleted" in error_msg or
-        "target frame detached" in error_msg or
-        "no such session" in error_msg or
-        "chrome not reachable" in error_msg
-    )
 
 
 def is_proxy_error(error) -> bool:
@@ -61,23 +50,6 @@ def is_proxy_error(error) -> bool:
         ("proxy" in error_msg and ("refusing" in error_msg or "connection" in error_msg or "failed" in error_msg)) or
         ("neterror" in error_msg and "proxy" in error_msg)
     )
-
-
-def safe_get_page_source(driver: webdriver.Remote) -> Optional[str]:
-    """
-    Безопасно получает page_source с обработкой крашей вкладок
-    
-    Returns:
-        page_source или None при ошибке
-    """
-    try:
-        return driver.page_source
-    except Exception as e:
-        if is_tab_crashed_error(e):
-            logger.error(f"[TAB CRASH] Краш вкладки при получении page_source: {e}")
-        else:
-            logger.warning(f"Ошибка при получении page_source: {e}")
-        return None
 
 
 def reload_page_if_needed(
@@ -296,9 +268,59 @@ def parse_page_with_selenium(
         return None, False
 
 
+def recreate_driver_with_new_proxy(
+    proxy_manager: ProxyManager,
+    current_proxy: Optional[Dict],
+    working_proxies: List[Dict],
+    driver: Optional[webdriver.Remote],
+    cookies: Dict
+) -> Tuple[Optional[webdriver.Remote], Optional[Dict], Dict]:
+    """
+    Пересоздает драйвер с новым прокси.
+    
+    Returns:
+        (new_driver, new_proxy, new_cookies) - новый драйвер, прокси и пустые cookies
+    """
+    # Закрываем старый драйвер
+    if driver:
+        try:
+            driver.quit()
+        except:
+            pass
+    
+    # Получаем новый прокси
+    new_proxy = proxy_manager.get_next_proxy()
+    if not new_proxy:
+        # Если прокси закончились, получаем новые
+        logger.warning("Рабочие прокси закончились, ищем новые...")
+        new_proxies = proxy_manager.get_working_proxies(min_count=1, max_to_check=20)
+        if new_proxies:
+            working_proxies.extend(new_proxies)
+            new_proxy = working_proxies[0]
+        else:
+            logger.error("Не удалось найти новые рабочие прокси!")
+            return None, None, {}
+    
+    # Создаем новый драйвер
+    protocol = new_proxy.get('protocol', 'http').lower()
+    use_chrome = protocol in ['http', 'https']
+    
+    logger.info(f"Пересоздаем драйвер с новым прокси {new_proxy['ip']}:{new_proxy['port']} ({protocol.upper()})...")
+    new_driver = create_driver(new_proxy, use_chrome=use_chrome)
+    
+    if not new_driver:
+        logger.warning(f"Не удалось создать драйвер с прокси {new_proxy['ip']}:{new_proxy['port']}")
+        return None, new_proxy, {}
+    
+    # Сбрасываем cookies
+    new_cookies = {}
+    
+    return new_driver, new_proxy, new_cookies
+
+
 def parse_all_pages(
     proxy_manager: ProxyManager,
-    total_pages: int
+    total_pages: Optional[int]
 ) -> Tuple[int, Dict]:
     """
     Парсит все страницы последовательно
@@ -409,6 +431,14 @@ def parse_all_pages(
             page_url = f"{TARGET_URL}?_paged={current_page}"
             logger.info(f"Парсинг страницы {current_page}/{total_pages}...")
             
+            # Периодически сохраняем буфер для защиты от потери данных
+            if products_buffer and len(products_buffer) >= 10:
+                try:
+                    append_to_csv(TEMP_CSV_FILE, products_buffer)
+                    products_buffer.clear()
+                except Exception as save_error:
+                    logger.warning(f"Ошибка при периодическом сохранении буфера: {save_error}")
+            
             # Пробуем через cloudscraper (быстро)
             soup = None
             success = False
@@ -462,25 +492,18 @@ def parse_all_pages(
             if not success or not soup:
                 logger.warning(f"Не удалось загрузить страницу {current_page}, пробуем новый прокси...")
                 proxy_switches += 1
-                current_proxy = proxy_manager.get_next_proxy()
-                if not current_proxy:
-                    # Если прокси закончились, получаем новые
-                    logger.warning("Рабочие прокси закончились, ищем новые...")
-                    new_proxies = proxy_manager.get_working_proxies(min_count=1, max_to_check=20)
-                    if new_proxies:
-                        working_proxies.extend(new_proxies)
-                        current_proxy = working_proxies[0]
-                    else:
-                        logger.error("Не удалось найти новые рабочие прокси!")
-                        break
                 
-                if driver:
-                    try:
-                        driver.quit()
-                    except:
-                        pass
-                driver = None
-                cookies = {}  # Сбрасываем cookies
+                # Пересоздаем драйвер с новым прокси
+                driver, current_proxy, cookies = recreate_driver_with_new_proxy(
+                    proxy_manager, current_proxy, working_proxies, driver, cookies
+                )
+                
+                if not driver or not current_proxy:
+                    logger.error("Не удалось пересоздать драйвер после ошибки загрузки!")
+                    break
+                
+                logger.info(f"Драйвер пересоздан, продолжаем со страницы {current_page}")
+                # Продолжаем с той же страницы (не увеличиваем current_page)
                 continue
             
             # Проверяем блокировку
@@ -488,25 +511,20 @@ def parse_all_pages(
             if driver:
                 page_source = safe_get_page_source(driver)
                 if not page_source:
-                    # Краш вкладки при получении page_source
+                    # Краш вкладки при получении page_source - пересоздаем драйвер с новым прокси
                     logger.error(f"[TAB CRASH] Краш вкладки при получении page_source для страницы {current_page}, пересоздаем драйвер...")
-                    try:
-                        driver.quit()
-                    except:
-                        pass
-                    driver = None
-                    # Пробуем новый прокси
                     proxy_switches += 1
-                    current_proxy = proxy_manager.get_next_proxy()
-                    if not current_proxy:
-                        new_proxies = proxy_manager.get_working_proxies(min_count=1, max_to_check=20)
-                        if new_proxies:
-                            working_proxies.extend(new_proxies)
-                            current_proxy = working_proxies[0]
-                        else:
-                            logger.error("Не удалось найти новые рабочие прокси!")
-                            break
-                    cookies = {}
+                    
+                    driver, current_proxy, cookies = recreate_driver_with_new_proxy(
+                        proxy_manager, current_proxy, working_proxies, driver, cookies
+                    )
+                    
+                    if not driver or not current_proxy:
+                        logger.error("Не удалось пересоздать драйвер после краша вкладки!")
+                        break
+                    
+                    logger.info(f"[TAB CRASH] Драйвер пересоздан, продолжаем со страницы {current_page}")
+                    # Продолжаем с той же страницы (не увеличиваем current_page)
                     continue
             else:
                 # Если использовали cloudscraper, получаем HTML из soup
@@ -520,28 +538,21 @@ def parse_all_pages(
             block_check = is_page_blocked(soup, page_source)
             
             if block_check["blocked"]:
-                logger.warning(f"Страница {current_page} заблокирована: {block_check['reason']}")
+                logger.warning(f"Страница {current_page} заблокирована: {block_check['reason']} → переключаем прокси")
                 cloudflare_blocks += 1
                 proxy_switches += 1
-                current_proxy = proxy_manager.get_next_proxy()
-                if not current_proxy:
-                    # Если прокси закончились, получаем новые
-                    logger.warning("Рабочие прокси закончились, ищем новые...")
-                    new_proxies = proxy_manager.get_working_proxies(min_count=1, max_to_check=20)
-                    if new_proxies:
-                        working_proxies.extend(new_proxies)
-                        current_proxy = working_proxies[0]
-                    else:
-                        logger.error("Не удалось найти новые рабочие прокси!")
-                        break
                 
-                if driver:
-                    try:
-                        driver.quit()
-                    except:
-                        pass
-                driver = None
-                cookies = {}  # Сбрасываем cookies
+                # Пересоздаем драйвер с новым прокси
+                driver, current_proxy, cookies = recreate_driver_with_new_proxy(
+                    proxy_manager, current_proxy, working_proxies, driver, cookies
+                )
+                
+                if not driver or not current_proxy:
+                    logger.error("Не удалось пересоздать драйвер с новым прокси!")
+                    break
+                
+                logger.info(f"Драйвер пересоздан с новым прокси, продолжаем со страницы {current_page}")
+                # Продолжаем с той же страницы (не увеличиваем current_page)
                 continue
             
             # Парсим товары
@@ -564,14 +575,19 @@ def parse_all_pages(
                     products_buffer.clear()
                     
             elif page_status["status"] == "empty":
-                # Пустая страница
-                empty_pages_count += 1
-                logger.warning(f"Страница {current_page}: пустая (пустых подряд: {empty_pages_count})")
-                
-                # Останавливаемся после 2 пустых страниц подряд
-                if empty_pages_count >= MAX_EMPTY_PAGES:
-                    logger.info(f"Найдено {MAX_EMPTY_PAGES} пустых страниц подряд. Останавливаем парсинг.")
-                    break
+                # Пустая страница = страница БЕЗ товаров В НАЛИЧИИ (но может быть структура каталога)
+                # Увеличиваем счетчик только если действительно нет товаров в наличии
+                if products_in_stock == 0:
+                    empty_pages_count += 1
+                    logger.warning(f"Страница {current_page}: нет товаров В НАЛИЧИИ (пустых подряд: {empty_pages_count})")
+                    
+                    # Останавливаемся после 2 пустых страниц подряд (без товаров в наличии)
+                    if empty_pages_count >= MAX_EMPTY_PAGES:
+                        logger.info(f"Найдено {MAX_EMPTY_PAGES} страниц подряд без товаров В НАЛИЧИИ. Останавливаем парсинг.")
+                        break
+                else:
+                    # Если есть товары в наличии, но статус empty - это странно, сбрасываем счетчик
+                    empty_pages_count = 0
                     
             elif page_status["status"] == "partial":
                 # Частичная загрузка - пробуем перезагрузить
@@ -589,26 +605,39 @@ def parse_all_pages(
                     except Exception as reload_error:
                         if is_tab_crashed_error(reload_error):
                             logger.error(f"[TAB CRASH] Краш вкладки при перезагрузке частичной страницы {current_page}, пересоздаем драйвер...")
-                            try:
-                                driver.quit()
-                            except:
-                                pass
-                            driver = None
-                            # Пробуем новый прокси
                             proxy_switches += 1
-                            current_proxy = proxy_manager.get_next_proxy()
-                            if not current_proxy:
-                                new_proxies = proxy_manager.get_working_proxies(min_count=1, max_to_check=20)
-                                if new_proxies:
-                                    working_proxies.extend(new_proxies)
-                                    current_proxy = working_proxies[0]
-                                else:
-                                    logger.error("Не удалось найти новые рабочие прокси!")
-                                    break
-                            cookies = {}
+                            
+                            driver, current_proxy, cookies = recreate_driver_with_new_proxy(
+                                proxy_manager, current_proxy, working_proxies, driver, cookies
+                            )
+                            
+                            if not driver or not current_proxy:
+                                logger.error("Не удалось пересоздать драйвер после краша вкладки при перезагрузке!")
+                                break
+                            
+                            logger.info(f"[TAB CRASH] Драйвер пересоздан, продолжаем со страницы {current_page}")
+                            # Продолжаем с той же страницы
                             continue
                         else:
                             logger.warning(f"Ошибка при перезагрузке частичной страницы: {reload_error}")
+            
+            elif page_status["status"] == "blocked":
+                # Блокировка - получаем новый прокси
+                logger.warning(f"Страница {current_page}: заблокирована (статус blocked) → переключаем прокси")
+                cloudflare_blocks += 1
+                proxy_switches += 1
+                
+                driver, current_proxy, cookies = recreate_driver_with_new_proxy(
+                    proxy_manager, current_proxy, working_proxies, driver, cookies
+                )
+                
+                if not driver or not current_proxy:
+                    logger.error("Не удалось пересоздать драйвер после блокировки!")
+                    break
+                
+                logger.info(f"Драйвер пересоздан с новым прокси, продолжаем со страницы {current_page}")
+                # Продолжаем с той же страницы
+                continue
             
             pages_checked += 1
             current_page += 1
@@ -622,25 +651,17 @@ def parse_all_pages(
             # Проверяем на краш вкладки - это критическая ошибка, требующая пересоздания драйвера
             if is_tab_crashed_error(e):
                 logger.error(f"[TAB CRASH] Обнаружен краш вкладки на странице {current_page}, пересоздаем драйвер...")
-                if driver:
-                    try:
-                        driver.quit()
-                    except:
-                        pass
-                    driver = None
-                
-                # Получаем новый прокси и пересоздаем драйвер
                 proxy_switches += 1
-                current_proxy = proxy_manager.get_next_proxy()
-                if not current_proxy:
-                    new_proxies = proxy_manager.get_working_proxies(min_count=1, max_to_check=20)
-                    if new_proxies:
-                        working_proxies.extend(new_proxies)
-                        current_proxy = working_proxies[0]
-                    else:
-                        logger.error("Не удалось найти новые рабочие прокси!")
-                        break
-                cookies = {}
+                
+                driver, current_proxy, cookies = recreate_driver_with_new_proxy(
+                    proxy_manager, current_proxy, working_proxies, driver, cookies
+                )
+                
+                if not driver or not current_proxy:
+                    logger.error("Не удалось пересоздать драйвер после краша вкладки!")
+                    break
+                
+                logger.info(f"[TAB CRASH] Драйвер пересоздан, продолжаем со страницы {current_page}")
                 # Не увеличиваем current_page - попробуем еще раз с новым драйвером
                 continue
             
@@ -663,32 +684,33 @@ def parse_all_pages(
                     except Exception as retry_error:
                         if is_tab_crashed_error(retry_error):
                             logger.error(f"[TAB CRASH] Краш вкладки при retry после ошибки прокси")
-                            try:
-                                driver.quit()
-                            except:
-                                pass
-                            driver = None
+                            proxy_switches += 1
+                            
+                            driver, current_proxy, cookies = recreate_driver_with_new_proxy(
+                                proxy_manager, current_proxy, working_proxies, driver, cookies
+                            )
+                            
+                            if not driver or not current_proxy:
+                                logger.error("Не удалось пересоздать драйвер после краша вкладки при retry!")
+                                break
+                            
+                            logger.info(f"[TAB CRASH] Драйвер пересоздан, продолжаем со страницы {current_page}")
+                            # Продолжаем с той же страницы
+                            continue
                 
                 # Если retry не помог - получаем новый прокси
                 logger.info(f"Получаем новый прокси после ошибки прокси...")
                 proxy_switches += 1
-                current_proxy = proxy_manager.get_next_proxy()
-                if not current_proxy:
-                    new_proxies = proxy_manager.get_working_proxies(min_count=1, max_to_check=20)
-                    if new_proxies:
-                        working_proxies.extend(new_proxies)
-                        current_proxy = working_proxies[0]
-                    else:
-                        logger.error("Не удалось найти новые рабочие прокси!")
-                        break
                 
-                if driver:
-                    try:
-                        driver.quit()
-                    except:
-                        pass
-                driver = None
-                cookies = {}
+                driver, current_proxy, cookies = recreate_driver_with_new_proxy(
+                    proxy_manager, current_proxy, working_proxies, driver, cookies
+                )
+                
+                if not driver or not current_proxy:
+                    logger.error("Не удалось пересоздать драйвер после ошибки прокси!")
+                    break
+                
+                logger.info(f"Драйвер пересоздан с новым прокси, продолжаем со страницы {current_page}")
                 # Не увеличиваем current_page - попробуем еще раз с новым прокси
                 continue
             else:
@@ -697,10 +719,14 @@ def parse_all_pages(
                 current_page += 1
                 continue
     
-    # Записываем оставшиеся товары
+    # Записываем оставшиеся товары из буфера
     if products_buffer:
-        append_to_csv(TEMP_CSV_FILE, products_buffer)
-        products_buffer.clear()
+        try:
+            append_to_csv(TEMP_CSV_FILE, products_buffer)
+            logger.info(f"Записаны оставшиеся товары из буфера: {len(products_buffer)}")
+            products_buffer.clear()
+        except Exception as buffer_error:
+            logger.error(f"Ошибка при записи оставшихся товаров: {buffer_error}")
     
     # Закрываем драйвер
     if driver:
@@ -708,6 +734,8 @@ def parse_all_pages(
             driver.quit()
         except:
             pass
+    
+    logger.info(f"Парсинг завершен: собрано {total_products} товаров, проверено {pages_checked} страниц")
     
     return total_products, {
         "pages_checked": pages_checked,
@@ -753,56 +781,125 @@ def main():
     except Exception as e:
         logger.warning(f"Ошибка при обновлении прокси: {e}")
     
-    # Получаем количество страниц
+    # Получаем количество страниц - пробуем прокси до тех пор, пока не найдется рабочий
     logger.info("Получаем количество страниц для парсинга...")
     total_pages = None
     
-    working_proxies = proxy_manager.get_working_proxies(
-        min_count=1,  # Нужен хотя бы один для получения количества страниц
-        max_to_check=50
-    )
+    attempt = 0
+    max_attempts_without_success = 20  # После 20 неудачных попыток обновляем список прокси
     
-    if not working_proxies:
-        logger.error("Не удалось найти рабочие прокси для получения количества страниц!")
-        sys.exit(1)
-    
-    driver = None
-    try:
-        proxy = working_proxies[0]
-        protocol = proxy.get('protocol', 'http').lower()
-        use_chrome = protocol in ['http', 'https']
+    while total_pages is None or total_pages <= 0:
+        attempt += 1
+        driver = None
         
-        driver = create_driver(proxy, use_chrome=use_chrome)
-        if driver:
+        try:
+            # Получаем рабочий прокси
+            working_proxies = proxy_manager.get_working_proxies(
+                min_count=1,  # Нужен хотя бы один прокси
+                max_to_check=50
+            )
+            
+            if not working_proxies:
+                logger.warning(f"Не удалось найти рабочие прокси (попытка {attempt})")
+                if attempt >= max_attempts_without_success:
+                    logger.warning("Достигнут лимит попыток без успеха. Обновляем список прокси...")
+                    proxy_manager.download_proxies(force_update=True)
+                    attempt = 0  # Сбрасываем счетчик после обновления
+                time.sleep(5)  # Ждем перед следующей попыткой
+                continue
+            
+            # Берем первый рабочий прокси
+            proxy = working_proxies[0]
+            protocol = proxy.get('protocol', 'http').lower()
+            use_chrome = protocol in ['http', 'https']
+            
+            logger.info(f"Попытка {attempt}: получаем количество страниц через прокси {proxy['ip']}:{proxy['port']}...")
+            
+            driver = create_driver(proxy, use_chrome=use_chrome)
+            if not driver:
+                logger.warning(f"Не удалось создать драйвер для прокси {proxy['ip']}:{proxy['port']}")
+                time.sleep(2)
+                continue
+            
             total_pages = get_pages_count_with_driver(driver)
-            logger.info(f"Найдено {total_pages} страниц для парсинга")
-    except Exception as e:
-        logger.error(f"Ошибка при получении количества страниц: {e}")
-        logger.error(traceback.format_exc())
-        sys.exit(1)
-    finally:
-        if driver:
+            
+            if total_pages and total_pages > 0:
+                logger.info(f"✓ Найдено {total_pages} страниц для парсинга (попытка {attempt})")
+                break
+            else:
+                logger.warning(f"Не удалось определить количество страниц (попытка {attempt})")
+                
+        except TimeoutException as e:
+            logger.warning(f"Таймаут при получении количества страниц (попытка {attempt}): {e}")
+            time.sleep(2)
+        except Exception as e:
+            error_msg = str(e).lower()
+            if is_tab_crashed_error(e):
+                logger.error(f"[TAB CRASH] Краш вкладки при получении количества страниц (попытка {attempt})")
+            elif is_proxy_error(e):
+                logger.warning(f"[PROXY ERROR] Ошибка прокси при получении количества страниц (попытка {attempt})")
+            else:
+                logger.warning(f"Ошибка при получении количества страниц (попытка {attempt}): {e}")
+            time.sleep(2)
+        finally:
+            if driver:
+                try:
+                    driver.quit()
+                except:
+                    pass
+        
+        # Если много неудачных попыток - обновляем список прокси
+        if attempt >= max_attempts_without_success:
+            logger.warning("Достигнут лимит попыток без успеха. Обновляем список прокси...")
             try:
-                driver.quit()
+                proxy_manager.download_proxies(force_update=True)
             except:
                 pass
+            attempt = 0  # Сбрасываем счетчик после обновления
+            time.sleep(5)
     
     if not total_pages or total_pages <= 0:
-        logger.error("Не удалось получить количество страниц")
+        logger.error("Критическая ошибка: не удалось получить количество страниц после множества попыток")
         sys.exit(1)
     
     # Запускаем парсинг
     logger.info("=" * 80)
     logger.info("Начинаем парсинг страниц...")
+    if total_pages:
+        logger.info(f"Будет обработано страниц: {total_pages}")
+    else:
+        logger.info("Количество страниц будет определяться по ходу парсинга")
     logger.info("=" * 80)
     
     try:
         total_products, metrics = parse_all_pages(proxy_manager, total_pages)
         logger.info(f"Парсинг завершен, собрано товаров: {total_products}")
+    except KeyboardInterrupt:
+        logger.warning("Парсинг прерван пользователем (Ctrl+C)")
+        # Сохраняем то, что уже собрано
+        try:
+            if os.path.exists(TEMP_CSV_FILE) and os.path.getsize(TEMP_CSV_FILE) > 0:
+                logger.info("Сохраняем собранные данные...")
+                finalize_output_files()
+                logger.info("Данные сохранены успешно")
+        except Exception as save_error:
+            logger.error(f"Ошибка при сохранении данных: {save_error}")
+        sys.exit(0)
     except Exception as e:
         logger.error(f"Критическая ошибка при парсинге: {e}")
         logger.error(traceback.format_exc())
-        cleanup_temp_files()
+        # Сохраняем то, что уже собрано, вместо удаления
+        try:
+            if os.path.exists(TEMP_CSV_FILE) and os.path.getsize(TEMP_CSV_FILE) > 0:
+                logger.warning("Парсинг отвалился, но сохраняем собранные данные...")
+                finalize_output_files()
+                logger.info("Данные сохранены успешно")
+            else:
+                logger.warning("Нет данных для сохранения")
+                cleanup_temp_files()
+        except Exception as save_error:
+            logger.error(f"Ошибка при сохранении данных после сбоя: {save_error}")
+            cleanup_temp_files()
         sys.exit(1)
     
     # Финализация

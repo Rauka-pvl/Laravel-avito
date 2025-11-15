@@ -59,6 +59,35 @@ class PaginationNotDetectedError(Exception):
     pass
 
 
+def is_tab_crashed_error(error) -> bool:
+    """Проверяет, является ли ошибка связанной с крашем вкладки Chrome"""
+    error_msg = str(error).lower()
+    return (
+        "tab crashed" in error_msg or
+        "session deleted" in error_msg or
+        "target frame detached" in error_msg or
+        "no such session" in error_msg or
+        "chrome not reachable" in error_msg
+    )
+
+
+def safe_get_page_source(driver: webdriver.Remote) -> Optional[str]:
+    """
+    Безопасно получает page_source с обработкой крашей вкладок
+    
+    Returns:
+        page_source или None при ошибке
+    """
+    try:
+        return driver.page_source
+    except Exception as e:
+        if is_tab_crashed_error(e):
+            logger.error(f"[TAB CRASH] Краш вкладки при получении page_source: {e}")
+        else:
+            logger.warning(f"Ошибка при получении page_source: {e}")
+        return None
+
+
 def has_catalog_structure(soup: BeautifulSoup) -> bool:
     """
     Проверяет наличие структуры каталога на странице.
@@ -365,22 +394,36 @@ def _create_firefox_driver(proxy: Optional[Dict] = None) -> webdriver.Firefox:
         raise
 
 
-def get_pages_count_with_driver(driver: webdriver.Remote, url: str = "https://trast-zapchast.ru/shop/") -> int:
-    """Получает количество страниц с улучшенной обработкой Cloudflare."""
+def get_pages_count_with_driver(driver: webdriver.Remote, url: str = "https://trast-zapchast.ru/shop/") -> Optional[int]:
+    """Получает количество страниц с улучшенной обработкой Cloudflare.
+    
+    Returns:
+        int: количество страниц или None при ошибке
+    """
     try:
         logger.info("Получаем количество страниц для парсинга...")
         
         driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT)
         try:
             driver.get(url)
+        except TimeoutException:
+            logger.warning(f"Таймаут при загрузке страницы {url}")
+            return None
         except Exception as get_error:
             error_msg = str(get_error).lower()
             if "timeout" in error_msg or "timed out" in error_msg:
                 logger.warning(f"Таймаут при загрузке страницы {url}")
+                return None
+            # Для других ошибок пробрасываем дальше
             raise
         
-        # Ждем Cloudflare
-        page_source_lower = driver.page_source.lower()
+        # Ждем Cloudflare - используем безопасное получение page_source
+        page_source = safe_get_page_source(driver)
+        if not page_source:
+            logger.error("Не удалось получить page_source после загрузки страницы")
+            return None
+        
+        page_source_lower = page_source.lower()
         max_wait = CLOUDFLARE_WAIT_TIMEOUT
         wait_time = 0
         
@@ -388,9 +431,17 @@ def get_pages_count_with_driver(driver: webdriver.Remote, url: str = "https://tr
                "just a moment" in page_source_lower) and wait_time < max_wait:
             logger.info(f"Cloudflare проверка... ждем {wait_time}/{max_wait} сек")
             time.sleep(3)
-            driver.refresh()
-            time.sleep(2)
-            page_source_lower = driver.page_source.lower()
+            try:
+                driver.refresh()
+                time.sleep(2)
+                page_source = safe_get_page_source(driver)
+                if not page_source:
+                    logger.error("Краш вкладки во время ожидания Cloudflare")
+                    return None
+                page_source_lower = page_source.lower()
+            except Exception as refresh_error:
+                logger.warning(f"Ошибка при обновлении страницы: {refresh_error}")
+                return None
             wait_time += 5
         
         # Скроллим для активации динамического контента
@@ -438,7 +489,11 @@ def get_pages_count_with_driver(driver: webdriver.Remote, url: str = "https://tr
             pass
         
         # Fallback через BeautifulSoup
-        page_source = driver.page_source
+        page_source = safe_get_page_source(driver)
+        if not page_source:
+            logger.warning("Не удалось получить page_source для BeautifulSoup")
+            return None
+        
         soup = BeautifulSoup(page_source, 'html.parser')
         last_page_el = soup.select_one(".facetwp-pager .facetwp-page.last")
         
