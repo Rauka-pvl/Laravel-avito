@@ -7,6 +7,7 @@ import sys
 import time
 import random
 import traceback
+import threading
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from bs4 import BeautifulSoup
@@ -26,7 +27,7 @@ from config import (
     TARGET_URL, MAX_EMPTY_PAGES, MIN_WORKING_PROXIES, MAX_PROXIES_TO_CHECK,
     PREFERRED_COUNTRIES, TEMP_CSV_FILE, OUTPUT_FILE, CSV_FILE,
     MIN_DELAY_BETWEEN_PAGES, MAX_DELAY_BETWEEN_PAGES,
-    MIN_DELAY_AFTER_LOAD, MAX_DELAY_AFTER_LOAD, LOG_DIR
+    MIN_DELAY_AFTER_LOAD, MAX_DELAY_AFTER_LOAD, LOG_DIR, PARSING_THREADS
 )
 
 # Добавляем обработчики логирования после импорта config
@@ -271,9 +272,10 @@ def parse_page_with_selenium(
 def recreate_driver_with_new_proxy(
     proxy_manager: ProxyManager,
     current_proxy: Optional[Dict],
-    working_proxies: List[Dict],
+    working_proxies_list: List[Dict],
     driver: Optional[webdriver.Remote],
-    cookies: Dict
+    cookies: Dict,
+    proxies_lock: Optional[threading.Lock] = None
 ) -> Tuple[Optional[webdriver.Remote], Optional[Dict], Dict]:
     """
     Пересоздает драйвер с новым прокси.
@@ -292,13 +294,18 @@ def recreate_driver_with_new_proxy(
     new_proxy = proxy_manager.get_next_proxy()
     if not new_proxy:
         # Если прокси закончились, получаем новые
-        logger.warning("Рабочие прокси закончились, ищем новые...")
+        logger.warning("[MainThread] Рабочие прокси закончились, ищем новые...")
         new_proxies = proxy_manager.get_working_proxies(min_count=1, max_to_check=MAX_PROXIES_TO_CHECK)
         if new_proxies:
-            working_proxies.extend(new_proxies)
-            new_proxy = working_proxies[0]
+            if proxies_lock:
+                with proxies_lock:
+                    working_proxies_list.extend(new_proxies)
+                    new_proxy = working_proxies_list[0] if working_proxies_list else None
+            else:
+                working_proxies_list.extend(new_proxies)
+                new_proxy = working_proxies_list[0] if working_proxies_list else None
         else:
-            logger.error("Не удалось найти новые рабочие прокси!")
+            logger.error("[MainThread] Не удалось найти новые рабочие прокси!")
             return None, None, {}
     
     # Создаем новый драйвер
@@ -320,40 +327,93 @@ def recreate_driver_with_new_proxy(
 
 def parse_all_pages(
     proxy_manager: ProxyManager,
-    total_pages: Optional[int]
+    total_pages: Optional[int],
+    initial_proxy: Optional[Dict] = None
 ) -> Tuple[int, Dict]:
     """
     Парсит все страницы последовательно
     
+    Args:
+        proxy_manager: Менеджер прокси
+        total_pages: Общее количество страниц
+        initial_proxy: Начальный прокси для начала парсинга (опционально)
+    
     Returns:
         (total_products, metrics) - количество товаров и метрики
     """
+    thread_name = "MainThread"
     total_products = 0
     empty_pages_count = 0
     pages_checked = 0
     proxy_switches = 0
     cloudflare_blocks = 0
     
-    # Получаем первый рабочий прокси
-    working_proxies = proxy_manager.get_working_proxies(
-        min_count=MIN_WORKING_PROXIES,
-        max_to_check=MAX_PROXIES_TO_CHECK
-    )
+    # Если передан начальный прокси - используем его, иначе ищем новые
+    if initial_proxy:
+        logger.info(f"[{thread_name}] Используем начальный прокси {initial_proxy['ip']}:{initial_proxy['port']} для начала парсинга")
+        working_proxies = [initial_proxy]
+        # В фоне ищем дополнительные прокси (но не блокируем парсинг)
+        logger.info(f"[{thread_name}] Запускаем фоновый поиск дополнительных прокси (минимум {MIN_WORKING_PROXIES})...")
+    else:
+        # Получаем первый рабочий прокси (минимум 1 для начала)
+        logger.info(f"[{thread_name}] Ищем рабочие прокси для парсинга...")
+        working_proxies = proxy_manager.get_working_proxies(
+            min_count=1,  # Начинаем с 1 прокси, не ждем 10
+            max_to_check=MAX_PROXIES_TO_CHECK
+        )
     
     if not working_proxies:
-        logger.error("Не удалось найти рабочие прокси!")
+        logger.error(f"[{thread_name}] Не удалось найти рабочие прокси!")
         return 0, {"pages_checked": 0, "proxy_switches": 0, "cloudflare_blocks": 0}
     
-    logger.info(f"Найдено {len(working_proxies)} рабочих прокси, начинаем парсинг")
+    logger.info(f"[{thread_name}] Найдено {len(working_proxies)} рабочих прокси, начинаем парсинг")
+    
+    # Используем список для thread-safe доступа (если будет фоновый поиск)
+    working_proxies_list = working_proxies.copy()  # Копируем в список для thread-safe доступа
+    proxies_lock = None  # Будет создан, если нужен фоновый поиск
+    
+    if len(working_proxies_list) < MIN_WORKING_PROXIES:
+        logger.info(f"[{thread_name}] У нас {len(working_proxies_list)} прокси, нужно {MIN_WORKING_PROXIES}. Запускаем фоновый поиск...")
+        # Запускаем поиск в фоне, но не блокируем парсинг
+        proxies_lock = threading.Lock()
+        
+        def background_proxy_search():
+            bg_thread_name = "BackgroundProxySearch"
+            logger.info(f"[{bg_thread_name}] Запущен фоновый поиск дополнительных прокси...")
+            try:
+                additional_proxies = proxy_manager.get_working_proxies(
+                    min_count=MIN_WORKING_PROXIES - len(working_proxies_list),
+                    max_to_check=MAX_PROXIES_TO_CHECK,
+                    use_parallel=True
+                )
+                if additional_proxies:
+                    with proxies_lock:
+                        working_proxies_list.extend(additional_proxies)
+                        current_count = len(working_proxies_list)
+                    logger.info(f"[{bg_thread_name}] Фоновый поиск завершен: добавлено {len(additional_proxies)} прокси (всего: {current_count})")
+                else:
+                    logger.warning(f"[{bg_thread_name}] Фоновый поиск не нашел дополнительных прокси")
+            except Exception as e:
+                logger.error(f"[{bg_thread_name}] Ошибка в фоновом поиске прокси: {e}")
+        
+        bg_thread = threading.Thread(target=background_proxy_search, daemon=True, name="BackgroundProxySearch")
+        bg_thread.start()
+        logger.info(f"[{thread_name}] Фоновый поиск прокси запущен, продолжаем парсинг с имеющимися прокси")
+    else:
+        proxies_lock = None  # Не нужен, если не запускаем фоновый поиск
     
     # Получаем cookies через Selenium (один раз)
     # Используем первый прокси из списка для получения cookies
-    current_proxy = working_proxies[0] if working_proxies else None
+    if proxies_lock:
+        with proxies_lock:
+            current_proxy = working_proxies_list[0] if working_proxies_list else None
+    else:
+        current_proxy = working_proxies_list[0] if working_proxies_list else None
     if not current_proxy:
-        logger.error("Нет рабочих прокси для получения cookies!")
+        logger.error(f"[{thread_name}] Нет рабочих прокси для получения cookies!")
         return 0, {"pages_checked": 0, "proxy_switches": 0, "cloudflare_blocks": 0}
     
-    logger.info(f"Получаем cookies через прокси {current_proxy['ip']}:{current_proxy['port']}...")
+    logger.info(f"[{thread_name}] Получаем cookies через прокси {current_proxy['ip']}:{current_proxy['port']}...")
     
     driver = None
     cookies = {}
@@ -421,15 +481,22 @@ def parse_all_pages(
     
     # Основной цикл парсинга
     current_page = 1
-    current_proxy = proxy_manager.get_next_proxy()  # Получаем первый прокси через менеджер
+    # Используем working_proxies_list для доступа к прокси (может обновляться в фоне)
+    if proxies_lock:
+        with proxies_lock:
+            current_proxy = working_proxies_list[0] if working_proxies_list else None
+    else:
+        current_proxy = working_proxies_list[0] if working_proxies_list else None
+    
     if not current_proxy:
-        current_proxy = working_proxies[0]  # Fallback на первый из списка
+        current_proxy = proxy_manager.get_next_proxy()  # Fallback через менеджер
+    
     driver = None  # Инициализируем драйвер
     
     while current_page <= total_pages:
         try:
             page_url = f"{TARGET_URL}?_paged={current_page}"
-            logger.info(f"Парсинг страницы {current_page}/{total_pages}...")
+            logger.info(f"[{thread_name}] Парсинг страницы {current_page}/{total_pages}...")
             
             # Периодически сохраняем буфер для защиты от потери данных
             if products_buffer and len(products_buffer) >= 10:
@@ -495,7 +562,7 @@ def parse_all_pages(
                 
                 # Пересоздаем драйвер с новым прокси
                 driver, current_proxy, cookies = recreate_driver_with_new_proxy(
-                    proxy_manager, current_proxy, working_proxies, driver, cookies
+                    proxy_manager, current_proxy, working_proxies_list, driver, cookies, proxies_lock
                 )
                 
                 if not driver or not current_proxy:
@@ -544,7 +611,7 @@ def parse_all_pages(
                 
                 # Пересоздаем драйвер с новым прокси
                 driver, current_proxy, cookies = recreate_driver_with_new_proxy(
-                    proxy_manager, current_proxy, working_proxies, driver, cookies
+                    proxy_manager, current_proxy, working_proxies_list, driver, cookies, proxies_lock
                 )
                 
                 if not driver or not current_proxy:
@@ -628,7 +695,7 @@ def parse_all_pages(
                 proxy_switches += 1
                 
                 driver, current_proxy, cookies = recreate_driver_with_new_proxy(
-                    proxy_manager, current_proxy, working_proxies, driver, cookies
+                    proxy_manager, current_proxy, working_proxies_list, driver, cookies, proxies_lock
                 )
                 
                 if not driver or not current_proxy:
@@ -654,7 +721,7 @@ def parse_all_pages(
                 proxy_switches += 1
                 
                 driver, current_proxy, cookies = recreate_driver_with_new_proxy(
-                    proxy_manager, current_proxy, working_proxies, driver, cookies
+                    proxy_manager, current_proxy, working_proxies_list, driver, cookies, proxies_lock
                 )
                 
                 if not driver or not current_proxy:
@@ -703,7 +770,7 @@ def parse_all_pages(
                 proxy_switches += 1
                 
                 driver, current_proxy, cookies = recreate_driver_with_new_proxy(
-                    proxy_manager, current_proxy, working_proxies, driver, cookies
+                    proxy_manager, current_proxy, working_proxies_list, driver, cookies, proxies_lock
                 )
                 
                 if not driver or not current_proxy:
@@ -784,6 +851,7 @@ def main():
     # Получаем количество страниц - пробуем прокси до тех пор, пока не найдется рабочий
     logger.info("Получаем количество страниц для парсинга...")
     total_pages = None
+    successful_proxy = None  # Прокси, который успешно получил количество страниц
     
     attempt = 0
     max_attempts_without_success = 20  # После 20 неудачных попыток обновляем список прокси
@@ -826,6 +894,8 @@ def main():
             
             if total_pages and total_pages > 0:
                 logger.info(f"✓ Найдено {total_pages} страниц для парсинга (попытка {attempt})")
+                # Сохраняем прокси, который успешно получил количество страниц
+                successful_proxy = proxy.copy()
                 break
             else:
                 logger.warning(f"Не удалось определить количество страниц (попытка {attempt}) - прокси не работает, ищем другой")
@@ -884,7 +954,8 @@ def main():
     logger.info("=" * 80)
     
     try:
-        total_products, metrics = parse_all_pages(proxy_manager, total_pages)
+        # Передаем успешный прокси для начала парсинга
+        total_products, metrics = parse_all_pages(proxy_manager, total_pages, initial_proxy=successful_proxy)
         logger.info(f"Парсинг завершен, собрано товаров: {total_products}")
     except KeyboardInterrupt:
         logger.warning("Парсинг прерван пользователем (Ctrl+C)")
