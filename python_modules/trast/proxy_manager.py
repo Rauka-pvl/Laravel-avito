@@ -1,6 +1,6 @@
 """
-Упрощенный менеджер прокси для парсера trast-zapchast.ru
-Без многопоточности - все проверки последовательно
+Менеджер прокси для парсера trast-zapchast.ru
+С поддержкой многопоточности для проверки прокси
 """
 import os
 import json
@@ -8,6 +8,9 @@ import re
 import time
 import random
 import requests
+import threading
+import queue
+import traceback
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 from bs4 import BeautifulSoup
@@ -18,13 +21,14 @@ from selenium.common.exceptions import TimeoutException
 from config import (
     PROXY_CACHE_DIR, PROXIES_FILE, SUCCESSFUL_PROXIES_FILE, LAST_UPDATE_FILE,
     PREFERRED_COUNTRIES, PROXY_SOURCES, PROXY_TEST_TIMEOUT, BASIC_CHECK_TIMEOUT,
-    TARGET_URL
+    TARGET_URL, PROXY_CHECK_THREADS
 )
-from utils import create_driver, get_pages_count_with_driver
+
+from utils import create_driver, get_pages_count_with_driver, PaginationNotDetectedError
 
 
 class ProxyManager:
-    """Упрощенный менеджер прокси без многопоточности"""
+    """Менеджер прокси с поддержкой многопоточности для проверки прокси"""
     
     def __init__(self, country_filter: Optional[List[str]] = None):
         """
@@ -36,6 +40,9 @@ class ProxyManager:
         self.country_filter = [c.upper() for c in country_filter] if country_filter else PREFERRED_COUNTRIES
         self.failed_proxies = set()
         self.successful_proxies = []
+        
+        # Thread-safety: блокировка для доступа к критическим данным
+        self.lock = threading.Lock()
         
         # Загружаем успешные прокси при инициализации
         self.successful_proxies = self.load_successful_proxies()
@@ -330,23 +337,22 @@ class ProxyManager:
                 logger.warning("Cloudflare проверка не пройдена")
                 return False, {}
             
-            # Пробуем получить количество страниц
+            # Пробуем получить количество страниц - это ОСНОВНОЙ критерий работоспособности прокси
             try:
                 total_pages = get_pages_count_with_driver(driver)
                 if total_pages and total_pages > 0:
-                    logger.info(f"Прокси работает! Найдено {total_pages} страниц")
+                    logger.info(f"✓ Прокси работает! Успешно получено количество страниц: {total_pages}")
                     return True, {'total_pages': total_pages}
+                else:
+                    logger.warning(f"Прокси не смог получить количество страниц (вернул {total_pages})")
+                    return False, {}
+            except PaginationNotDetectedError as e:
+                # Страница заблокирована - прокси не работает
+                logger.warning(f"Прокси заблокирован на сайте: {e}")
+                return False, {}
             except Exception as e:
-                logger.debug(f"Не удалось получить количество страниц: {e}")
-            
-            # Проверяем наличие товаров
-            soup = BeautifulSoup(driver.page_source, 'html.parser')
-            products = soup.select("div.product.product-plate")
-            if products:
-                logger.info(f"Прокси работает! Найдено {len(products)} товаров")
-                return True, {}
-            
-            return False, {}
+                logger.warning(f"Ошибка при получении количества страниц через прокси: {e}")
+                return False, {}
             
         except Exception as e:
             logger.debug(f"Ошибка при проверке прокси на trast: {e}")
@@ -358,17 +364,135 @@ class ProxyManager:
                 except:
                     pass
     
-    def get_working_proxies(self, min_count: int = 10, max_to_check: Optional[int] = 100) -> List[Dict]:
+    def _proxy_search_worker(self, thread_id: int, proxy_queue: queue.Queue, found_proxies: List[Dict], 
+                             stop_event: threading.Event, stats: Dict, min_count: int):
+        """Worker функция для многопоточного поиска прокси
+        
+        Args:
+            thread_id: ID потока
+            proxy_queue: Очередь прокси для проверки
+            found_proxies: Список найденных прокси (thread-safe через lock)
+            stop_event: Event для остановки поиска
+            stats: Статистика поиска (thread-safe через lock)
+            min_count: Минимальное количество прокси для поиска
         """
-        Получает рабочие прокси (последовательно, без многопоточности)
+        thread_name = f"ProxySearch-{thread_id}"
+        checked_count = 0
+        failed_count = 0
+        
+        logger.info(f"[{thread_name}] Поток поиска прокси запущен")
+        
+        while not stop_event.is_set():
+            try:
+                # Получаем прокси из очереди с таймаутом
+                try:
+                    proxy = proxy_queue.get(timeout=1)
+                except queue.Empty:
+                    # Очередь пуста - завершаем поток
+                    logger.info(f"[{thread_name}] Очередь прокси пуста, завершаем поток (проверено: {checked_count}, неуспешных: {failed_count})")
+                    break
+                
+                checked_count += 1
+                proxy_key = f"{proxy['ip']}:{proxy['port']}"
+                
+                # Проверяем, не нашли ли уже достаточно прокси
+                with self.lock:
+                    if len(found_proxies) >= min_count:
+                        stop_event.set()
+                        proxy_queue.task_done()
+                        break
+                
+                logger.info(f"[{thread_name}] Проверка прокси {proxy_key} ({proxy.get('protocol', 'http').upper()})...")
+                
+                # Базовая проверка
+                basic_ok, basic_info = self.validate_proxy_basic(proxy)
+                if not basic_ok:
+                    with self.lock:
+                        self.failed_proxies.add(proxy_key)
+                        stats['failed'] += 1
+                    proxy_queue.task_done()
+                    failed_count += 1
+                    continue
+                
+                # Проверка на trast
+                trast_ok, trast_info = self.validate_proxy_for_trast(proxy)
+                if trast_ok:
+                    working_proxy = {
+                        'ip': proxy['ip'],
+                        'port': proxy['port'],
+                        'protocol': proxy['protocol'],
+                        'country': proxy.get('country', ''),
+                        'source': proxy.get('source', 'unknown')
+                    }
+                    working_proxy.update(trast_info)
+                    
+                    # Thread-safe добавление
+                    with self.lock:
+                        # Проверяем, не добавили ли уже этот прокси другой поток
+                        existing_keys = {f"{p['ip']}:{p['port']}" for p in found_proxies}
+                        if proxy_key not in existing_keys:
+                            found_proxies.append(working_proxy)
+                            self.successful_proxies.append(working_proxy)
+                            stats['found'] += 1
+                            current_count = len(found_proxies)
+                            
+                            logger.success(f"[{thread_name}] ✓ Найден рабочий прокси: {proxy_key} ({current_count}/{min_count})")
+                            
+                            # Если нашли достаточно - сигнализируем остановку
+                            if current_count >= min_count:
+                                stop_event.set()
+                else:
+                    with self.lock:
+                        self.failed_proxies.add(proxy_key)
+                        stats['failed'] += 1
+                    failed_count += 1
+                
+                # Обновляем общую статистику
+                with self.lock:
+                    stats['checked'] += 1
+                
+                proxy_queue.task_done()
+                
+                # Выводим статистику каждые 10 прокси
+                if checked_count % 10 == 0:
+                    with self.lock:
+                        total_checked = stats['checked']
+                        total_found = stats['found']
+                        total_failed = stats['failed']
+                    logger.info(f"[{thread_name}] Проверено {checked_count} прокси (всего по всем потокам: проверено {total_checked}, найдено {total_found}, неуспешных {total_failed})")
+                
+            except KeyboardInterrupt:
+                logger.warning(f"[{thread_name}] Получен сигнал прерывания, завершаем поток")
+                stop_event.set()
+                break
+            except Exception as e:
+                logger.error(f"[{thread_name}] Ошибка при проверке прокси: {e}")
+                logger.debug(f"[{thread_name}] Traceback: {traceback.format_exc()}")
+                try:
+                    proxy_queue.task_done()
+                except:
+                    pass
+                continue
+        
+        logger.info(f"[{thread_name}] Поток поиска прокси завершен (проверено: {checked_count}, неуспешных: {failed_count})")
+    
+    def get_working_proxies(self, min_count: int = 10, max_to_check: Optional[int] = 100, 
+                           use_parallel: bool = True, num_threads: Optional[int] = None) -> List[Dict]:
+        """
+        Получает рабочие прокси (с поддержкой многопоточности)
         
         Args:
             min_count: Минимальное количество рабочих прокси для поиска
             max_to_check: Максимальное количество прокси для проверки (None = проверять все доступные)
+            use_parallel: Использовать многопоточность (по умолчанию True)
+            num_threads: Количество потоков для проверки (None = из конфига PROXY_CHECK_THREADS)
             
         Returns:
             Список рабочих прокси
         """
+        if num_threads is None:
+            num_threads = PROXY_CHECK_THREADS
+        
         # Загружаем прокси
         proxies = self._load_proxies()
         if not proxies:
@@ -377,9 +501,57 @@ class ProxyManager:
                 return []
             proxies = self._load_proxies()
         
+        working_proxies = []
+        
+        # ШАГ 1: Сначала проверяем старые успешные прокси (быстро, последовательно)
+        with self.lock:
+            shuffled_successful = self.successful_proxies.copy()
+        
+        if shuffled_successful:
+            logger.info(f"Проверяем {len(shuffled_successful)} старых успешных прокси (приоритет)...")
+            random.shuffle(shuffled_successful)
+            
+            for proxy in shuffled_successful:
+                if len(working_proxies) >= min_count:
+                    break
+                
+                proxy_key = f"{proxy['ip']}:{proxy['port']}"
+                logger.info(f"Проверяем старый успешный прокси: {proxy_key} ({proxy.get('protocol', 'http').upper()})")
+                
+                # Быстрая проверка на trast (без базовой проверки, т.к. уже был успешным)
+                trast_ok, trast_info = self.validate_proxy_for_trast(proxy)
+                if trast_ok:
+                    logger.info(f"[OK] Старый успешный прокси работает: {proxy_key}")
+                    working_proxy = {
+                        'ip': proxy['ip'],
+                        'port': proxy['port'],
+                        'protocol': proxy['protocol'],
+                        'country': proxy.get('country', ''),
+                        'source': proxy.get('source', 'unknown')
+                    }
+                    working_proxy.update(trast_info)
+                    working_proxies.append(working_proxy)
+                else:
+                    logger.warning(f"Старый прокси {proxy_key} перестал работать")
+                    with self.lock:
+                        # Удаляем из успешных
+                        self.successful_proxies = [p for p in self.successful_proxies 
+                                                   if f"{p['ip']}:{p['port']}" != proxy_key]
+                        self.failed_proxies.add(proxy_key)
+        
+        # Если нашли достаточно старых прокси, возвращаем их
+        if len(working_proxies) >= min_count:
+            logger.info(f"Найдено достаточно старых успешных прокси: {len(working_proxies)}")
+            self.save_successful_proxies()
+            return working_proxies[:min_count]
+        
+        # ШАГ 2: Многопоточный поиск новых прокси (если нужно)
+        logger.info(f"Старых успешных прокси недостаточно ({len(working_proxies)}/{min_count}), запускаем поиск новых...")
+        
         # Фильтруем уже проверенные
-        successful_keys = {f"{p['ip']}:{p['port']}" for p in self.successful_proxies}
-        failed_keys = self.failed_proxies
+        with self.lock:
+            successful_keys = {f"{p['ip']}:{p['port']}" for p in self.successful_proxies}
+            failed_keys = self.failed_proxies.copy()
         
         proxies_to_check = []
         for proxy in proxies:
@@ -394,51 +566,92 @@ class ProxyManager:
         else:
             logger.info(f"Проверяем все доступные прокси: {len(proxies_to_check)} (успешных: {len(successful_keys)}, неудачных: {len(failed_keys)})")
         
-        logger.info(f"Нужно минимум {min_count} рабочих прокси...")
+        if not proxies_to_check:
+            logger.warning("Нет новых прокси для проверки")
+            self.save_successful_proxies()
+            return working_proxies
         
-        working_proxies = []
+        random.shuffle(proxies_to_check)
         
-        # Последовательная проверка
-        # ВАЖНО: Проверяем до тех пор, пока не найдем min_count рабочих прокси
-        # или не проверим все доступные прокси (до max_to_check)
-        for i, proxy in enumerate(proxies_to_check, 1):
-            # Если уже нашли нужное количество - останавливаемся
-            if len(working_proxies) >= min_count:
-                logger.info(f"Найдено достаточно рабочих прокси ({len(working_proxies)}/{min_count}), останавливаем проверку")
-                break
+        if use_parallel and num_threads > 1:
+            # Многопоточная проверка
+            logger.info(f"Запускаем многопоточный поиск в {num_threads} потоках...")
             
-            logger.info(f"[{i}/{len(proxies_to_check)}] Проверка прокси {proxy['ip']}:{proxy['port']}...")
+            stop_event = threading.Event()
+            stats = {'checked': 0, 'found': 0, 'failed': 0}
             
-            # Базовая проверка
-            basic_ok, basic_info = self.validate_proxy_basic(proxy)
-            if not basic_ok:
-                proxy_key = f"{proxy['ip']}:{proxy['port']}"
-                self.failed_proxies.add(proxy_key)
-                continue
+            # Создаем очередь прокси
+            proxy_queue = queue.Queue()
+            for proxy in proxies_to_check:
+                proxy_queue.put(proxy)
             
-            # Проверка на trast
-            trast_ok, trast_info = self.validate_proxy_for_trast(proxy)
-            if trast_ok:
-                working_proxy = {
-                    'ip': proxy['ip'],
-                    'port': proxy['port'],
-                    'protocol': proxy['protocol'],
-                    'country': proxy.get('country', ''),
-                    'source': proxy.get('source', 'unknown')
-                }
-                working_proxy.update(trast_info)
-                working_proxies.append(working_proxy)
-                self.successful_proxies.append(working_proxy)
-                logger.success(f"✓ Найден рабочий прокси: {proxy['ip']}:{proxy['port']} ({len(working_proxies)}/{min_count})")
-            else:
-                proxy_key = f"{proxy['ip']}:{proxy['port']}"
-                self.failed_proxies.add(proxy_key)
+            # Запускаем потоки
+            threads = []
+            for thread_id in range(num_threads):
+                thread = threading.Thread(
+                    target=self._proxy_search_worker,
+                    args=(thread_id, proxy_queue, working_proxies, stop_event, stats, min_count),
+                    daemon=False,
+                    name=f"ProxySearch-{thread_id}"
+                )
+                thread.start()
+                threads.append(thread)
+                logger.info(f"Запущен поток поиска прокси {thread_id}")
+            
+            # Ждем завершения всех потоков (с таймаутом для безопасности)
+            for i, thread in enumerate(threads):
+                thread.join(timeout=300)  # Максимум 5 минут на поток
+                if thread.is_alive():
+                    logger.warning(f"Поток {i} не завершился за 5 минут, возможно завис")
+                else:
+                    logger.debug(f"Поток {i} успешно завершен")
+            
+            logger.info(f"Многопоточный поиск завершен: найдено {len(working_proxies)} прокси (проверено: {stats['checked']}, неуспешных: {stats['failed']})")
+        else:
+            # Последовательная проверка (fallback)
+            logger.info("Последовательная проверка прокси...")
+            
+            for i, proxy in enumerate(proxies_to_check, 1):
+                # Если уже нашли нужное количество - останавливаемся
+                if len(working_proxies) >= min_count:
+                    logger.info(f"Найдено достаточно рабочих прокси ({len(working_proxies)}/{min_count}), останавливаем проверку")
+                    break
+                
+                logger.info(f"[{i}/{len(proxies_to_check)}] Проверка прокси {proxy['ip']}:{proxy['port']}...")
+                
+                # Базовая проверка
+                basic_ok, basic_info = self.validate_proxy_basic(proxy)
+                if not basic_ok:
+                    proxy_key = f"{proxy['ip']}:{proxy['port']}"
+                    with self.lock:
+                        self.failed_proxies.add(proxy_key)
+                    continue
+                
+                # Проверка на trast
+                trast_ok, trast_info = self.validate_proxy_for_trast(proxy)
+                if trast_ok:
+                    working_proxy = {
+                        'ip': proxy['ip'],
+                        'port': proxy['port'],
+                        'protocol': proxy['protocol'],
+                        'country': proxy.get('country', ''),
+                        'source': proxy.get('source', 'unknown')
+                    }
+                    working_proxy.update(trast_info)
+                    working_proxies.append(working_proxy)
+                    with self.lock:
+                        self.successful_proxies.append(working_proxy)
+                    logger.success(f"✓ Найден рабочий прокси: {proxy['ip']}:{proxy['port']} ({len(working_proxies)}/{min_count})")
+                else:
+                    proxy_key = f"{proxy['ip']}:{proxy['port']}"
+                    with self.lock:
+                        self.failed_proxies.add(proxy_key)
         
         # Сохраняем успешные прокси
         self.save_successful_proxies()
         
-        logger.info(f"Найдено {len(working_proxies)} рабочих прокси")
-        return working_proxies
+        logger.info(f"Всего найдено {len(working_proxies)} рабочих прокси")
+        return working_proxies[:min_count] if len(working_proxies) > min_count else working_proxies
     
     def get_next_proxy(self) -> Optional[Dict]:
         """Получает следующий рабочий прокси из списка"""
