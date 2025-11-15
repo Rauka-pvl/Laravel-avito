@@ -293,7 +293,7 @@ def recreate_driver_with_new_proxy(
     if not new_proxy:
         # Если прокси закончились, получаем новые
         logger.warning("Рабочие прокси закончились, ищем новые...")
-        new_proxies = proxy_manager.get_working_proxies(min_count=1, max_to_check=20)
+        new_proxies = proxy_manager.get_working_proxies(min_count=1, max_to_check=MAX_PROXIES_TO_CHECK)
         if new_proxies:
             working_proxies.extend(new_proxies)
             new_proxy = working_proxies[0]
@@ -793,10 +793,11 @@ def main():
         driver = None
         
         try:
-            # Получаем рабочий прокси
+            # Получаем рабочий прокси - пробуем ВСЕ доступные прокси, пока не найдем рабочий
+            # max_to_check=None означает проверять все доступные прокси без ограничений
             working_proxies = proxy_manager.get_working_proxies(
                 min_count=1,  # Нужен хотя бы один прокси
-                max_to_check=50
+                max_to_check=None  # Проверяем ВСЕ доступные прокси без ограничений
             )
             
             if not working_proxies:

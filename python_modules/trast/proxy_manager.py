@@ -358,13 +358,13 @@ class ProxyManager:
                 except:
                     pass
     
-    def get_working_proxies(self, min_count: int = 10, max_to_check: int = 100) -> List[Dict]:
+    def get_working_proxies(self, min_count: int = 10, max_to_check: Optional[int] = 100) -> List[Dict]:
         """
         Получает рабочие прокси (последовательно, без многопоточности)
         
         Args:
-            min_count: Минимальное количество рабочих прокси
-            max_to_check: Максимальное количество прокси для проверки
+            min_count: Минимальное количество рабочих прокси для поиска
+            max_to_check: Максимальное количество прокси для проверки (None = проверять все доступные)
             
         Returns:
             Список рабочих прокси
@@ -387,16 +387,24 @@ class ProxyManager:
             if proxy_key not in successful_keys and proxy_key not in failed_keys:
                 proxies_to_check.append(proxy)
         
-        if len(proxies_to_check) > max_to_check:
+        # Применяем ограничение max_to_check только если оно указано
+        if max_to_check is not None and len(proxies_to_check) > max_to_check:
             proxies_to_check = proxies_to_check[:max_to_check]
+            logger.info(f"Ограничение: проверяем первые {max_to_check} из {len(proxies_to_check) + len(successful_keys) + len(failed_keys)} доступных прокси")
+        else:
+            logger.info(f"Проверяем все доступные прокси: {len(proxies_to_check)} (успешных: {len(successful_keys)}, неудачных: {len(failed_keys)})")
         
-        logger.info(f"Проверяем {len(proxies_to_check)} прокси (нужно минимум {min_count} рабочих)...")
+        logger.info(f"Нужно минимум {min_count} рабочих прокси...")
         
         working_proxies = []
         
         # Последовательная проверка
+        # ВАЖНО: Проверяем до тех пор, пока не найдем min_count рабочих прокси
+        # или не проверим все доступные прокси (до max_to_check)
         for i, proxy in enumerate(proxies_to_check, 1):
+            # Если уже нашли нужное количество - останавливаемся
             if len(working_proxies) >= min_count:
+                logger.info(f"Найдено достаточно рабочих прокси ({len(working_proxies)}/{min_count}), останавливаем проверку")
                 break
             
             logger.info(f"[{i}/{len(proxies_to_check)}] Проверка прокси {proxy['ip']}:{proxy['port']}...")
