@@ -7,6 +7,7 @@ import time
 import random
 import shutil
 import csv
+import traceback
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from bs4 import BeautifulSoup
@@ -55,7 +56,10 @@ from config import (
 
 
 class PaginationNotDetectedError(Exception):
-    """Поднимается, когда страница каталога выглядит заблокированной и пагинация недоступна."""
+    """Поднимается, когда страница каталога выглядит заблокированной и пагинация недоступна.
+    
+    Это означает, что прокси не работает для данного сайта и нужно искать другой прокси.
+    """
     pass
 
 
@@ -420,9 +424,17 @@ def get_pages_count_with_driver(driver: webdriver.Remote, url: str = "https://tr
     """Получает количество страниц с улучшенной обработкой Cloudflare.
     
     Returns:
-        int: количество страниц или None при ошибке
+        int: количество страниц или None при ошибке/блокировке
+        None: если страница заблокирована или не удалось определить количество страниц
+        
+    Raises:
+        PaginationNotDetectedError: если страница заблокирована (прокси не работает)
     """
     try:
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.common.by import By
+        
         logger.info("Получаем количество страниц для парсинга...")
         
         driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT)
@@ -466,87 +478,183 @@ def get_pages_count_with_driver(driver: webdriver.Remote, url: str = "https://tr
                 return None
             wait_time += 5
         
-        # Скроллим для активации динамического контента
+        # Скроллим для активации динамического контента (как в старой версии)
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight/3);")
         time.sleep(random.uniform(1, 2))
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
         time.sleep(random.uniform(1, 2))
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(random.uniform(2, 3))
+        
+        # Дополнительное ожидание для полной загрузки динамического контента
         time.sleep(5)
         
-        # Ищем пагинацию через Selenium
+        # Метод 1: Ищем через Selenium WebDriverWait (самый надежный для динамического контента)
+        total_pages = None
+        
         try:
-            wait = WebDriverWait(driver, 15)
+            wait = WebDriverWait(driver, 30)  # Увеличено до 30 секунд
+            # Сначала ждем появления пагинации
             pagination_container = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".facetwp-pager")))
+            logger.debug("Пагинация найдена через WebDriverWait")
             
+            # Пробуем найти элемент .last
             try:
                 last_page_element = driver.find_element(By.CSS_SELECTOR, ".facetwp-pager .facetwp-page.last")
                 if last_page_element:
                     data_page = last_page_element.get_attribute("data-page")
                     if data_page:
                         total_pages = int(data_page)
-                        logger.info(f"Найдено {total_pages} страниц для парсинга")
+                        logger.info(f"[OK] Найдено {total_pages} страниц для парсинга (через Selenium .last)")
                         return total_pages
             except:
                 pass
             
-            # Ищем максимальный номер страницы
-            page_elements = driver.find_elements(By.CSS_SELECTOR, ".facetwp-pager .facetwp-page")
-            if page_elements:
-                max_page = 0
-                for page_el in page_elements:
-                    data_page = page_el.get_attribute("data-page")
-                    if data_page:
-                        try:
-                            page_num = int(data_page)
-                            if page_num > max_page:
-                                max_page = page_num
-                        except:
-                            pass
-                if max_page > 0:
-                    logger.info(f"Найдено {max_page} страниц для парсинга")
-                    return max_page
-        except:
-            pass
+            # Если .last не найден, ищем все элементы пагинации и берем максимальный номер
+            try:
+                page_elements = driver.find_elements(By.CSS_SELECTOR, ".facetwp-pager .facetwp-page")
+                logger.debug(f"Найдено элементов пагинации: {len(page_elements)}")
+                if page_elements:
+                    max_page = 0
+                    found_pages = []
+                    for page_el in page_elements:
+                        data_page = page_el.get_attribute("data-page")
+                        if data_page:
+                            try:
+                                page_num = int(data_page)
+                                found_pages.append(page_num)
+                                if page_num > max_page:
+                                    max_page = page_num
+                            except:
+                                pass
+                    logger.debug(f"Найденные номера страниц: {found_pages}")
+                    if max_page > 0:
+                        total_pages = max_page
+                        logger.info(f"[OK] Найдено {total_pages} страниц для парсинга (через Selenium, максимальный номер из {len(found_pages)} элементов)")
+                        return total_pages
+                    else:
+                        logger.warning(f"[WARNING] Найдено {len(page_elements)} элементов пагинации, но не удалось извлечь номера страниц")
+            except Exception as find_error:
+                logger.debug(f"Ошибка при поиске всех элементов пагинации: {find_error}")
+        except Exception as wait_error:
+            logger.debug(f"WebDriverWait не помог: {wait_error}")
         
-        # Fallback через BeautifulSoup
+        # Метод 2: Пробуем через BeautifulSoup (fallback)
         page_source = safe_get_page_source(driver)
         if not page_source:
             logger.warning("Не удалось получить page_source для BeautifulSoup")
             return None
         
+        page_source_lower = page_source.lower()
         soup = BeautifulSoup(page_source, 'html.parser')
+        
+        # Проверяем на блокировку ПЕРЕД поиском пагинации
+        block_indicators = [
+            "cloudflare",
+            "checking your browser",
+            "just a moment",
+            "service temporarily unavailable",
+            "temporarily unavailable",
+            "access denied",
+            "ошибка 503",
+            "error 503",
+            "ошибка 403",
+            "error 403",
+            "captcha",
+            "please enable javascript",
+            "attention required",
+        ]
+        if any(indicator in page_source_lower for indicator in block_indicators):
+            logger.warning("[WARNING] Обнаружены признаки блокировки на странице каталога")
+            raise PaginationNotDetectedError("Пагинация не найдена из-за блокировки или заглушки")
+        
+        # Проверяем наличие товаров и пагинации
+        has_products = bool(soup.select("div.product.product-plate"))
+        has_pagination_any = bool(soup.select(".facetwp-pager .facetwp-page"))
+        
+        if not has_products and not has_pagination_any:
+            logger.warning("[WARNING] Каталог не содержит карточек и пагинации — возможно, страница заблокирована")
+            raise PaginationNotDetectedError("Пагинация не найдена: отсутствуют карточки и пагинация")
+        
+        # Ищем пагинацию через BeautifulSoup
         last_page_el = soup.select_one(".facetwp-pager .facetwp-page.last")
         
         if last_page_el and last_page_el.has_attr("data-page"):
             total_pages = int(last_page_el["data-page"])
-            logger.info(f"Найдено {total_pages} страниц для парсинга")
+            logger.info(f"[OK] Найдено {total_pages} страниц для парсинга (через BeautifulSoup .last)")
             return total_pages
         
-        # Ищем максимальный номер
-        page_elements = soup.select(".facetwp-pager .facetwp-page")
-        if page_elements:
-            max_page = 0
-            for page_el in page_elements:
-                data_page = page_el.get("data-page")
-                if data_page:
-                    try:
-                        page_num = int(data_page)
-                        if page_num > max_page:
-                            max_page = page_num
-                    except:
-                        pass
-            if max_page > 0:
-                logger.info(f"Найдено {max_page} страниц для парсинга")
-                return max_page
+        # Пробуем альтернативные селекторы
+        if not last_page_el:
+            last_page_el = soup.select_one(".facetwp-page.last")
+        if not last_page_el:
+            last_page_els = soup.select(".facetwp-pager .facetwp-page")
+            logger.debug(f"Найдено элементов пагинации через BeautifulSoup: {len(last_page_els)}")
+            if last_page_els:
+                # Берем максимальный номер из всех найденных элементов
+                max_page = 0
+                found_pages = []
+                for page_el in last_page_els:
+                    data_page = page_el.get("data-page")
+                    if data_page:
+                        try:
+                            page_num = int(data_page)
+                            found_pages.append(page_num)
+                            if page_num > max_page:
+                                max_page = page_num
+                        except ValueError:
+                            continue
+                    else:
+                        text_value = page_el.get_text(strip=True)
+                        if text_value.isdigit():
+                            page_num = int(text_value)
+                            found_pages.append(page_num)
+                            if page_num > max_page:
+                                max_page = page_num
+                logger.debug(f"Найденные номера страниц через BeautifulSoup: {found_pages}")
+                if max_page > 0:
+                    total_pages = max_page
+                    logger.info(f"[OK] Найдено {total_pages} страниц для парсинга (через BeautifulSoup, максимальный номер из {len(found_pages)} элементов)")
+                    return total_pages
+                else:
+                    logger.warning(f"[WARNING] Найдено {len(last_page_els)} элементов пагинации через BeautifulSoup, но не удалось извлечь номера страниц")
         
-        logger.warning("Не удалось определить количество страниц, используем 1")
-        return 1
+        if last_page_el and last_page_el.has_attr("data-page"):
+            total_pages = int(last_page_el["data-page"])
+            logger.info(f"[OK] Найдено {total_pages} страниц для парсинга (альтернативный селектор)")
+            return total_pages
         
+        # Если есть товары, но нет пагинации - это одна страница
+        if has_products and not has_pagination_any:
+            logger.info("[INFO] Найдены карточки товаров без пагинации — предполагаем одну страницу каталога")
+            return 1
+        
+        # Если ничего не найдено - это ошибка, прокси не работает
+        logger.warning(f"[WARNING] Не удалось найти информацию о количестве страниц")
+        logger.warning(f"[WARNING] Размер страницы: {len(page_source)} символов")
+        logger.warning(f"[WARNING] Содержит 'facetwp': {'facetwp' in page_source_lower}")
+        logger.warning(f"[WARNING] Содержит 'shop': {'shop' in page_source_lower}")
+        logger.warning(f"[WARNING] Есть товары: {has_products}, есть пагинация: {has_pagination_any}")
+        
+        # Сохраняем HTML для отладки
+        try:
+            debug_file = os.path.join(LOG_DIR, f"debug_pagination_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
+            with open(debug_file, 'w', encoding='utf-8') as f:
+                f.write(page_source)
+            logger.warning(f"[WARNING] HTML сохранен в {debug_file} для отладки")
+        except:
+            pass
+        
+        # Если не удалось определить - это блокировка, выбрасываем исключение
+        raise PaginationNotDetectedError("Не удалось определить количество страниц - возможно, страница заблокирована")
+        
+    except PaginationNotDetectedError:
+        # Пробрасываем исключение о блокировке
+        raise
     except Exception as e:
         logger.error(f"Ошибка при получении количества страниц: {e}")
-        raise
+        logger.debug(traceback.format_exc())
+        return None
 
 
 def create_new_csv(csv_path: str):

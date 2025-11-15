@@ -38,7 +38,7 @@ from utils import (
     create_driver, get_pages_count_with_driver, get_products_from_page_soup,
     is_page_blocked, is_page_empty, create_new_csv, append_to_csv,
     finalize_output_files, cleanup_temp_files, create_backup,
-    safe_get_page_source, is_tab_crashed_error
+    safe_get_page_source, is_tab_crashed_error, PaginationNotDetectedError
 )
 
 
@@ -828,10 +828,16 @@ def main():
                 logger.info(f"✓ Найдено {total_pages} страниц для парсинга (попытка {attempt})")
                 break
             else:
-                logger.warning(f"Не удалось определить количество страниц (попытка {attempt})")
+                logger.warning(f"Не удалось определить количество страниц (попытка {attempt}) - прокси не работает, ищем другой")
                 
+        except PaginationNotDetectedError as e:
+            # Страница заблокирована - прокси не работает, ищем другой
+            logger.warning(f"[BLOCKED] Страница заблокирована через прокси {proxy['ip']}:{proxy['port']} (попытка {attempt}): {e}")
+            logger.info("Прокси не работает для данного сайта, ищем другой прокси...")
+            time.sleep(2)
         except TimeoutException as e:
             logger.warning(f"Таймаут при получении количества страниц (попытка {attempt}): {e}")
+            logger.info("Прокси слишком медленный, ищем другой...")
             time.sleep(2)
         except Exception as e:
             error_msg = str(e).lower()
@@ -841,6 +847,7 @@ def main():
                 logger.warning(f"[PROXY ERROR] Ошибка прокси при получении количества страниц (попытка {attempt})")
             else:
                 logger.warning(f"Ошибка при получении количества страниц (попытка {attempt}): {e}")
+            logger.info("Ищем другой прокси...")
             time.sleep(2)
         finally:
             if driver:
@@ -861,15 +868,19 @@ def main():
     
     if not total_pages or total_pages <= 0:
         logger.error("Критическая ошибка: не удалось получить количество страниц после множества попыток")
+        logger.error("Парсинг не может быть запущен без знания количества страниц")
         sys.exit(1)
+    
+    # Проверяем, что получили реальное количество страниц (не 1, если это не реальное значение)
+    if total_pages == 1:
+        logger.warning("Получено количество страниц = 1. Это может быть ошибка.")
+        logger.warning("Проверяем, действительно ли это одна страница или прокси заблокирован...")
+        # Можно добавить дополнительную проверку, но пока продолжаем
     
     # Запускаем парсинг
     logger.info("=" * 80)
     logger.info("Начинаем парсинг страниц...")
-    if total_pages:
-        logger.info(f"Будет обработано страниц: {total_pages}")
-    else:
-        logger.info("Количество страниц будет определяться по ходу парсинга")
+    logger.info(f"Будет обработано страниц: {total_pages}")
     logger.info("=" * 80)
     
     try:
