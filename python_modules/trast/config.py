@@ -82,6 +82,36 @@ PROXY_SOURCES = {
         'url': 'https://proxylist.geonode.com/api/proxy-list?limit=500&page=1&sort_by=lastChecked&sort_type=desc',
         'type': 'geonode',
         'active': True
+    },
+    'proxylist_download': {
+        'url': 'https://www.proxy-list.download/api/v1/get?type=http',
+        'type': 'proxylist_download',
+        'active': True
+    },
+    'proxylist_icu': {
+        'url': 'https://www.proxylist.icu/api/proxies',
+        'type': 'proxylist_icu',
+        'active': True
+    },
+    'github_clarketm': {
+        'url': 'https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt',
+        'type': 'github_text',
+        'active': True
+    },
+    'github_thespeedx': {
+        'url': 'https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt',
+        'type': 'github_text',
+        'active': True
+    },
+    'github_monosans': {
+        'url': 'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
+        'type': 'github_text',
+        'active': True
+    },
+    'proxylist_me': {
+        'url': 'https://www.proxylist.me/api/v1/get?type=http',
+        'type': 'proxylist_me',
+        'active': True
     }
 }
 
@@ -97,4 +127,20 @@ MIN_DELAY_BETWEEN_PAGES = 2
 MAX_DELAY_BETWEEN_PAGES = 4
 MIN_DELAY_AFTER_LOAD = 3
 MAX_DELAY_AFTER_LOAD = 6
+
+# Настройки поиска прокси
+PROXY_SEARCH_TIMEOUT = 300  # Максимум 5 минут на поиск нового прокси
+PROXY_SEARCH_PROGRESS_LOG_INTERVAL = 30  # Интервал логирования прогресса поиска (секунды)
+PROXY_LIST_WAIT_DELAY = 5  # Задержка при ожидании обновления списка прокси (секунды)
+PROXY_SEARCH_INITIAL_TIMEOUT = 1800  # Максимум 30 минут на начальный поиск прокси
+
+# Настройки потоков парсинга
+PAGE_STEP_FOR_THREADS = 2  # Шаг страниц для чередования между потоками (четные/нечетные)
+CSV_BUFFER_SAVE_SIZE = 10  # Размер буфера для периодического сохранения в CSV
+CSV_BUFFER_FULL_SIZE = 50  # Размер буфера для полного сохранения в CSV
+
+# Настройки ожидания Cloudflare
+CLOUDFLARE_REFRESH_DELAY = 3  # Задержка между обновлениями страницы при ожидании Cloudflare
+CLOUDFLARE_REFRESH_WAIT = 2  # Задержка после обновления страницы
+CLOUDFLARE_CHECK_INTERVAL = 5  # Интервал проверки Cloudflare (секунды)
 

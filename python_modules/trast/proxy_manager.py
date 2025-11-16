@@ -495,6 +495,143 @@ class ProxyManager:
             logger.warning(f"Error loading proxies from geonode.com: {e}")
             return []
     
+    def _download_proxies_from_proxylist_download(self) -> List[Dict]:
+        """Загружает прокси с proxy-list.download"""
+        try:
+            logger.info("Loading proxies from proxy-list.download...")
+            # Пробуем разные типы прокси
+            proxies = []
+            for proxy_type in ['http', 'https', 'socks4', 'socks5']:
+                try:
+                    url = f"https://www.proxy-list.download/api/v1/get?type={proxy_type}"
+                    response = requests.get(url, timeout=30)
+                    response.raise_for_status()
+                    lines = response.text.strip().split('\n')
+                    for line in lines:
+                        line = line.strip()
+                        if ':' in line:
+                            parts = line.split(':')
+                            if len(parts) >= 2:
+                                ip = parts[0].strip()
+                                port = parts[1].strip()
+                                if ip and port:
+                                    proxies.append({
+                                        'ip': ip,
+                                        'port': port,
+                                        'protocol': proxy_type.lower(),
+                                        'country': 'UN',
+                                        'source': 'proxylist_download'
+                                    })
+                except:
+                    continue
+            logger.info(f"Received {len(proxies)} proxies from proxy-list.download")
+            return proxies
+        except Exception as e:
+            logger.warning(f"Error loading proxies from proxy-list.download: {e}")
+            return []
+    
+    def _download_proxies_from_proxylist_icu(self) -> List[Dict]:
+        """Загружает прокси с proxylist.icu"""
+        try:
+            logger.info("Loading proxies from proxylist.icu...")
+            url = "https://www.proxylist.icu/api/proxies"
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            proxies = []
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict):
+                        ip = item.get('ip', '')
+                        port = item.get('port', '')
+                        protocol = item.get('protocol', 'http').lower()
+                        country = item.get('country', 'UN').upper()
+                        if ip and port and protocol in ['http', 'https', 'socks4', 'socks5']:
+                            if not self.country_filter or country in self.country_filter:
+                                proxies.append({
+                                    'ip': ip,
+                                    'port': str(port),
+                                    'protocol': protocol,
+                                    'country': country,
+                                    'source': 'proxylist_icu'
+                                })
+            logger.info(f"Received {len(proxies)} proxies from proxylist.icu")
+            return proxies
+        except Exception as e:
+            logger.warning(f"Error loading proxies from proxylist.icu: {e}")
+            return []
+    
+    def _download_proxies_from_github_text(self, url: str, source_name: str) -> List[Dict]:
+        """Загружает прокси из GitHub текстового файла"""
+        try:
+            logger.info(f"Loading proxies from GitHub ({source_name})...")
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            lines = response.text.strip().split('\n')
+            proxies = []
+            for line in lines:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                if ':' in line:
+                    parts = line.split(':')
+                    if len(parts) >= 2:
+                        ip = parts[0].strip()
+                        port = parts[1].strip()
+                        if ip and port:
+                            # По умолчанию HTTP, но можно определить по URL
+                            protocol = 'http'
+                            if 'socks' in url.lower():
+                                protocol = 'socks5' if 'socks5' in url.lower() else 'socks4'
+                            elif 'https' in url.lower():
+                                protocol = 'https'
+                            proxies.append({
+                                'ip': ip,
+                                'port': port,
+                                'protocol': protocol,
+                                'country': 'UN',
+                                'source': source_name
+                            })
+            logger.info(f"Received {len(proxies)} proxies from {source_name}")
+            return proxies
+        except Exception as e:
+            logger.warning(f"Error loading proxies from {source_name}: {e}")
+            return []
+    
+    def _download_proxies_from_proxylist_me(self) -> List[Dict]:
+        """Загружает прокси с proxylist.me"""
+        try:
+            logger.info("Loading proxies from proxylist.me...")
+            proxies = []
+            for proxy_type in ['http', 'https', 'socks4', 'socks5']:
+                try:
+                    url = f"https://www.proxylist.me/api/v1/get?type={proxy_type}"
+                    response = requests.get(url, timeout=30)
+                    response.raise_for_status()
+                    lines = response.text.strip().split('\n')
+                    for line in lines:
+                        line = line.strip()
+                        if ':' in line:
+                            parts = line.split(':')
+                            if len(parts) >= 2:
+                                ip = parts[0].strip()
+                                port = parts[1].strip()
+                                if ip and port:
+                                    proxies.append({
+                                        'ip': ip,
+                                        'port': port,
+                                        'protocol': proxy_type.lower(),
+                                        'country': 'UN',
+                                        'source': 'proxylist_me'
+                                    })
+                except:
+                    continue
+            logger.info(f"Received {len(proxies)} proxies from proxylist.me")
+            return proxies
+        except Exception as e:
+            logger.warning(f"Error loading proxies from proxylist.me: {e}")
+            return []
+    
     def download_proxies(self, force_update: bool = False) -> bool:
         """Скачивает свежие прокси из всех источников"""
         try:
@@ -532,6 +669,42 @@ class ProxyManager:
             if PROXY_SOURCES.get('geonode', {}).get('active', False):
                 geonode_proxies = self._download_proxies_from_geonode()
                 all_proxies.extend(geonode_proxies)
+            
+            # Загружаем с proxy-list.download
+            if PROXY_SOURCES.get('proxylist_download', {}).get('active', False):
+                proxylist_download_proxies = self._download_proxies_from_proxylist_download()
+                all_proxies.extend(proxylist_download_proxies)
+            
+            # Загружаем с proxylist.icu
+            if PROXY_SOURCES.get('proxylist_icu', {}).get('active', False):
+                proxylist_icu_proxies = self._download_proxies_from_proxylist_icu()
+                all_proxies.extend(proxylist_icu_proxies)
+            
+            # Загружаем с GitHub (clarketm)
+            if PROXY_SOURCES.get('github_clarketm', {}).get('active', False):
+                github_clarketm_proxies = self._download_proxies_from_github_text(
+                    PROXY_SOURCES['github_clarketm']['url'], 'github_clarketm'
+                )
+                all_proxies.extend(github_clarketm_proxies)
+            
+            # Загружаем с GitHub (thespeedx)
+            if PROXY_SOURCES.get('github_thespeedx', {}).get('active', False):
+                github_thespeedx_proxies = self._download_proxies_from_github_text(
+                    PROXY_SOURCES['github_thespeedx']['url'], 'github_thespeedx'
+                )
+                all_proxies.extend(github_thespeedx_proxies)
+            
+            # Загружаем с GitHub (monosans)
+            if PROXY_SOURCES.get('github_monosans', {}).get('active', False):
+                github_monosans_proxies = self._download_proxies_from_github_text(
+                    PROXY_SOURCES['github_monosans']['url'], 'github_monosans'
+                )
+                all_proxies.extend(github_monosans_proxies)
+            
+            # Загружаем с proxylist.me
+            if PROXY_SOURCES.get('proxylist_me', {}).get('active', False):
+                proxylist_me_proxies = self._download_proxies_from_proxylist_me()
+                all_proxies.extend(proxylist_me_proxies)
             
             # Удаляем дубликаты
             seen = set()
@@ -608,8 +781,11 @@ class ProxyManager:
             timeout = PROXY_TEST_TIMEOUT
         
         driver = None
+        proxy_key = f"{proxy.get('ip', '')}:{proxy.get('port', '')}"
+        debug_html_saved = False
+        
         try:
-            logger.info(f"Checking proxy {proxy['ip']}:{proxy['port']} on trast-zapchast.ru...")
+            logger.info(f"Checking proxy {proxy_key} on trast-zapchast.ru...")
             
             protocol = proxy.get('protocol', 'http').lower()
             use_chrome = protocol in ['http', 'https']
@@ -623,7 +799,13 @@ class ProxyManager:
             time.sleep(5)  # Ожидание загрузки
             
             # Проверяем Cloudflare
-            page_source_lower = driver.page_source.lower()
+            from utils import safe_get_page_source
+            page_source = safe_get_page_source(driver)
+            if not page_source:
+                logger.warning(f"Failed to get page_source for proxy {proxy_key}")
+                return False, {}
+            
+            page_source_lower = page_source.lower()
             max_wait = 30
             wait_time = 0
             
@@ -631,13 +813,24 @@ class ProxyManager:
                    "just a moment" in page_source_lower) and wait_time < max_wait:
                 logger.info(f"Cloudflare check... waiting {wait_time}/{max_wait} sec")
                 time.sleep(3)
-                driver.refresh()
-                time.sleep(2)
-                page_source_lower = driver.page_source.lower()
+                try:
+                    driver.refresh()
+                    time.sleep(2)
+                    page_source = safe_get_page_source(driver)
+                    if not page_source:
+                        logger.warning(f"Tab crash during Cloudflare wait for proxy {proxy_key}")
+                        return False, {}
+                    page_source_lower = page_source.lower()
+                except Exception as refresh_error:
+                    logger.warning(f"Error refreshing page for proxy {proxy_key}: {refresh_error}")
+                    return False, {}
                 wait_time += 5
             
             if wait_time >= max_wait:
-                logger.warning("Cloudflare check failed")
+                logger.warning(f"Cloudflare check failed for proxy {proxy_key}")
+                # Сохраняем HTML для отладки
+                self._save_debug_html(proxy_key, page_source, "cloudflare_timeout")
+                debug_html_saved = True
                 return False, {}
             
             # Пробуем получить количество страниц - это ОСНОВНОЙ критерий работоспособности прокси
@@ -647,18 +840,42 @@ class ProxyManager:
                     logger.info(f"✓ Proxy works! Successfully got page count: {total_pages}")
                     return True, {'total_pages': total_pages}
                 else:
-                    logger.warning(f"Proxy failed to get page count (returned {total_pages})")
+                    logger.warning(f"Proxy {proxy_key} failed to get page count (returned {total_pages})")
+                    # Сохраняем HTML для отладки
+                    if not debug_html_saved:
+                        page_source = safe_get_page_source(driver)
+                        if page_source:
+                            self._save_debug_html(proxy_key, page_source, "no_page_count")
                     return False, {}
             except PaginationNotDetectedError as e:
                 # Страница заблокирована - прокси не работает
-                logger.warning(f"Proxy blocked on site: {e}")
+                logger.warning(f"Proxy {proxy_key} blocked on site: {e}")
+                # Сохраняем HTML для отладки
+                if not debug_html_saved:
+                    page_source = safe_get_page_source(driver)
+                    if page_source:
+                        self._save_debug_html(proxy_key, page_source, f"blocked_{str(e)[:50]}")
                 return False, {}
             except Exception as e:
-                logger.warning(f"Error getting page count via proxy: {e}")
+                logger.warning(f"Error getting page count via proxy {proxy_key}: {e}")
+                # Сохраняем HTML для отладки
+                if not debug_html_saved:
+                    page_source = safe_get_page_source(driver)
+                    if page_source:
+                        self._save_debug_html(proxy_key, page_source, f"error_{type(e).__name__}")
                 return False, {}
             
         except Exception as e:
-            logger.debug(f"Error checking proxy on trast: {e}")
+            logger.debug(f"Error checking proxy {proxy_key} on trast: {e}")
+            # Сохраняем HTML для отладки если возможно
+            if driver and not debug_html_saved:
+                try:
+                    from utils import safe_get_page_source
+                    page_source = safe_get_page_source(driver)
+                    if page_source:
+                        self._save_debug_html(proxy_key, page_source, f"exception_{type(e).__name__}")
+                except:
+                    pass
             return False, {}
         finally:
             if driver:
@@ -666,6 +883,32 @@ class ProxyManager:
                     driver.quit()
                 except:
                     pass
+    
+    def _save_debug_html(self, proxy_key: str, page_source: str, reason: str):
+        """Сохраняет HTML страницы для отладки при неудачных проверках прокси"""
+        try:
+            from config import LOG_DIR
+            from datetime import datetime
+            import os
+            
+            # Создаем директорию для отладочных HTML если её нет
+            debug_dir = os.path.join(LOG_DIR, "debug_proxy_html")
+            os.makedirs(debug_dir, exist_ok=True)
+            
+            # Формируем имя файла
+            safe_proxy_key = proxy_key.replace(":", "_").replace("/", "_")
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            safe_reason = reason.replace(" ", "_").replace("/", "_")[:50]
+            filename = f"proxy_{safe_proxy_key}_{safe_reason}_{timestamp}.html"
+            filepath = os.path.join(debug_dir, filename)
+            
+            # Сохраняем HTML
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(page_source)
+            
+            logger.debug(f"Debug HTML saved for proxy {proxy_key}: {filepath} (reason: {reason})")
+        except Exception as e:
+            logger.debug(f"Failed to save debug HTML for proxy {proxy_key}: {e}")
     
     def _proxy_search_worker(self, thread_id: int, proxy_queue: queue.Queue, found_proxies: List[Dict], 
                              stop_event: threading.Event, stats: Dict, min_count: int):

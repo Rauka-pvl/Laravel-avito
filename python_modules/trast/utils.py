@@ -51,7 +51,10 @@ from config import (
     TEMP_CSV_FILE,
     BACKUP_FILE,
     BACKUP_CSV,
-    LOG_DIR
+    LOG_DIR,
+    CLOUDFLARE_REFRESH_DELAY,
+    CLOUDFLARE_REFRESH_WAIT,
+    CLOUDFLARE_CHECK_INTERVAL
 )
 
 
@@ -92,6 +95,64 @@ def safe_get_page_source(driver: webdriver.Remote) -> Optional[str]:
         return None
 
 
+def wait_for_cloudflare(
+    driver: webdriver.Remote,
+    max_wait: int = None,
+    thread_name: str = "",
+    context: str = ""
+) -> Tuple[bool, Optional[str]]:
+    """
+    Ожидает прохождения Cloudflare проверки.
+    
+    Args:
+        driver: WebDriver объект
+        max_wait: Максимальное время ожидания в секундах (по умолчанию из config)
+        thread_name: Имя потока для логирования
+        context: Контекст для логирования (например, "getting cookies")
+        
+    Returns:
+        tuple: (success: bool, page_source: Optional[str])
+        - success: True если Cloudflare прошел, False если таймаут
+        - page_source: Исходный HTML страницы или None при ошибке
+    """
+    if max_wait is None:
+        max_wait = CLOUDFLARE_WAIT_TIMEOUT
+    
+    page_source = safe_get_page_source(driver)
+    if not page_source:
+        return False, None
+    
+    page_source_lower = page_source.lower()
+    wait_time = 0
+    
+    log_prefix = f"[{thread_name}] " if thread_name else ""
+    context_suffix = f" {context}" if context else ""
+    
+    while ("cloudflare" in page_source_lower or 
+           "checking your browser" in page_source_lower or 
+           "just a moment" in page_source_lower) and wait_time < max_wait:
+        logger.info(f"{log_prefix}Cloudflare check{context_suffix}... waiting {wait_time}/{max_wait} sec")
+        time.sleep(CLOUDFLARE_REFRESH_DELAY)
+        try:
+            driver.refresh()
+            time.sleep(CLOUDFLARE_REFRESH_WAIT)
+            page_source = safe_get_page_source(driver)
+            if not page_source:
+                logger.error(f"{log_prefix}[TAB CRASH] Tab crash during Cloudflare wait{context_suffix}")
+                return False, None
+            page_source_lower = page_source.lower()
+        except Exception as refresh_error:
+            logger.warning(f"{log_prefix}Error refreshing page{context_suffix}: {refresh_error}")
+            return False, None
+        wait_time += CLOUDFLARE_CHECK_INTERVAL
+    
+    if wait_time >= max_wait:
+        logger.warning(f"{log_prefix}Cloudflare check failed{context_suffix} (timeout: {max_wait}s)")
+        return False, page_source
+    
+    return True, page_source
+
+
 def has_catalog_structure(soup: BeautifulSoup) -> bool:
     """
     Проверяет наличие структуры каталога на странице.
@@ -116,13 +177,14 @@ def has_catalog_structure(soup: BeautifulSoup) -> bool:
 def is_page_blocked(soup: BeautifulSoup, page_source: str) -> Dict[str, any]:
     """
     Проверяет, заблокирована ли страница Cloudflare или другими механизмами защиты.
+    Улучшенная версия с проверкой на частичную загрузку и альтернативными селекторами.
     
     Args:
         soup: BeautifulSoup объект страницы
         page_source: Исходный HTML страницы (строка)
         
     Returns:
-        dict: {"blocked": bool, "reason": str | None}
+        dict: {"blocked": bool, "reason": str | None, "partial_load": bool}
     """
     page_source_lower = page_source.lower() if page_source else ""
     
@@ -132,17 +194,73 @@ def is_page_blocked(soup: BeautifulSoup, page_source: str) -> Dict[str, any]:
         "temporarily unavailable", "maintenance", "запрос отклонен",
         "доступ запрещен", "ошибка 403", "ошибка 503", "error 403", "error 503",
         "captcha", "please enable javascript", "varnish cache server",
-        "bad gateway", "gateway timeout",
+        "bad gateway", "gateway timeout", "502 bad gateway", "504 gateway timeout",
+        "too many requests", "rate limit", "blocked", "banned"
     ]
     
     for keyword in blocker_keywords:
         if keyword in page_source_lower:
-            return {"blocked": True, "reason": keyword}
+            return {"blocked": True, "reason": keyword, "partial_load": False}
     
-    if not has_catalog_structure(soup):
-        return {"blocked": True, "reason": "no_catalog_structure"}
+    # Проверяем структуру каталога с альтернативными селекторами
+    has_structure = has_catalog_structure(soup)
     
-    return {"blocked": False, "reason": None}
+    # Проверяем наличие товаров с альтернативными селекторами
+    product_selectors = [
+        "div.product.product-plate",
+        ".product.product-plate",
+        "div.product",
+        ".products-grid .product",
+        ".products .product",
+        ".shop-container .product",
+        ".woocommerce ul.products li.product"
+    ]
+    
+    has_products = False
+    for selector in product_selectors:
+        if soup.select(selector):
+            has_products = True
+            break
+    
+    # Проверяем наличие пагинации с альтернативными селекторами
+    pagination_selectors = [
+        ".facetwp-pager",
+        ".facetwp-pager .facetwp-page",
+        ".woocommerce-pagination",
+        ".page-numbers",
+        ".pagination"
+    ]
+    
+    has_pagination = False
+    for selector in pagination_selectors:
+        if soup.select(selector):
+            has_pagination = True
+            break
+    
+    # Проверяем на частичную загрузку
+    # Если есть структура каталога, но нет товаров и пагинации - возможно частичная загрузка
+    if has_structure and not has_products and not has_pagination:
+        # Проверяем наличие JavaScript-контента (признак динамической загрузки)
+        has_scripts = bool(soup.select("script"))
+        has_body = bool(soup.select("body"))
+        
+        if has_scripts and has_body:
+            # Возможно частичная загрузка - даем шанс
+            return {"blocked": False, "reason": "possible_partial_load", "partial_load": True}
+        else:
+            # Нет скриптов или body - скорее всего блокировка
+            return {"blocked": True, "reason": "no_products_no_pagination_no_scripts", "partial_load": False}
+    
+    # Если нет структуры каталога - блокировка
+    if not has_structure:
+        return {"blocked": True, "reason": "no_catalog_structure", "partial_load": False}
+    
+    # Если есть товары или пагинация - страница не заблокирована
+    if has_products or has_pagination:
+        return {"blocked": False, "reason": None, "partial_load": False}
+    
+    # Если ничего не найдено - возможно блокировка
+    return {"blocked": True, "reason": "no_products_no_pagination", "partial_load": False}
 
 
 def is_page_empty(soup: BeautifulSoup, page_source: str, products_in_stock: int, total_products: int = 0) -> Dict[str, any]:
@@ -164,6 +282,10 @@ def is_page_empty(soup: BeautifulSoup, page_source: str, products_in_stock: int,
     block_check = is_page_blocked(soup, page_source)
     if block_check["blocked"]:
         return {"status": "blocked", "reason": block_check["reason"] or "no_dom"}
+    
+    # Если частичная загрузка - возвращаем специальный статус
+    if block_check.get("partial_load", False):
+        return {"status": "partial", "reason": "possible_partial_load"}
     
     # Проверяем количество товаров В НАЛИЧИИ
     if products_in_stock == 0:
@@ -187,7 +309,7 @@ def is_page_empty(soup: BeautifulSoup, page_source: str, products_in_stock: int,
 
 def get_products_from_page_soup(soup: BeautifulSoup) -> Tuple[List[Dict], int, int]:
     """
-    Парсит товары со страницы.
+    Парсит товары со страницы с улучшенными селекторами и fallback логикой.
     
     Args:
         soup: BeautifulSoup объект страницы
@@ -196,29 +318,154 @@ def get_products_from_page_soup(soup: BeautifulSoup) -> Tuple[List[Dict], int, i
         tuple: (список товаров в наличии, количество товаров в наличии, общее количество товаров)
     """
     results = []
-    cards = soup.select("div.product.product-plate")
+    # Пробуем разные селекторы для карточек товаров
+    card_selectors = [
+        "div.product.product-plate",
+        ".product.product-plate",
+        "div.product",
+        ".products-grid .product",
+        ".products .product"
+    ]
+    
+    cards = []
+    for selector in card_selectors:
+        cards = soup.select(selector)
+        if cards:
+            logger.debug(f"Found {len(cards)} products with selector: {selector}")
+            break
+    
     total_products = len(cards)
     
     for card in cards:
-        # Проверяем наличие товара в наличии
-        stock_badge = card.select_one("div.product-badge.product-stock.instock")
-        if not stock_badge or "В наличии" not in stock_badge.text.strip():  # Check for "In stock" text
+        # Проверяем наличие товара в наличии - пробуем разные селекторы
+        stock_selectors = [
+            "div.product-badge.product-stock.instock",
+            ".product-badge.product-stock.instock",
+            "[class*='stock'][class*='instock']",
+            "[class*='наличи']"
+        ]
+        
+        stock_badge = None
+        for selector in stock_selectors:
+            stock_badge = card.select_one(selector)
+            if stock_badge:
+                break
+        
+        # Если не нашли через селектор, проверяем по тексту
+        if not stock_badge:
+            card_text = card.get_text()
+            if "В наличии" not in card_text and "в наличии" not in card_text.lower():
+                continue  # Пропускаем товары не в наличии
+        elif "В наличии" not in stock_badge.get_text() and "в наличии" not in stock_badge.get_text().lower():
             continue  # Пропускаем товары не в наличии
         
-        # Извлекаем данные
-        title_el = card.select_one("a.product-title")
-        article_el = card.select_one("div.product-attributes .item:nth-child(1) .value")
-        manufacturer_el = card.select_one("div.product-attributes .item:nth-child(2) .value")
-        price_el = card.select_one("div.product-price .woocommerce-Price-amount.amount")
+        # Извлекаем данные с fallback селекторами
+        # Название товара
+        title_selectors = [
+            "a.product-title",
+            ".product-title",
+            "a[href*='/product/']",
+            "h2 a",
+            "h3 a"
+        ]
+        title_el = None
+        for selector in title_selectors:
+            title_el = card.select_one(selector)
+            if title_el:
+                break
         
-        if not (title_el and article_el and manufacturer_el and price_el):
+        # Артикул
+        article_selectors = [
+            "div.product-attributes .item:nth-child(1) .value",
+            ".product-attributes .item:nth-child(1) .value",
+            "[class*='article']",
+            "[class*='Артикул']"
+        ]
+        article_el = None
+        for selector in article_selectors:
+            article_el = card.select_one(selector)
+            if article_el:
+                break
+        
+        # Если не нашли через селектор, ищем по тексту
+        if not article_el:
+            card_text = card.get_text()
+            article_match = re.search(r'Артикул[:\s]+([^\n\r]+)', card_text)
+            if article_match:
+                article_el = type('obj', (object,), {'get_text': lambda: article_match.group(1).strip()})()
+        
+        # Производитель
+        manufacturer_selectors = [
+            "div.product-attributes .item:nth-child(2) .value",
+            ".product-attributes .item:nth-child(2) .value",
+            "[class*='manufacturer']",
+            "[class*='Производитель']"
+        ]
+        manufacturer_el = None
+        for selector in manufacturer_selectors:
+            manufacturer_el = card.select_one(selector)
+            if manufacturer_el:
+                break
+        
+        # Если не нашли через селектор, ищем по тексту
+        if not manufacturer_el:
+            card_text = card.get_text()
+            manufacturer_match = re.search(r'Производитель[:\s]+([^\n\r]+)', card_text)
+            if manufacturer_match:
+                manufacturer_el = type('obj', (object,), {'get_text': lambda: manufacturer_match.group(1).strip()})()
+        
+        # Цена
+        price_selectors = [
+            "div.product-price .woocommerce-Price-amount.amount",
+            ".product-price .woocommerce-Price-amount.amount",
+            "[class*='price'] .amount",
+            "[class*='price']"
+        ]
+        price_el = None
+        for selector in price_selectors:
+            price_el = card.select_one(selector)
+            if price_el:
+                break
+        
+        # Если не нашли через селектор, ищем по символу рубля
+        if not price_el:
+            card_text = card.get_text()
+            price_match = re.search(r'([\d\s]+)\s*₽', card_text)
+            if price_match:
+                price_el = type('obj', (object,), {'get_text': lambda: price_match.group(0)})()
+        
+        # Проверяем, что все необходимые данные найдены
+        if not title_el:
+            logger.debug("Product skipped: title not found")
             continue
         
-        title = title_el.text.strip()
-        article = article_el.text.strip()
-        manufacturer = manufacturer_el.text.strip()
-        raw_price = price_el.text.strip().replace("\xa0", " ")
+        title = title_el.get_text().strip() if hasattr(title_el, 'get_text') else str(title_el).strip()
+        
+        # Артикул и производитель могут быть необязательными, но желательны
+        article = ""
+        if article_el:
+            article = article_el.get_text().strip() if hasattr(article_el, 'get_text') else str(article_el).strip()
+            # Убираем префикс "Артикул:" если есть
+            article = re.sub(r'^Артикул[:\s]+', '', article, flags=re.IGNORECASE).strip()
+        
+        manufacturer = ""
+        if manufacturer_el:
+            manufacturer = manufacturer_el.get_text().strip() if hasattr(manufacturer_el, 'get_text') else str(manufacturer_el).strip()
+            # Убираем префикс "Производитель:" если есть
+            manufacturer = re.sub(r'^Производитель[:\s]+', '', manufacturer, flags=re.IGNORECASE).strip()
+        
+        if not price_el:
+            logger.debug(f"Product skipped: price not found for {title[:50]}")
+            continue
+        
+        raw_price = price_el.get_text().strip() if hasattr(price_el, 'get_text') else str(price_el).strip()
+        raw_price = raw_price.replace("\xa0", " ").replace("\u00a0", " ")
         clean_price = re.sub(r"[^\d\s]", "", raw_price).strip()
+        
+        # Если цена не найдена, пропускаем товар
+        if not clean_price:
+            logger.debug(f"Product skipped: empty price for {title[:50]}")
+            continue
         
         product = {
             "manufacturer": manufacturer,
@@ -227,7 +474,7 @@ def get_products_from_page_soup(soup: BeautifulSoup) -> Tuple[List[Dict], int, i
             "price": clean_price
         }
         results.append(product)
-        logger.info(f"Product added: {product}")
+        logger.debug(f"Product added: {product}")
     
     return results, len(results), total_products
 
@@ -487,55 +734,113 @@ def get_pages_count_with_driver(driver: webdriver.Remote, url: str = "https://tr
         time.sleep(random.uniform(2, 3))
         
         # Дополнительное ожидание для полной загрузки динамического контента
-        time.sleep(5)
+        time.sleep(8)  # Увеличено с 5 до 8 секунд
         
         # Метод 1: Ищем через Selenium WebDriverWait (самый надежный для динамического контента)
         total_pages = None
         
         try:
-            wait = WebDriverWait(driver, 30)  # Увеличено до 30 секунд
-            # Сначала ждем появления пагинации
-            pagination_container = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".facetwp-pager")))
+            wait = WebDriverWait(driver, 60)  # Увеличено до 60 секунд для медленных прокси
+            # Сначала ждем появления товаров или пагинации (более гибкая проверка)
+            try:
+                # Пробуем дождаться товаров
+                products_container = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.product.product-plate, .products-grid, .products, .shop-container")))
+                logger.debug("Products container found via WebDriverWait")
+            except:
+                logger.debug("Products container not found, trying pagination...")
+            
+            # Ждем появления пагинации
+            pagination_container = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".facetwp-pager, .woocommerce-pagination, .page-numbers")))
             logger.debug("Pagination found via WebDriverWait")
             
-            # Пробуем найти элемент .last
-            try:
-                last_page_element = driver.find_element(By.CSS_SELECTOR, ".facetwp-pager .facetwp-page.last")
-                if last_page_element:
-                    data_page = last_page_element.get_attribute("data-page")
-                    if data_page:
-                        total_pages = int(data_page)
-                        logger.info(f"[OK] Found {total_pages} pages for parsing (via Selenium .last)")
-                        return total_pages
-            except:
-                pass
+            # Пробуем найти элемент .last с несколькими селекторами
+            last_page_element = None
+            selectors_to_try = [
+                ".facetwp-pager .facetwp-page.last",
+                ".facetwp-page.last",
+                ".facetwp-pager .last",
+                ".woocommerce-pagination .page-numbers .last",
+                ".page-numbers .last"
+            ]
+            
+            for selector in selectors_to_try:
+                try:
+                    last_page_element = driver.find_element(By.CSS_SELECTOR, selector)
+                    if last_page_element:
+                        data_page = last_page_element.get_attribute("data-page")
+                        if data_page:
+                            total_pages = int(data_page)
+                            logger.info(f"[OK] Found {total_pages} pages for parsing (via Selenium .last, selector: {selector})")
+                            return total_pages
+                        # Пробуем получить из текста
+                        text_value = last_page_element.text.strip()
+                        if text_value.isdigit():
+                            total_pages = int(text_value)
+                            logger.info(f"[OK] Found {total_pages} pages for parsing (via Selenium .last text, selector: {selector})")
+                            return total_pages
+                except:
+                    continue
             
             # Если .last не найден, ищем все элементы пагинации и берем максимальный номер
-            try:
-                page_elements = driver.find_elements(By.CSS_SELECTOR, ".facetwp-pager .facetwp-page")
-                logger.debug(f"Found pagination elements: {len(page_elements)}")
-                if page_elements:
-                    max_page = 0
-                    found_pages = []
-                    for page_el in page_elements:
-                        data_page = page_el.get_attribute("data-page")
-                        if data_page:
-                            try:
-                                page_num = int(data_page)
-                                found_pages.append(page_num)
-                                if page_num > max_page:
-                                    max_page = page_num
-                            except:
-                                pass
-                    logger.debug(f"Found page numbers: {found_pages}")
-                    if max_page > 0:
-                        total_pages = max_page
-                        logger.info(f"[OK] Found {total_pages} pages for parsing (via Selenium, max number from {len(found_pages)} elements)")
-                        return total_pages
-                    else:
-                        logger.warning(f"[WARNING] Found {len(page_elements)} pagination elements, but failed to extract page numbers")
-            except Exception as find_error:
-                logger.debug(f"Error searching for all pagination elements: {find_error}")
+            pagination_selectors = [
+                ".facetwp-pager .facetwp-page",
+                ".facetwp-page",
+                ".woocommerce-pagination .page-numbers a",
+                ".page-numbers a",
+                ".facetwp-pager a"
+            ]
+            
+            for selector in pagination_selectors:
+                try:
+                    page_elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                    logger.debug(f"Found {len(page_elements)} pagination elements with selector: {selector}")
+                    if page_elements:
+                        max_page = 0
+                        found_pages = []
+                        for page_el in page_elements:
+                            # Пробуем data-page атрибут
+                            data_page = page_el.get_attribute("data-page")
+                            if data_page:
+                                try:
+                                    page_num = int(data_page)
+                                    found_pages.append(page_num)
+                                    if page_num > max_page:
+                                        max_page = page_num
+                                except:
+                                    pass
+                            else:
+                                # Пробуем текст элемента
+                                text_value = page_el.text.strip()
+                                if text_value.isdigit():
+                                    try:
+                                        page_num = int(text_value)
+                                        found_pages.append(page_num)
+                                        if page_num > max_page:
+                                            max_page = page_num
+                                    except:
+                                        pass
+                                # Пробуем href для извлечения номера страницы
+                                href = page_el.get_attribute("href")
+                                if href:
+                                    import re
+                                    match = re.search(r'[?&]page[=_](\d+)', href)
+                                    if match:
+                                        try:
+                                            page_num = int(match.group(1))
+                                            found_pages.append(page_num)
+                                            if page_num > max_page:
+                                                max_page = page_num
+                                        except:
+                                            pass
+                        
+                        logger.debug(f"Found page numbers: {found_pages}")
+                        if max_page > 0:
+                            total_pages = max_page
+                            logger.info(f"[OK] Found {total_pages} pages for parsing (via Selenium, max number from {len(found_pages)} elements, selector: {selector})")
+                            return total_pages
+                except Exception as find_error:
+                    logger.debug(f"Error searching for pagination elements with selector {selector}: {find_error}")
+                    continue
         except Exception as wait_error:
             logger.debug(f"WebDriverWait did not help: {wait_error}")
         
@@ -568,27 +873,99 @@ def get_pages_count_with_driver(driver: webdriver.Remote, url: str = "https://tr
             logger.warning("[WARNING] Blocking indicators detected on catalog page")
             raise PaginationNotDetectedError("Pagination not found due to blocking or placeholder")
         
-        # Проверяем наличие товаров и пагинации
-        has_products = bool(soup.select("div.product.product-plate"))
-        has_pagination_any = bool(soup.select(".facetwp-pager .facetwp-page"))
+        # Проверяем наличие товаров и пагинации с альтернативными селекторами
+        product_selectors = [
+            "div.product.product-plate",
+            ".product.product-plate",
+            "div.product",
+            ".products-grid .product",
+            ".products .product",
+            ".shop-container .product"
+        ]
+        pagination_selectors = [
+            ".facetwp-pager .facetwp-page",
+            ".facetwp-page",
+            ".woocommerce-pagination",
+            ".page-numbers",
+            ".facetwp-pager"
+        ]
         
-        if not has_products and not has_pagination_any:
+        has_products = False
+        for selector in product_selectors:
+            if soup.select(selector):
+                has_products = True
+                logger.debug(f"Found products with selector: {selector}")
+                break
+        
+        has_pagination_any = False
+        for selector in pagination_selectors:
+            if soup.select(selector):
+                has_pagination_any = True
+                logger.debug(f"Found pagination with selector: {selector}")
+                break
+        
+        # Проверяем структуру страницы более тщательно
+        has_catalog_structure_check = has_catalog_structure(soup)
+        
+        if not has_products and not has_pagination_any and not has_catalog_structure_check:
             logger.warning("[WARNING] Catalog does not contain cards and pagination — page may be blocked")
+            logger.warning(f"[WARNING] Catalog structure check: {has_catalog_structure_check}")
             raise PaginationNotDetectedError("Pagination not found: missing cards and pagination")
         
-        # Ищем пагинацию через BeautifulSoup
-        last_page_el = soup.select_one(".facetwp-pager .facetwp-page.last")
+        # Если есть структура каталога, но нет товаров/пагинации - возможно частичная загрузка
+        if has_catalog_structure_check and not has_products and not has_pagination_any:
+            logger.warning("[WARNING] Catalog structure found but no products/pagination - possible partial load")
+            # Даем еще одну попытку через дополнительное ожидание
+            time.sleep(5)
+            page_source = safe_get_page_source(driver)
+            if page_source:
+                soup = BeautifulSoup(page_source, 'html.parser')
+                for selector in product_selectors:
+                    if soup.select(selector):
+                        has_products = True
+                        break
+                for selector in pagination_selectors:
+                    if soup.select(selector):
+                        has_pagination_any = True
+                        break
+        
+        # Ищем пагинацию через BeautifulSoup с альтернативными селекторами
+        last_page_selectors = [
+            ".facetwp-pager .facetwp-page.last",
+            ".facetwp-page.last",
+            ".facetwp-pager .last",
+            ".woocommerce-pagination .page-numbers .last",
+            ".page-numbers .last"
+        ]
+        
+        last_page_el = None
+        for selector in last_page_selectors:
+            last_page_el = soup.select_one(selector)
+            if last_page_el:
+                logger.debug(f"Found last page element with selector: {selector}")
+                break
         
         if last_page_el and last_page_el.has_attr("data-page"):
             total_pages = int(last_page_el["data-page"])
             logger.info(f"[OK] Found {total_pages} pages for parsing (via BeautifulSoup .last)")
             return total_pages
         
-        # Пробуем альтернативные селекторы
+        # Пробуем альтернативные селекторы для всех элементов пагинации
         if not last_page_el:
-            last_page_el = soup.select_one(".facetwp-page.last")
-        if not last_page_el:
-            last_page_els = soup.select(".facetwp-pager .facetwp-page")
+            pagination_all_selectors = [
+                ".facetwp-pager .facetwp-page",
+                ".facetwp-page",
+                ".woocommerce-pagination .page-numbers a",
+                ".page-numbers a",
+                ".facetwp-pager a"
+            ]
+            
+            last_page_els = []
+            for selector in pagination_all_selectors:
+                last_page_els = soup.select(selector)
+                if last_page_els:
+                    logger.debug(f"Found pagination elements with selector: {selector}")
+                    break
             logger.debug(f"Found pagination elements via BeautifulSoup: {len(last_page_els)}")
             if last_page_els:
                 # Берем максимальный номер из всех найденных элементов
