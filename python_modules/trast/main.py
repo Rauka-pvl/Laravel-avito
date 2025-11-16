@@ -1197,7 +1197,7 @@ def parse_all_pages(
                 page_source = str(soup) if soup else ""
             
             if not page_source:
-                    logger.warning(f"Failed to get page {current_page} content")
+                logger.warning(f"Failed to get page {current_page} content")
                 current_page += 1
                 continue
             
