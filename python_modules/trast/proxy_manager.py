@@ -47,9 +47,9 @@ class ProxyManager:
         # Загружаем успешные прокси при инициализации
         self.successful_proxies = self.load_successful_proxies()
         if self.successful_proxies:
-            logger.info(f"Загружено {len(self.successful_proxies)} успешных прокси из кэша")
+            logger.info(f"Loaded {len(self.successful_proxies)} successful proxies from cache")
         
-        logger.info(f"ProxyManager инициализирован с фильтром стран: {', '.join(self.country_filter[:10])}...")
+        logger.info(f"ProxyManager initialized with country filter: {', '.join(self.country_filter[:10])}...")
     
     def load_successful_proxies(self) -> List[Dict]:
         """Загружает успешные прокси из файла"""
@@ -58,7 +58,7 @@ class ProxyManager:
                 with open(SUCCESSFUL_PROXIES_FILE, 'r', encoding='utf-8') as f:
                     return json.load(f)
         except Exception as e:
-            logger.warning(f"Не удалось загрузить успешные прокси: {e}")
+            logger.warning(f"Failed to load successful proxies: {e}")
         return []
     
     def save_successful_proxies(self):
@@ -67,7 +67,7 @@ class ProxyManager:
             with open(SUCCESSFUL_PROXIES_FILE, 'w', encoding='utf-8') as f:
                 json.dump(self.successful_proxies, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            logger.error(f"Не удалось сохранить успешные прокси: {e}")
+            logger.error(f"Failed to save successful proxies: {e}")
     
     def _parse_proxymania_page(self, page_num: int = 1) -> List[Dict]:
         """Парсит одну страницу прокси с proxymania.su"""
@@ -153,30 +153,35 @@ class ProxyManager:
             
             return proxies
         except Exception as e:
-            logger.warning(f"Ошибка при парсинге страницы {page_num} proxymania.su: {e}")
+            logger.warning(f"Error parsing page {page_num} proxymania.su: {e}")
             return []
     
     def _download_proxies_from_proxymania(self) -> List[Dict]:
-        """Парсит все страницы прокси с proxymania.su"""
+        """Parses all available proxy pages from proxymania.su"""
         all_proxies = []
-        max_pages = 15
+        page_num = 1
+        consecutive_empty = 0
+        max_consecutive_empty = 3  # Stop after 3 empty pages
         
-        logger.info("Парсинг прокси с proxymania.su...")
-        for page_num in range(1, max_pages + 1):
+        logger.info("Parsing proxies from proxymania.su...")
+        while consecutive_empty < max_consecutive_empty:
             proxies = self._parse_proxymania_page(page_num)
             if not proxies:
-                break
-            all_proxies.extend(proxies)
-            logger.info(f"Страница {page_num}: найдено {len(proxies)} прокси")
-            time.sleep(1)  # Задержка между страницами
+                consecutive_empty += 1
+            else:
+                consecutive_empty = 0
+                all_proxies.extend(proxies)
+                logger.info(f"Page {page_num}: found {len(proxies)} proxies")
+            page_num += 1
+            time.sleep(1)  # Delay between pages
         
-        logger.info(f"Всего получено {len(all_proxies)} прокси с proxymania.su")
+        logger.info(f"Total received {len(all_proxies)} proxies from proxymania.su")
         return all_proxies
     
     def _download_proxies_from_proxifly(self) -> List[Dict]:
         """Загружает прокси с Proxifly"""
         try:
-            logger.info("Загрузка прокси с Proxifly...")
+            logger.info("Loading proxies from Proxifly...")
             url = "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/all/data.json"
             response = requests.get(url, timeout=30)
             response.raise_for_status()
@@ -206,16 +211,16 @@ class ProxyManager:
                     'source': 'proxifly'
                 })
             
-            logger.info(f"Получено {len(proxies)} прокси с Proxifly")
+            logger.info(f"Received {len(proxies)} proxies from Proxifly")
             return proxies
         except Exception as e:
-            logger.warning(f"Ошибка при загрузке прокси с Proxifly: {e}")
+            logger.warning(f"Error loading proxies from Proxifly: {e}")
             return []
     
     def _download_proxies_from_proxyscrape(self) -> List[Dict]:
         """Загружает прокси с ProxyScrape API"""
         try:
-            logger.info("Загрузка прокси с ProxyScrape...")
+            logger.info("Loading proxies from ProxyScrape...")
             # Получаем HTTP прокси
             url_http = "https://api.proxyscrape.com/v2/?request=get&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all"
             # Получаем SOCKS4 прокси
@@ -249,7 +254,7 @@ class ProxyManager:
                         except ValueError:
                             continue
             except Exception as e:
-                logger.debug(f"Ошибка при загрузке HTTP прокси с ProxyScrape: {e}")
+                logger.debug(f"Error loading HTTP proxies from ProxyScrape: {e}")
             
             # Загружаем SOCKS4 прокси
             try:
@@ -273,7 +278,7 @@ class ProxyManager:
                         except ValueError:
                             continue
             except Exception as e:
-                logger.debug(f"Ошибка при загрузке SOCKS4 прокси с ProxyScrape: {e}")
+                logger.debug(f"Error loading SOCKS4 proxies from ProxyScrape: {e}")
             
             # Загружаем SOCKS5 прокси
             try:
@@ -297,7 +302,7 @@ class ProxyManager:
                         except ValueError:
                             continue
             except Exception as e:
-                logger.debug(f"Ошибка при загрузке SOCKS5 прокси с ProxyScrape: {e}")
+                logger.debug(f"Error loading SOCKS5 proxies from ProxyScrape: {e}")
             
             # Фильтруем по странам (если указан фильтр, но ProxyScrape не предоставляет страну, пропускаем фильтрацию)
             if self.country_filter:
@@ -305,17 +310,196 @@ class ProxyManager:
                 # Так как ProxyScrape не предоставляет страну, оставляем все
                 pass
             
-            logger.info(f"Получено {len(proxies)} прокси с ProxyScrape")
+            logger.info(f"Received {len(proxies)} proxies from ProxyScrape")
             return proxies
         except Exception as e:
-            logger.warning(f"Ошибка при загрузке прокси с ProxyScrape: {e}")
+            logger.warning(f"Error loading proxies from ProxyScrape: {e}")
+            return []
+    
+    def _download_proxies_from_spysone(self) -> List[Dict]:
+        """Downloads proxies from spys.one"""
+        try:
+            logger.info("Loading proxies from spys.one...")
+            proxies = []
+            url = "https://spys.one/en/free-proxy-list/"
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            }
+            
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Parse proxy table
+            table = soup.find('table', {'class': 'spy1x'})
+            if table:
+                rows = table.find_all('tr')[1:]  # Skip header
+                for row in rows:
+                    cols = row.find_all('td')
+                    if len(cols) >= 2:
+                        try:
+                            ip_port = cols[0].get_text(strip=True)
+                            if ':' in ip_port:
+                                ip, port = ip_port.split(':', 1)
+                                protocol = 'http'  # Default, can be enhanced
+                                
+                                # Check country if available
+                                country = ''
+                                if len(cols) > 3:
+                                    country_elem = cols[3]
+                                    country = country_elem.get_text(strip=True).upper()
+                                
+                                if not self.country_filter or country in self.country_filter or not country:
+                                    proxies.append({
+                                        'ip': ip.strip(),
+                                        'port': port.strip(),
+                                        'protocol': protocol,
+                                        'country': country,
+                                        'source': 'spysone'
+                                    })
+                        except (ValueError, IndexError):
+                            continue
+            
+            logger.info(f"Received {len(proxies)} proxies from spys.one")
+            return proxies
+        except Exception as e:
+            logger.warning(f"Error loading proxies from spys.one: {e}")
+            return []
+    
+    def _download_proxies_from_free_proxy_list(self) -> List[Dict]:
+        """Downloads proxies from free-proxy-list.net"""
+        try:
+            logger.info("Loading proxies from free-proxy-list.net...")
+            proxies = []
+            url = "https://free-proxy-list.net/"
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            }
+            
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Parse proxy table
+            table = soup.find('table', {'id': 'proxylisttable'})
+            if table:
+                rows = table.find_all('tr')[1:]  # Skip header
+                for row in rows:
+                    cols = row.find_all('td')
+                    if len(cols) >= 8:
+                        try:
+                            ip = cols[0].get_text(strip=True)
+                            port = cols[1].get_text(strip=True)
+                            code = cols[2].get_text(strip=True).upper()
+                            https = cols[6].get_text(strip=True)
+                            
+                            protocol = 'https' if https == 'yes' else 'http'
+                            
+                            if not self.country_filter or code in self.country_filter:
+                                proxies.append({
+                                    'ip': ip,
+                                    'port': port,
+                                    'protocol': protocol,
+                                    'country': code,
+                                    'source': 'freeproxylist'
+                                })
+                        except (ValueError, IndexError):
+                            continue
+            
+            logger.info(f"Received {len(proxies)} proxies from free-proxy-list.net")
+            return proxies
+        except Exception as e:
+            logger.warning(f"Error loading proxies from free-proxy-list.net: {e}")
+            return []
+    
+    def _download_proxies_from_geonode(self) -> List[Dict]:
+        """Downloads proxies from geonode.com API"""
+        try:
+            logger.info("Loading proxies from geonode.com...")
+            proxies = []
+            base_url = "https://proxylist.geonode.com/api/proxy-list"
+            
+            # Fetch multiple pages
+            page = 1
+            max_pages = 10  # Limit to prevent too many requests
+            consecutive_empty = 0
+            max_consecutive_empty = 2
+            
+            while page <= max_pages and consecutive_empty < max_consecutive_empty:
+                url = f"{base_url}?limit=500&page={page}&sort_by=lastChecked&sort_type=desc"
+                
+                try:
+                    response = requests.get(url, timeout=30)
+                    response.raise_for_status()
+                    data = response.json()
+                    
+                    if not data.get('data') or len(data.get('data', [])) == 0:
+                        consecutive_empty += 1
+                        page += 1
+                        continue
+                    
+                    consecutive_empty = 0
+                    
+                    for item in data.get('data', []):
+                        try:
+                            ip = item.get('ip')
+                            port = str(item.get('port', ''))
+                            protocol = item.get('protocols', [])
+                            country = item.get('country', '').upper()
+                            
+                            if not ip or not port:
+                                continue
+                            
+                            # Handle protocol (can be a list)
+                            if isinstance(protocol, list) and protocol:
+                                protocol_str = protocol[0].lower()
+                            elif isinstance(protocol, str):
+                                protocol_str = protocol.lower()
+                            else:
+                                protocol_str = 'http'
+                            
+                            # Normalize protocol
+                            if 'socks5' in protocol_str:
+                                protocol_str = 'socks5'
+                            elif 'socks4' in protocol_str:
+                                protocol_str = 'socks4'
+                            elif 'https' in protocol_str:
+                                protocol_str = 'https'
+                            else:
+                                protocol_str = 'http'
+                            
+                            if not self.country_filter or country in self.country_filter or not country:
+                                proxies.append({
+                                    'ip': ip,
+                                    'port': port,
+                                    'protocol': protocol_str,
+                                    'country': country,
+                                    'source': 'geonode'
+                                })
+                        except (ValueError, KeyError, TypeError):
+                            continue
+                    
+                    page += 1
+                    time.sleep(1)  # Delay between pages
+                    
+                except Exception as e:
+                    logger.debug(f"Error loading page {page} from geonode.com: {e}")
+                    consecutive_empty += 1
+                    page += 1
+            
+            logger.info(f"Received {len(proxies)} proxies from geonode.com")
+            return proxies
+        except Exception as e:
+            logger.warning(f"Error loading proxies from geonode.com: {e}")
             return []
     
     def download_proxies(self, force_update: bool = False) -> bool:
         """Скачивает свежие прокси из всех источников"""
         try:
             if force_update:
-                logger.info("Принудительное обновление списка прокси...")
+                logger.info("Forced proxy list update...")
             
             all_proxies = []
             
@@ -334,6 +518,21 @@ class ProxyManager:
                 proxyscrape_proxies = self._download_proxies_from_proxyscrape()
                 all_proxies.extend(proxyscrape_proxies)
             
+            # Загружаем с spys.one
+            if PROXY_SOURCES.get('spysone', {}).get('active', False):
+                spysone_proxies = self._download_proxies_from_spysone()
+                all_proxies.extend(spysone_proxies)
+            
+            # Загружаем с free-proxy-list.net
+            if PROXY_SOURCES.get('freeproxylist', {}).get('active', False):
+                freeproxylist_proxies = self._download_proxies_from_free_proxy_list()
+                all_proxies.extend(freeproxylist_proxies)
+            
+            # Загружаем с geonode.com
+            if PROXY_SOURCES.get('geonode', {}).get('active', False):
+                geonode_proxies = self._download_proxies_from_geonode()
+                all_proxies.extend(geonode_proxies)
+            
             # Удаляем дубликаты
             seen = set()
             filtered_proxies = []
@@ -343,7 +542,7 @@ class ProxyManager:
                     seen.add(proxy_key)
                     filtered_proxies.append(proxy)
             
-            logger.info(f"После удаления дубликатов: {len(filtered_proxies)} уникальных прокси")
+            logger.info(f"After removing duplicates: {len(filtered_proxies)} unique proxies")
             
             # Сохраняем прокси
             with open(PROXIES_FILE, 'w', encoding='utf-8') as f:
@@ -352,11 +551,11 @@ class ProxyManager:
             with open(LAST_UPDATE_FILE, 'w', encoding='utf-8') as f:
                 f.write(datetime.now().isoformat())
             
-            logger.info(f"Сохранено {len(filtered_proxies)} прокси в файл: {PROXIES_FILE}")
+            logger.info(f"Saved {len(filtered_proxies)} proxies to file: {PROXIES_FILE}")
             return True
             
         except Exception as e:
-            logger.error(f"Ошибка при загрузке прокси: {e}")
+            logger.error(f"Error loading proxies: {e}")
             return False
     
     def _load_proxies(self) -> List[Dict]:
@@ -366,7 +565,7 @@ class ProxyManager:
                 with open(PROXIES_FILE, 'r', encoding='utf-8') as f:
                     return json.load(f)
         except Exception as e:
-            logger.warning(f"Не удалось загрузить прокси: {e}")
+            logger.warning(f"Failed to load proxies: {e}")
         return []
     
     def validate_proxy_basic(self, proxy: Dict, timeout: int = None) -> Tuple[bool, Dict]:
@@ -392,7 +591,7 @@ class ProxyManager:
             if response.status_code == 200:
                 external_ip = response.text.strip()
                 if external_ip and len(external_ip.split('.')) == 4:
-                    logger.info(f"Прокси {ip}:{port} ({protocol.upper()}) работает! IP: {external_ip}")
+                    logger.info(f"Proxy {ip}:{port} ({protocol.upper()}) works! IP: {external_ip}")
                     return True, {
                         'ip': ip, 'port': port, 'protocol': protocol,
                         'external_ip': external_ip, 'proxies': proxies
@@ -400,7 +599,7 @@ class ProxyManager:
             
             return False, {}
         except Exception as e:
-            logger.debug(f"Прокси {proxy.get('ip', '')}:{proxy.get('port', '')} не работает: {e}")
+            logger.debug(f"Proxy {proxy.get('ip', '')}:{proxy.get('port', '')} not working: {e}")
             return False, {}
     
     def validate_proxy_for_trast(self, proxy: Dict, timeout: int = None) -> Tuple[bool, Dict]:
@@ -410,7 +609,7 @@ class ProxyManager:
         
         driver = None
         try:
-            logger.info(f"Проверка прокси {proxy['ip']}:{proxy['port']} на trast-zapchast.ru...")
+            logger.info(f"Checking proxy {proxy['ip']}:{proxy['port']} on trast-zapchast.ru...")
             
             protocol = proxy.get('protocol', 'http').lower()
             use_chrome = protocol in ['http', 'https']
@@ -430,7 +629,7 @@ class ProxyManager:
             
             while ("cloudflare" in page_source_lower or "checking your browser" in page_source_lower or 
                    "just a moment" in page_source_lower) and wait_time < max_wait:
-                logger.info(f"Cloudflare проверка... ждем {wait_time}/{max_wait} сек")
+                logger.info(f"Cloudflare check... waiting {wait_time}/{max_wait} sec")
                 time.sleep(3)
                 driver.refresh()
                 time.sleep(2)
@@ -438,28 +637,28 @@ class ProxyManager:
                 wait_time += 5
             
             if wait_time >= max_wait:
-                logger.warning("Cloudflare проверка не пройдена")
+                logger.warning("Cloudflare check failed")
                 return False, {}
             
             # Пробуем получить количество страниц - это ОСНОВНОЙ критерий работоспособности прокси
             try:
                 total_pages = get_pages_count_with_driver(driver)
                 if total_pages and total_pages > 0:
-                    logger.info(f"✓ Прокси работает! Успешно получено количество страниц: {total_pages}")
+                    logger.info(f"✓ Proxy works! Successfully got page count: {total_pages}")
                     return True, {'total_pages': total_pages}
                 else:
-                    logger.warning(f"Прокси не смог получить количество страниц (вернул {total_pages})")
+                    logger.warning(f"Proxy failed to get page count (returned {total_pages})")
                     return False, {}
             except PaginationNotDetectedError as e:
                 # Страница заблокирована - прокси не работает
-                logger.warning(f"Прокси заблокирован на сайте: {e}")
+                logger.warning(f"Proxy blocked on site: {e}")
                 return False, {}
             except Exception as e:
-                logger.warning(f"Ошибка при получении количества страниц через прокси: {e}")
+                logger.warning(f"Error getting page count via proxy: {e}")
                 return False, {}
             
         except Exception as e:
-            logger.debug(f"Ошибка при проверке прокси на trast: {e}")
+            logger.debug(f"Error checking proxy on trast: {e}")
             return False, {}
         finally:
             if driver:
@@ -484,7 +683,7 @@ class ProxyManager:
         checked_count = 0
         failed_count = 0
         
-        logger.info(f"[{thread_name}] Поток поиска прокси запущен")
+        logger.info(f"[{thread_name}] Proxy search thread started")
         
         while not stop_event.is_set():
             try:
@@ -493,7 +692,7 @@ class ProxyManager:
                     proxy = proxy_queue.get(timeout=1)
                 except queue.Empty:
                     # Очередь пуста - завершаем поток
-                    logger.info(f"[{thread_name}] Очередь прокси пуста, завершаем поток (проверено: {checked_count}, неуспешных: {failed_count})")
+                    logger.info(f"[{thread_name}] Proxy queue empty, terminating thread (checked: {checked_count}, failed: {failed_count})")
                     break
                 
                 checked_count += 1
@@ -506,7 +705,7 @@ class ProxyManager:
                         proxy_queue.task_done()
                         break
                 
-                logger.info(f"[{thread_name}] Проверка прокси {proxy_key} ({proxy.get('protocol', 'http').upper()})...")
+                logger.info(f"[{thread_name}] Checking proxy {proxy_key} ({proxy.get('protocol', 'http').upper()})...")
                 
                 # Базовая проверка
                 basic_ok, basic_info = self.validate_proxy_basic(proxy)
@@ -563,14 +762,14 @@ class ProxyManager:
                         total_checked = stats['checked']
                         total_found = stats['found']
                         total_failed = stats['failed']
-                    logger.info(f"[{thread_name}] Проверено {checked_count} прокси (всего по всем потокам: проверено {total_checked}, найдено {total_found}, неуспешных {total_failed})")
+                    logger.info(f"[{thread_name}] Checked {checked_count} proxies (total across all threads: checked {total_checked}, found {total_found}, failed {total_failed})")
                 
             except KeyboardInterrupt:
-                logger.warning(f"[{thread_name}] Получен сигнал прерывания, завершаем поток")
+                logger.warning(f"[{thread_name}] Interrupt signal received, terminating thread")
                 stop_event.set()
                 break
             except Exception as e:
-                logger.error(f"[{thread_name}] Ошибка при проверке прокси: {e}")
+                logger.error(f"[{thread_name}] Error checking proxy: {e}")
                 logger.debug(f"[{thread_name}] Traceback: {traceback.format_exc()}")
                 try:
                     proxy_queue.task_done()
@@ -578,7 +777,7 @@ class ProxyManager:
                     pass
                 continue
         
-        logger.info(f"[{thread_name}] Поток поиска прокси завершен (проверено: {checked_count}, неуспешных: {failed_count})")
+        logger.info(f"[{thread_name}] Proxy search thread finished (checked: {checked_count}, failed: {failed_count})")
     
     def get_working_proxies(self, min_count: int = 10, max_to_check: Optional[int] = 100, 
                            use_parallel: bool = True, num_threads: Optional[int] = None) -> List[Dict]:
@@ -600,7 +799,7 @@ class ProxyManager:
         # Загружаем прокси
         proxies = self._load_proxies()
         if not proxies:
-            logger.warning("Нет прокси для проверки, загружаем...")
+            logger.warning("No proxies to check, loading...")
             if not self.download_proxies(force_update=True):
                 return []
             proxies = self._load_proxies()
@@ -612,7 +811,7 @@ class ProxyManager:
             shuffled_successful = self.successful_proxies.copy()
         
         if shuffled_successful:
-            logger.info(f"Проверяем {len(shuffled_successful)} старых успешных прокси (приоритет)...")
+            logger.info(f"Checking {len(shuffled_successful)} old successful proxies (priority)...")
             random.shuffle(shuffled_successful)
             
             for proxy in shuffled_successful:
@@ -620,12 +819,12 @@ class ProxyManager:
                     break
                 
                 proxy_key = f"{proxy['ip']}:{proxy['port']}"
-                logger.info(f"Проверяем старый успешный прокси: {proxy_key} ({proxy.get('protocol', 'http').upper()})")
+                logger.info(f"Checking old successful proxy: {proxy_key} ({proxy.get('protocol', 'http').upper()})")
                 
                 # Быстрая проверка на trast (без базовой проверки, т.к. уже был успешным)
                 trast_ok, trast_info = self.validate_proxy_for_trast(proxy)
                 if trast_ok:
-                    logger.info(f"[OK] Старый успешный прокси работает: {proxy_key}")
+                    logger.info(f"[OK] Old successful proxy works: {proxy_key}")
                     working_proxy = {
                         'ip': proxy['ip'],
                         'port': proxy['port'],
@@ -636,7 +835,7 @@ class ProxyManager:
                     working_proxy.update(trast_info)
                     working_proxies.append(working_proxy)
                 else:
-                    logger.warning(f"Старый прокси {proxy_key} перестал работать")
+                    logger.warning(f"Old proxy {proxy_key} stopped working")
                     with self.lock:
                         # Удаляем из успешных
                         self.successful_proxies = [p for p in self.successful_proxies 
@@ -645,12 +844,12 @@ class ProxyManager:
         
         # Если нашли достаточно старых прокси, возвращаем их
         if len(working_proxies) >= min_count:
-            logger.info(f"Найдено достаточно старых успешных прокси: {len(working_proxies)}")
+            logger.info(f"Found enough old successful proxies: {len(working_proxies)}")
             self.save_successful_proxies()
             return working_proxies[:min_count]
         
         # ШАГ 2: Многопоточный поиск новых прокси (если нужно)
-        logger.info(f"Старых успешных прокси недостаточно ({len(working_proxies)}/{min_count}), запускаем поиск новых...")
+        logger.info(f"Not enough old successful proxies ({len(working_proxies)}/{min_count}), starting search for new ones...")
         
         # Фильтруем уже проверенные
         with self.lock:
@@ -666,12 +865,12 @@ class ProxyManager:
         # Применяем ограничение max_to_check только если оно указано
         if max_to_check is not None and len(proxies_to_check) > max_to_check:
             proxies_to_check = proxies_to_check[:max_to_check]
-            logger.info(f"Ограничение: проверяем первые {max_to_check} из {len(proxies_to_check) + len(successful_keys) + len(failed_keys)} доступных прокси")
+            logger.info(f"Limit: checking first {max_to_check} of {len(proxies_to_check) + len(successful_keys) + len(failed_keys)} available proxies")
         else:
-            logger.info(f"Проверяем все доступные прокси: {len(proxies_to_check)} (успешных: {len(successful_keys)}, неудачных: {len(failed_keys)})")
+            logger.info(f"Checking all available proxies: {len(proxies_to_check)} (successful: {len(successful_keys)}, failed: {len(failed_keys)})")
         
         if not proxies_to_check:
-            logger.warning("Нет новых прокси для проверки")
+            logger.warning("No new proxies to check")
             self.save_successful_proxies()
             return working_proxies
         
@@ -679,7 +878,7 @@ class ProxyManager:
         
         if use_parallel and num_threads > 1:
             # Многопоточная проверка
-            logger.info(f"Запускаем многопоточный поиск в {num_threads} потоках...")
+            logger.info(f"Starting multi-threaded search in {num_threads} threads...")
             
             stop_event = threading.Event()
             stats = {'checked': 0, 'found': 0, 'failed': 0}
@@ -700,28 +899,28 @@ class ProxyManager:
                 )
                 thread.start()
                 threads.append(thread)
-                logger.info(f"Запущен поток поиска прокси {thread_id}")
+                logger.info(f"Proxy search thread {thread_id} started")
             
             # Ждем завершения всех потоков (с таймаутом для безопасности)
             for i, thread in enumerate(threads):
                 thread.join(timeout=300)  # Максимум 5 минут на поток
                 if thread.is_alive():
-                    logger.warning(f"Поток {i} не завершился за 5 минут, возможно завис")
+                    logger.warning(f"Thread {i} did not finish within 5 minutes, possibly hung")
                 else:
-                    logger.debug(f"Поток {i} успешно завершен")
+                    logger.debug(f"Thread {i} finished successfully")
             
-            logger.info(f"Многопоточный поиск завершен: найдено {len(working_proxies)} прокси (проверено: {stats['checked']}, неуспешных: {stats['failed']})")
+            logger.info(f"Multi-threaded search completed: found {len(working_proxies)} proxies (checked: {stats['checked']}, failed: {stats['failed']})")
         else:
             # Последовательная проверка (fallback)
-            logger.info("Последовательная проверка прокси...")
+            logger.info("Sequential proxy check...")
             
             for i, proxy in enumerate(proxies_to_check, 1):
                 # Если уже нашли нужное количество - останавливаемся
                 if len(working_proxies) >= min_count:
-                    logger.info(f"Найдено достаточно рабочих прокси ({len(working_proxies)}/{min_count}), останавливаем проверку")
+                    logger.info(f"Found enough working proxies ({len(working_proxies)}/{min_count}), stopping check")
                     break
                 
-                logger.info(f"[{i}/{len(proxies_to_check)}] Проверка прокси {proxy['ip']}:{proxy['port']}...")
+                logger.info(f"[{i}/{len(proxies_to_check)}] Checking proxy {proxy['ip']}:{proxy['port']}...")
                 
                 # Базовая проверка
                 basic_ok, basic_info = self.validate_proxy_basic(proxy)
@@ -754,7 +953,7 @@ class ProxyManager:
         # Сохраняем успешные прокси
         self.save_successful_proxies()
         
-        logger.info(f"Всего найдено {len(working_proxies)} рабочих прокси")
+        logger.info(f"Total found {len(working_proxies)} working proxies")
         return working_proxies[:min_count] if len(working_proxies) > min_count else working_proxies
     
     def get_next_proxy(self) -> Optional[Dict]:

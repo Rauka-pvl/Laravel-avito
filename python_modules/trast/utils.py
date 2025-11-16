@@ -34,7 +34,7 @@ except ImportError:
         HAS_SELENIUM_CHROME = True
     except ImportError:
         HAS_SELENIUM_CHROME = False
-    logger.warning("undetected-chromedriver не установлен, будет использован обычный Chrome")
+    logger.warning("undetected-chromedriver not installed, will use regular Chrome")
 
 from config import (
     PRODUCTS_PER_PAGE,
@@ -86,9 +86,9 @@ def safe_get_page_source(driver: webdriver.Remote) -> Optional[str]:
         return driver.page_source
     except Exception as e:
         if is_tab_crashed_error(e):
-            logger.error(f"[TAB CRASH] Краш вкладки при получении page_source: {e}")
+            logger.error(f"[TAB CRASH] Tab crash while getting page_source: {e}")
         else:
-            logger.warning(f"Ошибка при получении page_source: {e}")
+            logger.warning(f"Error getting page_source: {e}")
         return None
 
 
@@ -202,7 +202,7 @@ def get_products_from_page_soup(soup: BeautifulSoup) -> Tuple[List[Dict], int, i
     for card in cards:
         # Проверяем наличие товара в наличии
         stock_badge = card.select_one("div.product-badge.product-stock.instock")
-        if not stock_badge or "В наличии" not in stock_badge.text.strip():
+        if not stock_badge or "В наличии" not in stock_badge.text.strip():  # Check for "In stock" text
             continue  # Пропускаем товары не в наличии
         
         # Извлекаем данные
@@ -227,7 +227,7 @@ def get_products_from_page_soup(soup: BeautifulSoup) -> Tuple[List[Dict], int, i
             "price": clean_price
         }
         results.append(product)
-        logger.debug(f"Добавлен товар: {product}")
+        logger.info(f"Product added: {product}")
     
     return results, len(results), total_products
 
@@ -247,7 +247,7 @@ def create_driver(proxy: Optional[Dict] = None, use_chrome: bool = True) -> Opti
     if proxy:
         protocol = proxy.get('protocol', 'http').lower()
         if protocol in ['socks4', 'socks5']:
-            logger.info(f"Прокси {protocol.upper()} - используем Firefox (Chrome не поддерживает SOCKS)")
+            logger.info(f"Proxy {protocol.upper()} - using Firefox (Chrome does not support SOCKS)")
             use_chrome = False
     
     # Пробуем Chrome с undetected-chromedriver
@@ -255,7 +255,7 @@ def create_driver(proxy: Optional[Dict] = None, use_chrome: bool = True) -> Opti
         try:
             return _create_chrome_driver(proxy)
         except Exception as e:
-            logger.warning(f"Chrome не доступен: {e}, пробуем Firefox...")
+            logger.warning(f"Chrome not available: {e}, trying Firefox...")
     
     # Fallback на Firefox
     return _create_firefox_driver(proxy)
@@ -283,9 +283,9 @@ def _create_chrome_driver(proxy: Optional[Dict] = None) -> webdriver.Chrome:
             if protocol in ['http', 'https']:
                 proxy_arg = f"{protocol}://{ip}:{port}"
                 options.add_argument(f"--proxy-server={proxy_arg}")
-                logger.debug(f"Chrome прокси настроен: {proxy_arg}")
+                logger.debug(f"Chrome proxy configured: {proxy_arg}")
             else:
-                raise ValueError(f"Chrome не поддерживает {protocol.upper()} прокси. Используйте Firefox.")
+                raise ValueError(f"Chrome does not support {protocol.upper()} proxy. Use Firefox.")
         
         # Пробуем создать драйвер с автоматическим определением версии
         try:
@@ -296,16 +296,16 @@ def _create_chrome_driver(proxy: Optional[Dict] = None) -> webdriver.Chrome:
             error_msg = str(e).lower()
             # Если ошибка связана с версией ChromeDriver
             if "version" in error_msg and ("chrome" in error_msg or "chromedriver" in error_msg):
-                logger.warning(f"Проблема с версией ChromeDriver: {e}")
-                logger.info("Пробуем создать драйвер с use_subprocess=True для автоматического обновления...")
+                logger.warning(f"ChromeDriver version issue: {e}")
+                logger.info("Trying to create driver with use_subprocess=True for automatic update...")
                 try:
                     # use_subprocess=True может помочь с автоматическим обновлением ChromeDriver
                     driver = uc.Chrome(options=options, version_main=None, use_subprocess=True)
                     return driver
                 except Exception as e2:
-                    logger.warning(f"Не удалось создать драйвер с use_subprocess: {e2}")
-                    logger.info("Рекомендуется запустить скрипт установки: python install.py")
-                    logger.info("Или обновить вручную: pip install --upgrade --force-reinstall undetected-chromedriver")
+                    logger.warning(f"Failed to create driver with use_subprocess: {e2}")
+                    logger.info("Recommended to run installation script: python install.py")
+                    logger.info("Or update manually: pip install --upgrade --force-reinstall undetected-chromedriver")
                     # Пробрасываем исходную ошибку
                     raise e
             else:
@@ -341,7 +341,7 @@ def _create_chrome_driver(proxy: Optional[Dict] = None) -> webdriver.Chrome:
                 proxy_arg = f"{protocol}://{ip}:{port}"
                 options.add_argument(f"--proxy-server={proxy_arg}")
             else:
-                raise ValueError(f"Chrome не поддерживает {protocol.upper()} прокси. Используйте Firefox.")
+                raise ValueError(f"Chrome does not support {protocol.upper()} proxy. Use Firefox.")
         
         service = ChromeService(driver_path)
         driver = selenium_webdriver.Chrome(service=service, options=options)
@@ -364,7 +364,7 @@ def _create_firefox_driver(proxy: Optional[Dict] = None) -> webdriver.Firefox:
     try:
         geckodriver_autoinstaller.install()
     except Exception as e:
-        logger.warning(f"Ошибка при установке geckodriver: {e}, пробуем продолжить...")
+        logger.warning(f"Error installing geckodriver: {e}, trying to continue...")
     
     options = FirefoxOptions()
     options.add_argument("--headless")
@@ -413,10 +413,10 @@ def _create_firefox_driver(proxy: Optional[Dict] = None) -> webdriver.Firefox:
     except Exception as e:
         error_msg = str(e).lower()
         if "connection refused" in error_msg or "failed to establish" in error_msg:
-            logger.error(f"Ошибка подключения к geckodriver: {e}")
-            logger.error("Возможно, geckodriver не запущен или недоступен. Попробуйте переустановить geckodriver.")
+            logger.error(f"Error connecting to geckodriver: {e}")
+            logger.error("geckodriver may not be running or available. Try reinstalling geckodriver.")
         else:
-            logger.error(f"Ошибка при создании Firefox драйвера: {e}")
+            logger.error(f"Error creating Firefox driver: {e}")
         raise
 
 
@@ -435,18 +435,18 @@ def get_pages_count_with_driver(driver: webdriver.Remote, url: str = "https://tr
         from selenium.webdriver.support import expected_conditions as EC
         from selenium.webdriver.common.by import By
         
-        logger.info("Получаем количество страниц для парсинга...")
+        logger.info("Getting page count for parsing...")
         
         driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT)
         try:
             driver.get(url)
         except TimeoutException:
-            logger.warning(f"Таймаут при загрузке страницы {url}")
+            logger.warning(f"Timeout loading page {url}")
             return None
         except Exception as get_error:
             error_msg = str(get_error).lower()
             if "timeout" in error_msg or "timed out" in error_msg:
-                logger.warning(f"Таймаут при загрузке страницы {url}")
+                logger.warning(f"Timeout loading page {url}")
                 return None
             # Для других ошибок пробрасываем дальше
             raise
@@ -454,7 +454,7 @@ def get_pages_count_with_driver(driver: webdriver.Remote, url: str = "https://tr
         # Ждем Cloudflare - используем безопасное получение page_source
         page_source = safe_get_page_source(driver)
         if not page_source:
-            logger.error("Не удалось получить page_source после загрузки страницы")
+            logger.error("Failed to get page_source after page load")
             return None
         
         page_source_lower = page_source.lower()
@@ -463,18 +463,18 @@ def get_pages_count_with_driver(driver: webdriver.Remote, url: str = "https://tr
         
         while ("cloudflare" in page_source_lower or "checking your browser" in page_source_lower or 
                "just a moment" in page_source_lower) and wait_time < max_wait:
-            logger.info(f"Cloudflare проверка... ждем {wait_time}/{max_wait} сек")
+            logger.info(f"Cloudflare check... waiting {wait_time}/{max_wait} sec")
             time.sleep(3)
             try:
                 driver.refresh()
                 time.sleep(2)
                 page_source = safe_get_page_source(driver)
                 if not page_source:
-                    logger.error("Краш вкладки во время ожидания Cloudflare")
+                    logger.error("Tab crash during Cloudflare wait")
                     return None
                 page_source_lower = page_source.lower()
             except Exception as refresh_error:
-                logger.warning(f"Ошибка при обновлении страницы: {refresh_error}")
+                logger.warning(f"Error refreshing page: {refresh_error}")
                 return None
             wait_time += 5
         
@@ -496,7 +496,7 @@ def get_pages_count_with_driver(driver: webdriver.Remote, url: str = "https://tr
             wait = WebDriverWait(driver, 30)  # Увеличено до 30 секунд
             # Сначала ждем появления пагинации
             pagination_container = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".facetwp-pager")))
-            logger.debug("Пагинация найдена через WebDriverWait")
+            logger.debug("Pagination found via WebDriverWait")
             
             # Пробуем найти элемент .last
             try:
@@ -505,7 +505,7 @@ def get_pages_count_with_driver(driver: webdriver.Remote, url: str = "https://tr
                     data_page = last_page_element.get_attribute("data-page")
                     if data_page:
                         total_pages = int(data_page)
-                        logger.info(f"[OK] Найдено {total_pages} страниц для парсинга (через Selenium .last)")
+                        logger.info(f"[OK] Found {total_pages} pages for parsing (via Selenium .last)")
                         return total_pages
             except:
                 pass
@@ -513,7 +513,7 @@ def get_pages_count_with_driver(driver: webdriver.Remote, url: str = "https://tr
             # Если .last не найден, ищем все элементы пагинации и берем максимальный номер
             try:
                 page_elements = driver.find_elements(By.CSS_SELECTOR, ".facetwp-pager .facetwp-page")
-                logger.debug(f"Найдено элементов пагинации: {len(page_elements)}")
+                logger.debug(f"Found pagination elements: {len(page_elements)}")
                 if page_elements:
                     max_page = 0
                     found_pages = []
@@ -527,22 +527,22 @@ def get_pages_count_with_driver(driver: webdriver.Remote, url: str = "https://tr
                                     max_page = page_num
                             except:
                                 pass
-                    logger.debug(f"Найденные номера страниц: {found_pages}")
+                    logger.debug(f"Found page numbers: {found_pages}")
                     if max_page > 0:
                         total_pages = max_page
-                        logger.info(f"[OK] Найдено {total_pages} страниц для парсинга (через Selenium, максимальный номер из {len(found_pages)} элементов)")
+                        logger.info(f"[OK] Found {total_pages} pages for parsing (via Selenium, max number from {len(found_pages)} elements)")
                         return total_pages
                     else:
-                        logger.warning(f"[WARNING] Найдено {len(page_elements)} элементов пагинации, но не удалось извлечь номера страниц")
+                        logger.warning(f"[WARNING] Found {len(page_elements)} pagination elements, but failed to extract page numbers")
             except Exception as find_error:
-                logger.debug(f"Ошибка при поиске всех элементов пагинации: {find_error}")
+                logger.debug(f"Error searching for all pagination elements: {find_error}")
         except Exception as wait_error:
-            logger.debug(f"WebDriverWait не помог: {wait_error}")
+            logger.debug(f"WebDriverWait did not help: {wait_error}")
         
         # Метод 2: Пробуем через BeautifulSoup (fallback)
         page_source = safe_get_page_source(driver)
         if not page_source:
-            logger.warning("Не удалось получить page_source для BeautifulSoup")
+            logger.warning("Failed to get page_source for BeautifulSoup")
             return None
         
         page_source_lower = page_source.lower()
@@ -565,23 +565,23 @@ def get_pages_count_with_driver(driver: webdriver.Remote, url: str = "https://tr
             "attention required",
         ]
         if any(indicator in page_source_lower for indicator in block_indicators):
-            logger.warning("[WARNING] Обнаружены признаки блокировки на странице каталога")
-            raise PaginationNotDetectedError("Пагинация не найдена из-за блокировки или заглушки")
+            logger.warning("[WARNING] Blocking indicators detected on catalog page")
+            raise PaginationNotDetectedError("Pagination not found due to blocking or placeholder")
         
         # Проверяем наличие товаров и пагинации
         has_products = bool(soup.select("div.product.product-plate"))
         has_pagination_any = bool(soup.select(".facetwp-pager .facetwp-page"))
         
         if not has_products and not has_pagination_any:
-            logger.warning("[WARNING] Каталог не содержит карточек и пагинации — возможно, страница заблокирована")
-            raise PaginationNotDetectedError("Пагинация не найдена: отсутствуют карточки и пагинация")
+            logger.warning("[WARNING] Catalog does not contain cards and pagination — page may be blocked")
+            raise PaginationNotDetectedError("Pagination not found: missing cards and pagination")
         
         # Ищем пагинацию через BeautifulSoup
         last_page_el = soup.select_one(".facetwp-pager .facetwp-page.last")
         
         if last_page_el and last_page_el.has_attr("data-page"):
             total_pages = int(last_page_el["data-page"])
-            logger.info(f"[OK] Найдено {total_pages} страниц для парсинга (через BeautifulSoup .last)")
+            logger.info(f"[OK] Found {total_pages} pages for parsing (via BeautifulSoup .last)")
             return total_pages
         
         # Пробуем альтернативные селекторы
@@ -589,7 +589,7 @@ def get_pages_count_with_driver(driver: webdriver.Remote, url: str = "https://tr
             last_page_el = soup.select_one(".facetwp-page.last")
         if not last_page_el:
             last_page_els = soup.select(".facetwp-pager .facetwp-page")
-            logger.debug(f"Найдено элементов пагинации через BeautifulSoup: {len(last_page_els)}")
+            logger.debug(f"Found pagination elements via BeautifulSoup: {len(last_page_els)}")
             if last_page_els:
                 # Берем максимальный номер из всех найденных элементов
                 max_page = 0
@@ -611,48 +611,48 @@ def get_pages_count_with_driver(driver: webdriver.Remote, url: str = "https://tr
                             found_pages.append(page_num)
                             if page_num > max_page:
                                 max_page = page_num
-                logger.debug(f"Найденные номера страниц через BeautifulSoup: {found_pages}")
+                logger.debug(f"Found page numbers via BeautifulSoup: {found_pages}")
                 if max_page > 0:
                     total_pages = max_page
-                    logger.info(f"[OK] Найдено {total_pages} страниц для парсинга (через BeautifulSoup, максимальный номер из {len(found_pages)} элементов)")
+                    logger.info(f"[OK] Found {total_pages} pages for parsing (via BeautifulSoup, max number from {len(found_pages)} elements)")
                     return total_pages
                 else:
-                    logger.warning(f"[WARNING] Найдено {len(last_page_els)} элементов пагинации через BeautifulSoup, но не удалось извлечь номера страниц")
+                    logger.warning(f"[WARNING] Found {len(last_page_els)} pagination elements via BeautifulSoup, but failed to extract page numbers")
         
         if last_page_el and last_page_el.has_attr("data-page"):
             total_pages = int(last_page_el["data-page"])
-            logger.info(f"[OK] Найдено {total_pages} страниц для парсинга (альтернативный селектор)")
+            logger.info(f"[OK] Found {total_pages} pages for parsing (alternative selector)")
             return total_pages
         
         # Если есть товары, но нет пагинации - это одна страница
         if has_products and not has_pagination_any:
-            logger.info("[INFO] Найдены карточки товаров без пагинации — предполагаем одну страницу каталога")
+            logger.info("[INFO] Found product cards without pagination — assuming single catalog page")
             return 1
         
         # Если ничего не найдено - это ошибка, прокси не работает
-        logger.warning(f"[WARNING] Не удалось найти информацию о количестве страниц")
-        logger.warning(f"[WARNING] Размер страницы: {len(page_source)} символов")
-        logger.warning(f"[WARNING] Содержит 'facetwp': {'facetwp' in page_source_lower}")
-        logger.warning(f"[WARNING] Содержит 'shop': {'shop' in page_source_lower}")
-        logger.warning(f"[WARNING] Есть товары: {has_products}, есть пагинация: {has_pagination_any}")
+        logger.warning(f"[WARNING] Failed to find page count information")
+        logger.warning(f"[WARNING] Page size: {len(page_source)} characters")
+        logger.warning(f"[WARNING] Contains 'facetwp': {'facetwp' in page_source_lower}")
+        logger.warning(f"[WARNING] Contains 'shop': {'shop' in page_source_lower}")
+        logger.warning(f"[WARNING] Has products: {has_products}, has pagination: {has_pagination_any}")
         
         # Сохраняем HTML для отладки
         try:
             debug_file = os.path.join(LOG_DIR, f"debug_pagination_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
             with open(debug_file, 'w', encoding='utf-8') as f:
                 f.write(page_source)
-            logger.warning(f"[WARNING] HTML сохранен в {debug_file} для отладки")
+            logger.warning(f"[WARNING] HTML saved to {debug_file} for debugging")
         except:
             pass
         
         # Если не удалось определить - это блокировка, выбрасываем исключение
-        raise PaginationNotDetectedError("Не удалось определить количество страниц - возможно, страница заблокирована")
+        raise PaginationNotDetectedError("Failed to determine page count - page may be blocked")
         
     except PaginationNotDetectedError:
         # Пробрасываем исключение о блокировке
         raise
     except Exception as e:
-        logger.error(f"Ошибка при получении количества страниц: {e}")
+        logger.error(f"Error getting page count: {e}")
         logger.debug(traceback.format_exc())
         return None
 
@@ -681,10 +681,10 @@ def convert_csv_to_excel(csv_path: str, excel_path: str) -> bool:
     """Конвертирует CSV файл в Excel."""
     try:
         if not os.path.exists(csv_path):
-            logger.warning(f"CSV файл не найден: {csv_path}")
+            logger.warning(f"CSV file not found: {csv_path}")
             return False
         
-        logger.info(f"Конвертируем CSV в Excel: {csv_path} -> {excel_path}")
+        logger.info(f"Converting CSV to Excel: {csv_path} -> {excel_path}")
         
         wb = Workbook()
         ws = wb.active
@@ -697,11 +697,11 @@ def convert_csv_to_excel(csv_path: str, excel_path: str) -> bool:
         
         wb.save(excel_path)
         file_size = os.path.getsize(excel_path)
-        logger.info(f"CSV конвертирован в Excel: {excel_path} (размер: {file_size} байт)")
+        logger.info(f"CSV converted to Excel: {excel_path} (size: {file_size} bytes)")
         return True
         
     except Exception as e:
-        logger.error(f"Ошибка при конвертации CSV в Excel: {e}")
+        logger.error(f"Error converting CSV to Excel: {e}")
         return False
 
 
@@ -710,12 +710,12 @@ def create_backup():
     try:
         if os.path.exists(OUTPUT_FILE):
             shutil.copy2(OUTPUT_FILE, BACKUP_FILE)
-            logger.info(f"Excel backup создан: {BACKUP_FILE}")
+            logger.info(f"Excel backup created: {BACKUP_FILE}")
         if os.path.exists(CSV_FILE):
             shutil.copy2(CSV_FILE, BACKUP_CSV)
-            logger.info(f"CSV backup создан: {BACKUP_CSV}")
+            logger.info(f"CSV backup created: {BACKUP_CSV}")
     except Exception as e:
-        logger.error(f"Ошибка при создании бэкапа: {e}")
+        logger.error(f"Error creating backup: {e}")
 
 
 def finalize_output_files():
@@ -726,17 +726,17 @@ def finalize_output_files():
         
         if os.path.exists(TEMP_CSV_FILE):
             shutil.move(TEMP_CSV_FILE, CSV_FILE)
-            logger.info(f"Временный CSV файл перемещен в основной: {CSV_FILE}")
+            logger.info(f"Temporary CSV file moved to main: {CSV_FILE}")
             
             if convert_csv_to_excel(CSV_FILE, OUTPUT_FILE):
-                logger.info(f"Excel файл создан из CSV: {OUTPUT_FILE}")
+                logger.info(f"Excel file created from CSV: {OUTPUT_FILE}")
             else:
-                logger.warning("Не удалось создать Excel файл из CSV")
+                logger.warning("Failed to create Excel file from CSV")
         else:
-            logger.warning("Временный CSV файл не найден")
+            logger.warning("Temporary CSV file not found")
             
     except Exception as e:
-        logger.error(f"Ошибка при финализации файлов: {e}")
+        logger.error(f"Error finalizing files: {e}")
         raise
 
 
@@ -745,10 +745,10 @@ def cleanup_temp_files():
     try:
         if os.path.exists(TEMP_CSV_FILE):
             os.remove(TEMP_CSV_FILE)
-            logger.info(f"Временный CSV файл удален: {TEMP_CSV_FILE}")
+            logger.info(f"Temporary CSV file deleted: {TEMP_CSV_FILE}")
         if os.path.exists(TEMP_OUTPUT_FILE):
             os.remove(TEMP_OUTPUT_FILE)
-            logger.info(f"Временный Excel файл удален: {TEMP_OUTPUT_FILE}")
+            logger.info(f"Temporary Excel file deleted: {TEMP_OUTPUT_FILE}")
     except Exception as e:
-        logger.warning(f"Не удалось удалить временные файлы: {e}")
+        logger.warning(f"Failed to delete temporary files: {e}")
 

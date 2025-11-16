@@ -67,6 +67,21 @@ PROXY_SOURCES = {
         'url': 'https://api.proxyscrape.com/v2/?request=get&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all',
         'type': 'proxyscrape',
         'active': True
+    },
+    'spysone': {
+        'url': 'https://spys.one/en/free-proxy-list/',
+        'type': 'spysone',
+        'active': True
+    },
+    'freeproxylist': {
+        'url': 'https://free-proxy-list.net/',
+        'type': 'freeproxylist',
+        'active': True
+    },
+    'geonode': {
+        'url': 'https://proxylist.geonode.com/api/proxy-list?limit=500&page=1&sort_by=lastChecked&sort_type=desc',
+        'type': 'geonode',
+        'active': True
     }
 }
 

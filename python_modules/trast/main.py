@@ -96,7 +96,7 @@ def reload_page_if_needed(
     for attempt in range(max_retries + 1):
         try:
             if attempt > 0:
-                logger.info(f"[RETRY] Перезагружаем страницу {page_url} (попытка {attempt + 1}/{max_retries + 1})...")
+                logger.info(f"[RETRY] Reloading page {page_url} (attempt {attempt + 1}/{max_retries + 1})...")
                 time.sleep(random.uniform(1, 2))
             
             driver.set_page_load_timeout(25)
@@ -108,7 +108,7 @@ def reload_page_if_needed(
                 wait = WebDriverWait(driver, 15)
                 wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
             except TimeoutException:
-                logger.warning(f"[WARNING] Таймаут при ожидании загрузки страницы {page_url}")
+                logger.warning(f"[WARNING] Timeout waiting for page load {page_url}")
             
             # Проверяем Cloudflare
             page_source = safe_get_page_source(driver)
@@ -122,7 +122,7 @@ def reload_page_if_needed(
             
             while ("cloudflare" in page_source_lower or "checking your browser" in page_source_lower or 
                    "just a moment" in page_source_lower) and wait_time < max_wait:
-                logger.info(f"Cloudflare проверка... ждем {wait_time}/{max_wait} сек")
+                logger.info(f"Cloudflare check... waiting {wait_time}/{max_wait} sec")
                 time.sleep(3)
                 driver.refresh()
                 time.sleep(2)
@@ -143,16 +143,16 @@ def reload_page_if_needed(
             
             # Проверяем, является ли ошибка связанной с крашем вкладки
             if is_tab_crashed_error(e):
-                logger.error(f"[TAB CRASH] Обнаружен краш вкладки при перезагрузке страницы (попытка {attempt + 1}): {e}")
+                logger.error(f"[TAB CRASH] Tab crash detected during page reload (attempt {attempt + 1}): {e}")
                 # Пробрасываем ошибку, чтобы вызвавший код мог пересоздать драйвер
                 raise e
             
             # Проверяем, является ли ошибка связанной с прокси
             if is_proxy_error(e):
-                logger.warning(f"[WARNING] Прокси отказал в соединении при перезагрузке страницы (попытка {attempt + 1})")
+                logger.warning(f"[WARNING] Proxy connection refused during page reload (attempt {attempt + 1})")
                 return None, False
             
-            logger.warning(f"[WARNING] Ошибка при перезагрузке страницы (попытка {attempt + 1}): {e}")
+            logger.warning(f"[WARNING] Error reloading page (attempt {attempt + 1}): {e}")
             if attempt < max_retries:
                 continue
             else:
@@ -226,7 +226,7 @@ def parse_page_with_cloudscraper(
         return None, False
         
     except Exception as e:
-        logger.debug(f"Ошибка при парсинге через cloudscraper: {e}")
+        logger.debug(f"Error parsing with cloudscraper: {e}")
         return None, False
 
 
@@ -249,7 +249,7 @@ def parse_page_with_selenium(
         page_source = safe_get_page_source(driver)
         if not page_source:
             # Краш вкладки
-            logger.error("[TAB CRASH] Краш вкладки при получении page_source после загрузки")
+            logger.error("[TAB CRASH] Tab crash while getting page_source after load")
             return None, False
         
         page_source_lower = page_source.lower()
@@ -258,14 +258,14 @@ def parse_page_with_selenium(
         
         while ("cloudflare" in page_source_lower or "checking your browser" in page_source_lower or 
                "just a moment" in page_source_lower) and wait_time < max_wait:
-            logger.info(f"Cloudflare проверка... ждем {wait_time}/{max_wait} сек")
+            logger.info(f"Cloudflare check... waiting {wait_time}/{max_wait} sec")
             time.sleep(3)
             driver.refresh()
             time.sleep(2)
             page_source = safe_get_page_source(driver)
             if not page_source:
                 # Краш вкладки во время ожидания Cloudflare
-                logger.error("[TAB CRASH] Краш вкладки во время ожидания Cloudflare")
+                logger.error("[TAB CRASH] Tab crash during Cloudflare wait")
                 return None, False
             page_source_lower = page_source.lower()
             wait_time += 5
@@ -279,13 +279,13 @@ def parse_page_with_selenium(
     except Exception as e:
         # Проверяем тип ошибки
         if is_tab_crashed_error(e):
-            logger.error(f"[TAB CRASH] Краш вкладки при парсинге через Selenium: {e}")
+            logger.error(f"[TAB CRASH] Tab crash while parsing with Selenium: {e}")
             # Пробрасываем, чтобы вызвавший код мог пересоздать драйвер
             raise e
         elif is_proxy_error(e):
-            logger.warning(f"[PROXY ERROR] Ошибка прокси при парсинге через Selenium: {e}")
+            logger.warning(f"[PROXY ERROR] Proxy error while parsing with Selenium: {e}")
         else:
-            logger.debug(f"Ошибка при парсинге через Selenium: {e}")
+            logger.debug(f"Error parsing with Selenium: {e}")
         return None, False
 
 
@@ -304,11 +304,11 @@ def download_proxies_thread(
         stop_event: Event для остановки потока
     """
     thread_name = "DownloadThread"
-    logger.info(f"[{thread_name}] Запущен поток скачивания прокси")
+    logger.info(f"[{thread_name}] Proxy download thread started")
     
     try:
         # Первоначальная загрузка прокси
-        logger.info(f"[{thread_name}] Начинаем скачивание прокси из всех источников...")
+        logger.info(f"[{thread_name}] Starting proxy download from all sources...")
         if proxy_manager.download_proxies(force_update=True):
             # Загружаем скачанные прокси
             downloaded_proxies = proxy_manager._load_proxies()
@@ -316,11 +316,11 @@ def download_proxies_thread(
                 with proxies_lock:
                     proxies_list.clear()
                     proxies_list.extend(downloaded_proxies)
-                    logger.info(f"[{thread_name}] Загружено {len(proxies_list)} прокси в общий список")
+                    logger.info(f"[{thread_name}] Loaded {len(proxies_list)} proxies into shared list")
             else:
-                logger.warning(f"[{thread_name}] Не удалось загрузить прокси из файла")
+                logger.warning(f"[{thread_name}] Failed to load proxies from file")
         else:
-            logger.warning(f"[{thread_name}] Не удалось скачать прокси")
+            logger.warning(f"[{thread_name}] Failed to download proxies")
         
         # Периодическое обновление (каждые 30 минут)
         update_interval = 1800  # 30 минут
@@ -331,7 +331,7 @@ def download_proxies_thread(
             
             # Проверяем, нужно ли обновить прокси
             if time.time() - last_update >= update_interval:
-                logger.info(f"[{thread_name}] Периодическое обновление списка прокси...")
+                logger.info(f"[{thread_name}] Periodic proxy list update...")
                 try:
                     if proxy_manager.download_proxies(force_update=True):
                         downloaded_proxies = proxy_manager._load_proxies()
@@ -340,16 +340,16 @@ def download_proxies_thread(
                                 old_count = len(proxies_list)
                                 proxies_list.clear()
                                 proxies_list.extend(downloaded_proxies)
-                                logger.info(f"[{thread_name}] Обновлен список прокси: {old_count} -> {len(proxies_list)}")
+                                logger.info(f"[{thread_name}] Proxy list updated: {old_count} -> {len(proxies_list)}")
                         last_update = time.time()
                 except Exception as e:
-                    logger.warning(f"[{thread_name}] Ошибка при обновлении прокси: {e}")
+                    logger.warning(f"[{thread_name}] Error updating proxies: {e}")
     
     except Exception as e:
-        logger.error(f"[{thread_name}] Критическая ошибка в потоке скачивания прокси: {e}")
+        logger.error(f"[{thread_name}] Critical error in proxy download thread: {e}")
         logger.debug(traceback.format_exc())
     
-    logger.info(f"[{thread_name}] Поток скачивания прокси завершен")
+    logger.info(f"[{thread_name}] Proxy download thread finished")
 
 
 def recreate_driver_with_new_proxy(
@@ -377,7 +377,7 @@ def recreate_driver_with_new_proxy(
     new_proxy = proxy_manager.get_next_proxy()
     if not new_proxy:
         # Если прокси закончились, получаем новые
-        logger.warning("[MainThread] Рабочие прокси закончились, ищем новые...")
+        logger.warning("[MainThread] Working proxies exhausted, searching for new ones...")
         new_proxies = proxy_manager.get_working_proxies(min_count=1, max_to_check=MAX_PROXIES_TO_CHECK)
         if new_proxies:
             if proxies_lock:
@@ -388,18 +388,18 @@ def recreate_driver_with_new_proxy(
                 working_proxies_list.extend(new_proxies)
                 new_proxy = working_proxies_list[0] if working_proxies_list else None
         else:
-            logger.error("[MainThread] Не удалось найти новые рабочие прокси!")
+            logger.error("[MainThread] Failed to find new working proxies!")
             return None, None, {}
     
     # Создаем новый драйвер
     protocol = new_proxy.get('protocol', 'http').lower()
     use_chrome = protocol in ['http', 'https']
     
-    logger.info(f"Пересоздаем драйвер с новым прокси {new_proxy['ip']}:{new_proxy['port']} ({protocol.upper()})...")
+    logger.info(f"Recreating driver with new proxy {new_proxy['ip']}:{new_proxy['port']} ({protocol.upper()})...")
     new_driver = create_driver(new_proxy, use_chrome=use_chrome)
     
     if not new_driver:
-        logger.warning(f"Не удалось создать драйвер с прокси {new_proxy['ip']}:{new_proxy['port']}")
+        logger.warning(f"Failed to create driver with proxy {new_proxy['ip']}:{new_proxy['port']}")
         return None, new_proxy, {}
     
     # Сбрасываем cookies
@@ -429,7 +429,7 @@ def worker_thread(
         csv_lock: Lock для thread-safe записи в CSV
     """
     thread_name = f"Worker-{thread_id}"
-    logger.info(f"[{thread_name}] === НАЧАЛО РАБОТЫ ПОТОКА {thread_id} ===")
+    logger.info(f"[{thread_name}] === WORKER THREAD {thread_id} STARTED ===")
     
     # Локальные переменные для потока
     local_buffer = []
@@ -446,7 +446,7 @@ def worker_thread(
     total_pages = None
     
     # ФАЗА 1: Поиск рабочего прокси
-    logger.info(f"[{thread_name}] Фаза 1: Поиск рабочего прокси...")
+    logger.info(f"[{thread_name}] Phase 1: Searching for working proxy...")
     proxy_index = thread_id  # Начинаем с thread_id (0 или 1), затем +2
     max_search_time = 1800  # Максимум 30 минут на поиск прокси
     search_start_time = time.time()
@@ -456,14 +456,14 @@ def worker_thread(
     while True:
         # Проверяем таймаут
         if time.time() - search_start_time >= max_search_time:
-            logger.error(f"[{thread_name}] Превышено время поиска прокси ({max_search_time}с), завершаем поток")
+            logger.error(f"[{thread_name}] Proxy search timeout exceeded ({max_search_time}s), terminating thread")
             return
         
         # Проверяем, есть ли уже total_pages от другого потока
         with total_pages_lock:
             if total_pages_shared.get('value') and total_pages_shared['value'] > 0:
                 total_pages = total_pages_shared['value']
-                logger.info(f"[{thread_name}] Используем total_pages={total_pages} от другого потока")
+                logger.info(f"[{thread_name}] Using total_pages={total_pages} from another thread")
                 break
         
         # Получаем прокси из списка
@@ -474,13 +474,13 @@ def worker_thread(
                 if current_list_size == last_list_size:
                     consecutive_empty_checks += 1
                     if consecutive_empty_checks >= 6:  # 30 секунд ожидания
-                        logger.warning(f"[{thread_name}] Список прокси не обновляется, возможно все прокси проверены. Ожидаем обновления...")
+                        logger.warning(f"[{thread_name}] Proxy list not updating, possibly all proxies checked. Waiting for update...")
                         consecutive_empty_checks = 0
                 else:
                     consecutive_empty_checks = 0
                     last_list_size = current_list_size
                 
-                logger.debug(f"[{thread_name}] Достигнут конец списка прокси (индекс {proxy_index}, размер списка: {current_list_size}), ждем обновления...")
+                logger.debug(f"[{thread_name}] Reached end of proxy list (index {proxy_index}, list size: {current_list_size}), waiting for update...")
                 time.sleep(5)
                 continue
             
@@ -490,7 +490,7 @@ def worker_thread(
             proxy_index += 2  # Следующий прокси для этого потока (четный/нечетный)
         
         proxy_key = f"{proxy['ip']}:{proxy['port']}"
-        logger.info(f"[{thread_name}] Проверка прокси {proxy_key} ({proxy.get('protocol', 'http').upper()})...")
+        logger.info(f"[{thread_name}] Checking proxy {proxy_key} ({proxy.get('protocol', 'http').upper()})...")
         
         # Проверяем прокси
         try:
@@ -505,27 +505,27 @@ def worker_thread(
                 with total_pages_lock:
                     if not total_pages_shared.get('value'):
                         total_pages_shared['value'] = total_pages
-                        logger.info(f"[{thread_name}] ✓ Сохранен total_pages={total_pages} в общий словарь")
+                        logger.info(f"[{thread_name}] ✓ Saved total_pages={total_pages} to shared dictionary")
                 
-                logger.info(f"[{thread_name}] ✓ Найден рабочий прокси {proxy_key} с total_pages={total_pages}, переходим к парсингу")
+                logger.info(f"[{thread_name}] ✓ Found working proxy {proxy_key} with total_pages={total_pages}, starting parsing")
                 break
             else:
-                logger.debug(f"[{thread_name}] Прокси {proxy_key} не работает, продолжаем поиск...")
+                logger.debug(f"[{thread_name}] Proxy {proxy_key} not working, continuing search...")
         except Exception as e:
-            logger.debug(f"[{thread_name}] Ошибка при проверке прокси {proxy_key}: {e}")
+            logger.debug(f"[{thread_name}] Error checking proxy {proxy_key}: {e}")
             continue
     
     if not total_pages or total_pages <= 0:
-        logger.error(f"[{thread_name}] Не удалось получить total_pages, завершаем поток")
+        logger.error(f"[{thread_name}] Failed to get total_pages, terminating thread")
         return
     
     # Проверяем, что current_proxy установлен
     if not current_proxy:
-        logger.error(f"[{thread_name}] current_proxy не установлен, завершаем поток")
+        logger.error(f"[{thread_name}] current_proxy not set, terminating thread")
         return
     
     # ФАЗА 2: Парсинг страниц
-    logger.info(f"[{thread_name}] Фаза 2: Начинаем парсинг страниц (total_pages={total_pages})...")
+    logger.info(f"[{thread_name}] Phase 2: Starting page parsing (total_pages={total_pages})...")
     
     # Определяем какие страницы парсить: thread_id 0 = четные (2, 4, 6, ...), thread_id 1 = нечетные (1, 3, 5, ...)
     page_start = 2 - thread_id  # thread_id 0 -> страница 2 (четная), thread_id 1 -> страница 1 (нечетная)
@@ -536,11 +536,11 @@ def worker_thread(
     protocol = current_proxy.get('protocol', 'http').lower()
     use_chrome = protocol in ['http', 'https']
     
-    logger.info(f"[{thread_name}] Создаем драйвер для парсинга...")
+    logger.info(f"[{thread_name}] Creating driver for parsing...")
     driver = create_driver(current_proxy, use_chrome=use_chrome)
     
     if not driver:
-        logger.error(f"[{thread_name}] Не удалось создать драйвер, завершаем поток")
+        logger.error(f"[{thread_name}] Failed to create driver, terminating thread")
         return
     
     # Получаем cookies
@@ -557,7 +557,7 @@ def worker_thread(
             
             while page_source and ("cloudflare" in page_source_lower or "checking your browser" in page_source_lower or 
                    "just a moment" in page_source_lower) and wait_time < max_wait:
-                logger.info(f"[{thread_name}] Cloudflare проверка... ждем {wait_time}/{max_wait} сек")
+                logger.info(f"[{thread_name}] Cloudflare check... waiting {wait_time}/{max_wait} sec")
                 time.sleep(3)
                 driver.refresh()
                 time.sleep(2)
@@ -570,17 +570,17 @@ def worker_thread(
             if page_source and wait_time < max_wait:
                 try:
                     cookies = get_cookies_from_selenium(driver)
-                    logger.info(f"[{thread_name}] Получены cookies: {len(cookies)} штук")
+                    logger.info(f"[{thread_name}] Got cookies: {len(cookies)} items")
                 except Exception as cookie_error:
-                    logger.warning(f"[{thread_name}] Ошибка при получении cookies: {cookie_error}")
+                    logger.warning(f"[{thread_name}] Error getting cookies: {cookie_error}")
     except Exception as e:
-        logger.warning(f"[{thread_name}] Ошибка при получении cookies: {e}")
+        logger.warning(f"[{thread_name}] Error getting cookies: {e}")
     
     # Основной цикл парсинга
     while current_page <= total_pages:
         try:
             page_url = f"{TARGET_URL}?_paged={current_page}"
-            logger.info(f"[{thread_name}] Парсинг страницы {current_page}/{total_pages} ({'четная' if current_page % 2 == 0 else 'нечетная'})...")
+            logger.info(f"[{thread_name}] Parsing page {current_page}/{total_pages} ({'even' if current_page % 2 == 0 else 'odd'})...")
             
             # Периодически сохраняем буфер
             if local_buffer and len(local_buffer) >= 10:
@@ -589,7 +589,7 @@ def worker_thread(
                         append_to_csv(TEMP_CSV_FILE, local_buffer)
                     local_buffer.clear()
                 except Exception as save_error:
-                    logger.warning(f"[{thread_name}] Ошибка при сохранении буфера: {save_error}")
+                    logger.warning(f"[{thread_name}] Error saving buffer: {save_error}")
             
             # Пробуем через cloudscraper
             soup = None
@@ -614,20 +614,20 @@ def worker_thread(
                                 pass
                     except Exception as selenium_error:
                         if is_tab_crashed_error(selenium_error):
-                            logger.error(f"[{thread_name}] [TAB CRASH] Краш вкладки, переходим к поиску нового прокси...")
+                            logger.error(f"[{thread_name}] [TAB CRASH] Tab crash, searching for new proxy...")
                             driver = None
                             success = False
                         elif is_proxy_error(selenium_error):
-                            logger.warning(f"[{thread_name}] [PROXY ERROR] Ошибка прокси, переходим к поиску нового прокси...")
+                            logger.warning(f"[{thread_name}] [PROXY ERROR] Proxy error, searching for new proxy...")
                             driver = None
                             success = False
                         else:
-                            logger.warning(f"[{thread_name}] Ошибка при парсинге через Selenium: {selenium_error}")
+                            logger.warning(f"[{thread_name}] Error parsing with Selenium: {selenium_error}")
                             success = False
             
             if not success or not soup:
                 # Переходим обратно к фазе поиска прокси
-                logger.warning(f"[{thread_name}] Не удалось загрузить страницу {current_page}, ищем новый прокси...")
+                logger.warning(f"[{thread_name}] Failed to load page {current_page}, searching for new proxy...")
                 proxy_switches += 1
                 
                 # Закрываем драйвер
@@ -645,12 +645,12 @@ def worker_thread(
                 
                 while not found_new_proxy:
                     if time.time() - proxy_search_start >= max_proxy_search_time:
-                        logger.error(f"[{thread_name}] Превышено время поиска нового прокси ({max_proxy_search_time}с), завершаем поток")
+                        logger.error(f"[{thread_name}] New proxy search timeout exceeded ({max_proxy_search_time}s), terminating thread")
                         break
                     
                     with proxies_lock:
                         if proxy_index >= len(proxies_list):
-                            logger.debug(f"[{thread_name}] Достигнут конец списка прокси, ждем обновления...")
+                            logger.debug(f"[{thread_name}] Reached end of proxy list, waiting for update...")
                             time.sleep(5)
                             continue
                         
@@ -658,7 +658,7 @@ def worker_thread(
                         proxy_index += 2
                     
                     proxy_key = f"{proxy['ip']}:{proxy['port']}"
-                    logger.info(f"[{thread_name}] Проверка нового прокси {proxy_key}...")
+                    logger.info(f"[{thread_name}] Checking new proxy {proxy_key}...")
                     
                     try:
                         trast_ok, trast_info = proxy_manager.validate_proxy_for_trast(proxy)
@@ -668,14 +668,14 @@ def worker_thread(
                             driver = create_driver(current_proxy, use_chrome=(current_proxy.get('protocol', 'http').lower() in ['http', 'https']))
                             if driver:
                                 found_new_proxy = True
-                                logger.info(f"[{thread_name}] ✓ Найден новый рабочий прокси {proxy_key}, продолжаем парсинг со страницы {current_page}")
+                                logger.info(f"[{thread_name}] ✓ Found new working proxy {proxy_key}, continuing parsing from page {current_page}")
                                 break
                     except Exception as e:
-                        logger.debug(f"[{thread_name}] Ошибка при проверке прокси {proxy_key}: {e}")
+                        logger.debug(f"[{thread_name}] Error checking proxy {proxy_key}: {e}")
                         continue
                 
                 if not found_new_proxy:
-                    logger.error(f"[{thread_name}] Не удалось найти новый рабочий прокси, завершаем поток")
+                    logger.error(f"[{thread_name}] Failed to find new working proxy, terminating thread")
                     break
                 
                 # Продолжаем с той же страницы
@@ -688,7 +688,7 @@ def worker_thread(
                 page_source = str(soup) if soup else ""
             
             if not page_source:
-                logger.warning(f"[{thread_name}] Не удалось получить содержимое страницы {current_page}")
+                logger.warning(f"[{thread_name}] Failed to get page {current_page} content")
                 current_page += page_step
                 continue
             
@@ -696,7 +696,7 @@ def worker_thread(
             block_check = is_page_blocked(soup, page_source)
             
             if block_check["blocked"]:
-                logger.warning(f"[{thread_name}] Страница {current_page} заблокирована: {block_check['reason']} → ищем новый прокси")
+                logger.warning(f"[{thread_name}] Page {current_page} blocked: {block_check['reason']} → searching for new proxy")
                 cloudflare_blocks += 1
                 proxy_switches += 1
                 
@@ -715,12 +715,12 @@ def worker_thread(
                 
                 while not found_new_proxy:
                     if time.time() - proxy_search_start >= max_proxy_search_time:
-                        logger.error(f"[{thread_name}] Превышено время поиска нового прокси ({max_proxy_search_time}с), завершаем поток")
+                        logger.error(f"[{thread_name}] New proxy search timeout exceeded ({max_proxy_search_time}s), terminating thread")
                         break
                     
                     with proxies_lock:
                         if proxy_index >= len(proxies_list):
-                            logger.debug(f"[{thread_name}] Достигнут конец списка прокси, ждем обновления...")
+                            logger.debug(f"[{thread_name}] Reached end of proxy list, waiting for update...")
                             time.sleep(5)
                             continue
                         
@@ -728,7 +728,7 @@ def worker_thread(
                         proxy_index += 2
                     
                     proxy_key = f"{proxy['ip']}:{proxy['port']}"
-                    logger.info(f"[{thread_name}] Проверка нового прокси {proxy_key} после блокировки...")
+                    logger.info(f"[{thread_name}] Checking new proxy {proxy_key} after blocking...")
                     
                     try:
                         trast_ok, trast_info = proxy_manager.validate_proxy_for_trast(proxy)
@@ -738,14 +738,14 @@ def worker_thread(
                             driver = create_driver(current_proxy, use_chrome=(current_proxy.get('protocol', 'http').lower() in ['http', 'https']))
                             if driver:
                                 found_new_proxy = True
-                                logger.info(f"[{thread_name}] ✓ Найден новый рабочий прокси {proxy_key}, продолжаем парсинг со страницы {current_page}")
+                                logger.info(f"[{thread_name}] ✓ Found new working proxy {proxy_key}, continuing parsing from page {current_page}")
                                 break
                     except Exception as e:
-                        logger.debug(f"[{thread_name}] Ошибка при проверке прокси {proxy_key}: {e}")
+                        logger.debug(f"[{thread_name}] Error checking proxy {proxy_key}: {e}")
                         continue
                 
                 if not found_new_proxy:
-                    logger.error(f"[{thread_name}] Не удалось найти новый рабочий прокси, завершаем поток")
+                    logger.error(f"[{thread_name}] Failed to find new working proxy, terminating thread")
                     break
                 
                 # Продолжаем с той же страницы
@@ -763,7 +763,7 @@ def worker_thread(
                 products_collected += len(products)
                 empty_pages_count = 0
                 
-                logger.info(f"[{thread_name}] Страница {current_page}: добавлено {len(products)} товаров (всего: {products_collected})")
+                logger.info(f"[{thread_name}] Page {current_page}: added {len(products)} products (total: {products_collected})")
                 
                 # Записываем буфер если заполнен
                 if len(local_buffer) >= BUFFER_SIZE:
@@ -772,17 +772,17 @@ def worker_thread(
                             append_to_csv(TEMP_CSV_FILE, local_buffer)
                         local_buffer.clear()
                     except Exception as save_error:
-                        logger.warning(f"[{thread_name}] Ошибка при записи буфера: {save_error}")
+                        logger.warning(f"[{thread_name}] Error writing buffer: {save_error}")
                 
             elif page_status["status"] == "empty":
                 # Пустая страница = страница БЕЗ товаров В НАЛИЧИИ
                 if products_in_stock == 0:
                     empty_pages_count += 1
-                    logger.warning(f"[{thread_name}] Страница {current_page}: нет товаров В НАЛИЧИИ (пустых подряд: {empty_pages_count})")
+                    logger.warning(f"[{thread_name}] Page {current_page}: no products IN STOCK (empty in a row: {empty_pages_count})")
                     
                     # Останавливаемся после 2 пустых страниц подряд
                     if empty_pages_count >= MAX_EMPTY_PAGES:
-                        logger.info(f"[{thread_name}] Найдено {MAX_EMPTY_PAGES} страниц подряд без товаров В НАЛИЧИИ. Останавливаем парсинг.")
+                        logger.info(f"[{thread_name}] Found {MAX_EMPTY_PAGES} consecutive pages without products IN STOCK. Stopping parsing.")
                         break
                 else:
                     empty_pages_count = 0
@@ -797,7 +797,7 @@ def worker_thread(
             error_msg = str(e).lower()
             
             if is_tab_crashed_error(e):
-                logger.error(f"[{thread_name}] [TAB CRASH] Краш вкладки на странице {current_page}, ищем новый прокси...")
+                logger.error(f"[{thread_name}] [TAB CRASH] Tab crash on page {current_page}, searching for new proxy...")
                 proxy_switches += 1
                 
                 if driver:
@@ -814,12 +814,12 @@ def worker_thread(
                 
                 while not found_new_proxy:
                     if time.time() - proxy_search_start >= max_proxy_search_time:
-                        logger.error(f"[{thread_name}] Превышено время поиска нового прокси ({max_proxy_search_time}с), завершаем поток")
+                        logger.error(f"[{thread_name}] New proxy search timeout exceeded ({max_proxy_search_time}s), terminating thread")
                         break
                     
                     with proxies_lock:
                         if proxy_index >= len(proxies_list):
-                            logger.debug(f"[{thread_name}] Достигнут конец списка прокси, ждем обновления...")
+                            logger.debug(f"[{thread_name}] Reached end of proxy list, waiting for update...")
                             time.sleep(5)
                             continue
                         
@@ -827,7 +827,7 @@ def worker_thread(
                         proxy_index += 2
                     
                     proxy_key = f"{proxy['ip']}:{proxy['port']}"
-                    logger.info(f"[{thread_name}] Проверка нового прокси {proxy_key} после краша...")
+                    logger.info(f"[{thread_name}] Checking new proxy {proxy_key} after crash...")
                     
                     try:
                         trast_ok, trast_info = proxy_manager.validate_proxy_for_trast(proxy)
@@ -837,19 +837,19 @@ def worker_thread(
                             driver = create_driver(current_proxy, use_chrome=(current_proxy.get('protocol', 'http').lower() in ['http', 'https']))
                             if driver:
                                 found_new_proxy = True
-                                logger.info(f"[{thread_name}] ✓ Найден новый рабочий прокси {proxy_key}, продолжаем парсинг со страницы {current_page}")
+                                logger.info(f"[{thread_name}] ✓ Found new working proxy {proxy_key}, continuing parsing from page {current_page}")
                                 break
                     except Exception as e2:
-                        logger.debug(f"[{thread_name}] Ошибка при проверке прокси {proxy_key}: {e2}")
+                        logger.debug(f"[{thread_name}] Error checking proxy {proxy_key}: {e2}")
                         continue
                 
                 if not found_new_proxy:
-                    logger.error(f"[{thread_name}] Не удалось найти новый рабочий прокси, завершаем поток")
+                    logger.error(f"[{thread_name}] Failed to find new working proxy, terminating thread")
                     break
                 
                 continue
             elif is_proxy_error(e):
-                logger.warning(f"[{thread_name}] [PROXY ERROR] Ошибка прокси на странице {current_page}: {e}")
+                logger.warning(f"[{thread_name}] [PROXY ERROR] Proxy error on page {current_page}: {e}")
                 # Ищем новый прокси (аналогично выше)
                 if driver:
                     try:
@@ -864,12 +864,12 @@ def worker_thread(
                 
                 while not found_new_proxy:
                     if time.time() - proxy_search_start >= max_proxy_search_time:
-                        logger.error(f"[{thread_name}] Превышено время поиска нового прокси ({max_proxy_search_time}с), завершаем поток")
+                        logger.error(f"[{thread_name}] New proxy search timeout exceeded ({max_proxy_search_time}s), terminating thread")
                         break
                     
                     with proxies_lock:
                         if proxy_index >= len(proxies_list):
-                            logger.debug(f"[{thread_name}] Достигнут конец списка прокси, ждем обновления...")
+                            logger.debug(f"[{thread_name}] Reached end of proxy list, waiting for update...")
                             time.sleep(5)
                             continue
                         
@@ -877,7 +877,7 @@ def worker_thread(
                         proxy_index += 2
                     
                     proxy_key = f"{proxy['ip']}:{proxy['port']}"
-                    logger.info(f"[{thread_name}] Проверка нового прокси {proxy_key} после ошибки прокси...")
+                    logger.info(f"[{thread_name}] Checking new proxy {proxy_key} after proxy error...")
                     
                     try:
                         trast_ok, trast_info = proxy_manager.validate_proxy_for_trast(proxy)
@@ -887,19 +887,19 @@ def worker_thread(
                             driver = create_driver(current_proxy, use_chrome=(current_proxy.get('protocol', 'http').lower() in ['http', 'https']))
                             if driver:
                                 found_new_proxy = True
-                                logger.info(f"[{thread_name}] ✓ Найден новый рабочий прокси {proxy_key}, продолжаем парсинг со страницы {current_page}")
+                                logger.info(f"[{thread_name}] ✓ Found new working proxy {proxy_key}, continuing parsing from page {current_page}")
                                 break
                     except Exception as e2:
-                        logger.debug(f"[{thread_name}] Ошибка при проверке прокси {proxy_key}: {e2}")
+                        logger.debug(f"[{thread_name}] Error checking proxy {proxy_key}: {e2}")
                         continue
                 
                 if not found_new_proxy:
-                    logger.error(f"[{thread_name}] Не удалось найти новый рабочий прокси, завершаем поток")
+                    logger.error(f"[{thread_name}] Failed to find new working proxy, terminating thread")
                     break
                 
                 continue
             else:
-                logger.error(f"[{thread_name}] Ошибка при парсинге страницы {current_page}: {e}")
+                logger.error(f"[{thread_name}] Error parsing page {current_page}: {e}")
                 logger.debug(traceback.format_exc())
                 current_page += page_step
                 continue
@@ -909,10 +909,10 @@ def worker_thread(
         try:
             with csv_lock:
                 append_to_csv(TEMP_CSV_FILE, local_buffer)
-            logger.info(f"[{thread_name}] Записаны оставшиеся товары из буфера: {len(local_buffer)}")
+            logger.info(f"[{thread_name}] Written remaining products from buffer: {len(local_buffer)}")
             local_buffer.clear()
         except Exception as buffer_error:
-            logger.error(f"[{thread_name}] Ошибка при записи оставшихся товаров: {buffer_error}")
+            logger.error(f"[{thread_name}] Error writing remaining products: {buffer_error}")
     
     # Закрываем драйвер
     if driver:
@@ -921,7 +921,7 @@ def worker_thread(
         except:
             pass
     
-    logger.info(f"[{thread_name}] Парсинг завершен: собрано {products_collected} товаров, проверено {pages_parsed} страниц, переключений прокси: {proxy_switches}, блокировок: {cloudflare_blocks}")
+    logger.info(f"[{thread_name}] Parsing completed: collected {products_collected} products, checked {pages_parsed} pages, proxy switches: {proxy_switches}, blocks: {cloudflare_blocks}")
 
 
 def parse_all_pages(
@@ -949,36 +949,36 @@ def parse_all_pages(
     
     # Если передан начальный прокси - используем его, иначе ищем новые
     if initial_proxy:
-        logger.info(f"[{thread_name}] Используем начальный прокси {initial_proxy['ip']}:{initial_proxy['port']} для начала парсинга")
+        logger.info(f"[{thread_name}] Using initial proxy {initial_proxy['ip']}:{initial_proxy['port']} to start parsing")
         working_proxies = [initial_proxy]
         # В фоне ищем дополнительные прокси (но не блокируем парсинг)
-        logger.info(f"[{thread_name}] Запускаем фоновый поиск дополнительных прокси (минимум {MIN_WORKING_PROXIES})...")
+        logger.info(f"[{thread_name}] Starting background search for additional proxies (minimum {MIN_WORKING_PROXIES})...")
     else:
         # Получаем первый рабочий прокси (минимум 1 для начала)
-        logger.info(f"[{thread_name}] Ищем рабочие прокси для парсинга...")
+        logger.info(f"[{thread_name}] Searching for working proxies for parsing...")
         working_proxies = proxy_manager.get_working_proxies(
             min_count=1,  # Начинаем с 1 прокси, не ждем 10
             max_to_check=MAX_PROXIES_TO_CHECK
         )
     
     if not working_proxies:
-        logger.error(f"[{thread_name}] Не удалось найти рабочие прокси!")
+        logger.error(f"[{thread_name}] Failed to find working proxies!")
         return 0, {"pages_checked": 0, "proxy_switches": 0, "cloudflare_blocks": 0}
     
-    logger.info(f"[{thread_name}] Найдено {len(working_proxies)} рабочих прокси, начинаем парсинг")
+    logger.info(f"[{thread_name}] Found {len(working_proxies)} working proxies, starting parsing")
     
     # Используем список для thread-safe доступа (если будет фоновый поиск)
     working_proxies_list = working_proxies.copy()  # Копируем в список для thread-safe доступа
     proxies_lock = None  # Будет создан, если нужен фоновый поиск
     
     if len(working_proxies_list) < MIN_WORKING_PROXIES:
-        logger.info(f"[{thread_name}] У нас {len(working_proxies_list)} прокси, нужно {MIN_WORKING_PROXIES}. Запускаем фоновый поиск...")
+        logger.info(f"[{thread_name}] We have {len(working_proxies_list)} proxies, need {MIN_WORKING_PROXIES}. Starting background search...")
         # Запускаем поиск в фоне, но не блокируем парсинг
         proxies_lock = threading.Lock()
         
         def background_proxy_search():
             bg_thread_name = "BackgroundProxySearch"
-            logger.info(f"[{bg_thread_name}] Запущен фоновый поиск дополнительных прокси...")
+            logger.info(f"[{bg_thread_name}] Background search for additional proxies started...")
             try:
                 additional_proxies = proxy_manager.get_working_proxies(
                     min_count=MIN_WORKING_PROXIES - len(working_proxies_list),
@@ -989,15 +989,15 @@ def parse_all_pages(
                     with proxies_lock:
                         working_proxies_list.extend(additional_proxies)
                         current_count = len(working_proxies_list)
-                    logger.info(f"[{bg_thread_name}] Фоновый поиск завершен: добавлено {len(additional_proxies)} прокси (всего: {current_count})")
+                    logger.info(f"[{bg_thread_name}] Background search completed: added {len(additional_proxies)} proxies (total: {current_count})")
                 else:
-                    logger.warning(f"[{bg_thread_name}] Фоновый поиск не нашел дополнительных прокси")
+                    logger.warning(f"[{bg_thread_name}] Background search found no additional proxies")
             except Exception as e:
-                logger.error(f"[{bg_thread_name}] Ошибка в фоновом поиске прокси: {e}")
+                logger.error(f"[{bg_thread_name}] Error in background proxy search: {e}")
         
         bg_thread = threading.Thread(target=background_proxy_search, daemon=True, name="BackgroundProxySearch")
         bg_thread.start()
-        logger.info(f"[{thread_name}] Фоновый поиск прокси запущен, продолжаем парсинг с имеющимися прокси")
+        logger.info(f"[{thread_name}] Background proxy search started, continuing parsing with available proxies")
     else:
         proxies_lock = None  # Не нужен, если не запускаем фоновый поиск
     
@@ -1009,10 +1009,10 @@ def parse_all_pages(
     else:
         current_proxy = working_proxies_list[0] if working_proxies_list else None
     if not current_proxy:
-        logger.error(f"[{thread_name}] Нет рабочих прокси для получения cookies!")
+        logger.error(f"[{thread_name}] No working proxies for getting cookies!")
         return 0, {"pages_checked": 0, "proxy_switches": 0, "cloudflare_blocks": 0}
     
-    logger.info(f"[{thread_name}] Получаем cookies через прокси {current_proxy['ip']}:{current_proxy['port']}...")
+    logger.info(f"[{thread_name}] Getting cookies via proxy {current_proxy['ip']}:{current_proxy['port']}...")
     
     driver = None
     cookies = {}
@@ -1030,7 +1030,7 @@ def parse_all_pages(
             # Ждем Cloudflare - используем безопасное получение page_source
             page_source = safe_get_page_source(driver)
             if not page_source:
-                logger.error("[TAB CRASH] Краш вкладки при получении cookies")
+                logger.error("[TAB CRASH] Tab crash while getting cookies")
             else:
                 page_source_lower = page_source.lower()
                 max_wait = 30
@@ -1038,13 +1038,13 @@ def parse_all_pages(
                 
                 while page_source and ("cloudflare" in page_source_lower or "checking your browser" in page_source_lower or 
                        "just a moment" in page_source_lower) and wait_time < max_wait:
-                    logger.info(f"Cloudflare проверка при получении cookies... ждем {wait_time}/{max_wait} сек")
+                    logger.info(f"Cloudflare check while getting cookies... waiting {wait_time}/{max_wait} sec")
                     time.sleep(3)
                     driver.refresh()
                     time.sleep(2)
                     page_source = safe_get_page_source(driver)
                     if not page_source:
-                        logger.error("[TAB CRASH] Краш вкладки во время ожидания Cloudflare при получении cookies")
+                        logger.error("[TAB CRASH] Tab crash during Cloudflare wait while getting cookies")
                         break
                     page_source_lower = page_source.lower()
                     wait_time += 5
@@ -1052,21 +1052,21 @@ def parse_all_pages(
                 if page_source and wait_time < max_wait:
                     try:
                         cookies = get_cookies_from_selenium(driver)
-                        logger.info(f"Получены cookies: {len(cookies)} штук")
+                        logger.info(f"Got cookies: {len(cookies)} items")
                     except Exception as cookie_error:
                         if is_tab_crashed_error(cookie_error):
-                            logger.error(f"[TAB CRASH] Краш вкладки при получении cookies: {cookie_error}")
+                            logger.error(f"[TAB CRASH] Tab crash while getting cookies: {cookie_error}")
                         else:
-                            logger.warning(f"Ошибка при получении cookies: {cookie_error}")
+                            logger.warning(f"Error getting cookies: {cookie_error}")
                 else:
-                    logger.warning("Не удалось получить cookies из-за Cloudflare или краша вкладки")
+                    logger.warning("Failed to get cookies due to Cloudflare or tab crash")
     except Exception as e:
         if is_tab_crashed_error(e):
-            logger.error(f"[TAB CRASH] Краш вкладки при получении cookies: {e}")
+            logger.error(f"[TAB CRASH] Tab crash while getting cookies: {e}")
         elif is_proxy_error(e):
-            logger.warning(f"[PROXY ERROR] Ошибка прокси при получении cookies: {e}")
+            logger.warning(f"[PROXY ERROR] Proxy error while getting cookies: {e}")
         else:
-            logger.error(f"Ошибка при получении cookies: {e}")
+            logger.error(f"Error getting cookies: {e}")
     finally:
         if driver:
             try:
@@ -1095,7 +1095,7 @@ def parse_all_pages(
     while current_page <= total_pages:
         try:
             page_url = f"{TARGET_URL}?_paged={current_page}"
-            logger.info(f"[{thread_name}] Парсинг страницы {current_page}/{total_pages}...")
+            logger.info(f"[{thread_name}] Parsing page {current_page}/{total_pages}...")
             
             # Периодически сохраняем буфер для защиты от потери данных
             if products_buffer and len(products_buffer) >= 10:
@@ -1103,7 +1103,7 @@ def parse_all_pages(
                     append_to_csv(TEMP_CSV_FILE, products_buffer)
                     products_buffer.clear()
                 except Exception as save_error:
-                    logger.warning(f"Ошибка при периодическом сохранении буфера: {save_error}")
+                    logger.warning(f"Error during periodic buffer save: {save_error}")
             
             # Пробуем через cloudscraper (быстро)
             soup = None
@@ -1114,7 +1114,7 @@ def parse_all_pages(
             
             # Fallback на Selenium
             if not success or not soup:
-                logger.info(f"Используем Selenium для страницы {current_page}...")
+                logger.info(f"Using Selenium for page {current_page}...")
                 if not driver:
                     protocol = current_proxy.get('protocol', 'http').lower()
                     use_chrome = protocol in ['http', 'https']
@@ -1129,7 +1129,7 @@ def parse_all_pages(
                                 cookies = get_cookies_from_selenium(driver)
                             except Exception as cookie_error:
                                 if is_tab_crashed_error(cookie_error):
-                                    logger.error(f"[TAB CRASH] Краш вкладки при обновлении cookies: {cookie_error}")
+                                    logger.error(f"[TAB CRASH] Tab crash while updating cookies: {cookie_error}")
                                     # Пересоздаем драйвер
                                     try:
                                         driver.quit()
@@ -1138,10 +1138,10 @@ def parse_all_pages(
                                     driver = None
                                     success = False
                                 else:
-                                    logger.warning(f"Ошибка при обновлении cookies: {cookie_error}")
+                                    logger.warning(f"Error updating cookies: {cookie_error}")
                     except Exception as selenium_error:
                         if is_tab_crashed_error(selenium_error):
-                            logger.error(f"[TAB CRASH] Краш вкладки при парсинге через Selenium, пересоздаем драйвер...")
+                            logger.error(f"[TAB CRASH] Tab crash while parsing with Selenium, recreating driver...")
                             try:
                                 driver.quit()
                             except:
@@ -1149,14 +1149,14 @@ def parse_all_pages(
                             driver = None
                             success = False
                         elif is_proxy_error(selenium_error):
-                            logger.warning(f"[PROXY ERROR] Ошибка прокси при парсинге: {selenium_error}")
+                            logger.warning(f"[PROXY ERROR] Proxy error while parsing: {selenium_error}")
                             success = False
                         else:
-                            logger.warning(f"Ошибка при парсинге через Selenium: {selenium_error}")
+                            logger.warning(f"Error parsing with Selenium: {selenium_error}")
                             success = False
             
             if not success or not soup:
-                logger.warning(f"Не удалось загрузить страницу {current_page}, пробуем новый прокси...")
+                logger.warning(f"Failed to load page {current_page}, trying new proxy...")
                 proxy_switches += 1
                 
                 # Пересоздаем драйвер с новым прокси
@@ -1165,10 +1165,10 @@ def parse_all_pages(
                 )
                 
                 if not driver or not current_proxy:
-                    logger.error("Не удалось пересоздать драйвер после ошибки загрузки!")
+                    logger.error("Failed to recreate driver after load error!")
                     break
                 
-                logger.info(f"Драйвер пересоздан, продолжаем со страницы {current_page}")
+                logger.info(f"Driver recreated, continuing from page {current_page}")
                 # Продолжаем с той же страницы (не увеличиваем current_page)
                 continue
             
@@ -1178,7 +1178,7 @@ def parse_all_pages(
                 page_source = safe_get_page_source(driver)
                 if not page_source:
                     # Краш вкладки при получении page_source - пересоздаем драйвер с новым прокси
-                    logger.error(f"[TAB CRASH] Краш вкладки при получении page_source для страницы {current_page}, пересоздаем драйвер...")
+                    logger.error(f"[TAB CRASH] Tab crash while getting page_source for page {current_page}, recreating driver...")
                     proxy_switches += 1
                     
                     driver, current_proxy, cookies = recreate_driver_with_new_proxy(
@@ -1186,10 +1186,10 @@ def parse_all_pages(
                     )
                     
                     if not driver or not current_proxy:
-                        logger.error("Не удалось пересоздать драйвер после краша вкладки!")
+                        logger.error("Failed to recreate driver after tab crash!")
                         break
                     
-                    logger.info(f"[TAB CRASH] Драйвер пересоздан, продолжаем со страницы {current_page}")
+                    logger.info(f"[TAB CRASH] Driver recreated, continuing from page {current_page}")
                     # Продолжаем с той же страницы (не увеличиваем current_page)
                     continue
             else:
@@ -1197,14 +1197,14 @@ def parse_all_pages(
                 page_source = str(soup) if soup else ""
             
             if not page_source:
-                logger.warning(f"Не удалось получить содержимое страницы {current_page}")
+                    logger.warning(f"Failed to get page {current_page} content")
                 current_page += 1
                 continue
             
             block_check = is_page_blocked(soup, page_source)
             
             if block_check["blocked"]:
-                logger.warning(f"Страница {current_page} заблокирована: {block_check['reason']} → переключаем прокси")
+                logger.warning(f"Page {current_page} blocked: {block_check['reason']} → switching proxy")
                 cloudflare_blocks += 1
                 proxy_switches += 1
                 
@@ -1214,10 +1214,10 @@ def parse_all_pages(
                 )
                 
                 if not driver or not current_proxy:
-                    logger.error("Не удалось пересоздать драйвер с новым прокси!")
+                    logger.error("Failed to recreate driver with new proxy!")
                     break
                 
-                logger.info(f"Драйвер пересоздан с новым прокси, продолжаем со страницы {current_page}")
+                logger.info(f"Driver recreated with new proxy, continuing from page {current_page}")
                 # Продолжаем с той же страницы (не увеличиваем current_page)
                 continue
             
@@ -1233,7 +1233,7 @@ def parse_all_pages(
                 total_products += len(products)
                 empty_pages_count = 0
                 
-                logger.info(f"Страница {current_page}: добавлено {len(products)} товаров (всего: {total_products})")
+                logger.info(f"Page {current_page}: added {len(products)} products (total: {total_products})")
                 
                 # Записываем буфер если заполнен
                 if len(products_buffer) >= BUFFER_SIZE:
@@ -1245,11 +1245,11 @@ def parse_all_pages(
                 # Увеличиваем счетчик только если действительно нет товаров в наличии
                 if products_in_stock == 0:
                     empty_pages_count += 1
-                    logger.warning(f"Страница {current_page}: нет товаров В НАЛИЧИИ (пустых подряд: {empty_pages_count})")
+                    logger.warning(f"Page {current_page}: no products IN STOCK (empty in a row: {empty_pages_count})")
                     
                     # Останавливаемся после 2 пустых страниц подряд (без товаров в наличии)
                     if empty_pages_count >= MAX_EMPTY_PAGES:
-                        logger.info(f"Найдено {MAX_EMPTY_PAGES} страниц подряд без товаров В НАЛИЧИИ. Останавливаем парсинг.")
+                        logger.info(f"Found {MAX_EMPTY_PAGES} consecutive pages without products IN STOCK. Stopping parsing.")
                         break
                 else:
                     # Если есть товары в наличии, но статус empty - это странно, сбрасываем счетчик
@@ -1257,7 +1257,7 @@ def parse_all_pages(
                     
             elif page_status["status"] == "partial":
                 # Частичная загрузка - пробуем перезагрузить
-                logger.warning(f"Страница {current_page}: частичная загрузка, пробуем еще раз...")
+                logger.warning(f"Page {current_page}: partial load, trying again...")
                 if driver:
                     try:
                         soup, success = reload_page_if_needed(driver, page_url, max_retries=1)
@@ -1267,10 +1267,10 @@ def parse_all_pages(
                                 products_buffer.extend(products)
                                 total_products += len(products)
                                 empty_pages_count = 0
-                                logger.info(f"Страница {current_page}: после перезагрузки добавлено {len(products)} товаров")
+                                logger.info(f"Page {current_page}: after reload added {len(products)} products")
                     except Exception as reload_error:
                         if is_tab_crashed_error(reload_error):
-                            logger.error(f"[TAB CRASH] Краш вкладки при перезагрузке частичной страницы {current_page}, пересоздаем драйвер...")
+                            logger.error(f"[TAB CRASH] Tab crash while reloading partial page {current_page}, recreating driver...")
                             proxy_switches += 1
                             
                             driver, current_proxy, cookies = recreate_driver_with_new_proxy(
@@ -1278,18 +1278,18 @@ def parse_all_pages(
                             )
                             
                             if not driver or not current_proxy:
-                                logger.error("Не удалось пересоздать драйвер после краша вкладки при перезагрузке!")
+                                logger.error("Failed to recreate driver after tab crash during reload!")
                                 break
                             
-                            logger.info(f"[TAB CRASH] Драйвер пересоздан, продолжаем со страницы {current_page}")
+                            logger.info(f"[TAB CRASH] Driver recreated, continuing from page {current_page}")
                             # Продолжаем с той же страницы
                             continue
                         else:
-                            logger.warning(f"Ошибка при перезагрузке частичной страницы: {reload_error}")
+                            logger.warning(f"Error reloading partial page: {reload_error}")
             
             elif page_status["status"] == "blocked":
                 # Блокировка - получаем новый прокси
-                logger.warning(f"Страница {current_page}: заблокирована (статус blocked) → переключаем прокси")
+                logger.warning(f"Page {current_page}: blocked (status blocked) → switching proxy")
                 cloudflare_blocks += 1
                 proxy_switches += 1
                 
@@ -1298,10 +1298,10 @@ def parse_all_pages(
                 )
                 
                 if not driver or not current_proxy:
-                    logger.error("Не удалось пересоздать драйвер после блокировки!")
+                    logger.error("Failed to recreate driver after blocking!")
                     break
                 
-                logger.info(f"Драйвер пересоздан с новым прокси, продолжаем со страницы {current_page}")
+                logger.info(f"Driver recreated with new proxy, continuing from page {current_page}")
                 # Продолжаем с той же страницы
                 continue
             
@@ -1316,7 +1316,7 @@ def parse_all_pages(
             
             # Проверяем на краш вкладки - это критическая ошибка, требующая пересоздания драйвера
             if is_tab_crashed_error(e):
-                logger.error(f"[TAB CRASH] Обнаружен краш вкладки на странице {current_page}, пересоздаем драйвер...")
+                logger.error(f"[TAB CRASH] Tab crash detected on page {current_page}, recreating driver...")
                 proxy_switches += 1
                 
                 driver, current_proxy, cookies = recreate_driver_with_new_proxy(
@@ -1324,16 +1324,16 @@ def parse_all_pages(
                 )
                 
                 if not driver or not current_proxy:
-                    logger.error("Не удалось пересоздать драйвер после краша вкладки!")
+                    logger.error("Failed to recreate driver after tab crash!")
                     break
                 
-                logger.info(f"[TAB CRASH] Драйвер пересоздан, продолжаем со страницы {current_page}")
+                logger.info(f"[TAB CRASH] Driver recreated, continuing from page {current_page}")
                 # Не увеличиваем current_page - попробуем еще раз с новым драйвером
                 continue
             
             # Проверяем на ошибку прокси
             elif is_proxy_error(e):
-                logger.warning(f"[PROXY ERROR] Ошибка прокси на странице {current_page}: {e}")
+                logger.warning(f"[PROXY ERROR] Proxy error on page {current_page}: {e}")
                 # Пробуем перезагрузить страницу с тем же прокси (один раз)
                 if driver:
                     try:
@@ -1349,7 +1349,7 @@ def parse_all_pages(
                                 continue
                     except Exception as retry_error:
                         if is_tab_crashed_error(retry_error):
-                            logger.error(f"[TAB CRASH] Краш вкладки при retry после ошибки прокси")
+                            logger.error(f"[TAB CRASH] Tab crash during retry after proxy error")
                             proxy_switches += 1
                             
                             driver, current_proxy, cookies = recreate_driver_with_new_proxy(
@@ -1357,15 +1357,15 @@ def parse_all_pages(
                             )
                             
                             if not driver or not current_proxy:
-                                logger.error("Не удалось пересоздать драйвер после краша вкладки при retry!")
+                                logger.error("Failed to recreate driver after tab crash during retry!")
                                 break
                             
-                            logger.info(f"[TAB CRASH] Драйвер пересоздан, продолжаем со страницы {current_page}")
+                            logger.info(f"[TAB CRASH] Driver recreated, continuing from page {current_page}")
                             # Продолжаем с той же страницы
                             continue
                 
                 # Если retry не помог - получаем новый прокси
-                logger.info(f"Получаем новый прокси после ошибки прокси...")
+                logger.info(f"Getting new proxy after proxy error...")
                 proxy_switches += 1
                 
                 driver, current_proxy, cookies = recreate_driver_with_new_proxy(
@@ -1373,14 +1373,14 @@ def parse_all_pages(
                 )
                 
                 if not driver or not current_proxy:
-                    logger.error("Не удалось пересоздать драйвер после ошибки прокси!")
+                    logger.error("Failed to recreate driver after proxy error!")
                     break
                 
-                logger.info(f"Драйвер пересоздан с новым прокси, продолжаем со страницы {current_page}")
+                logger.info(f"Driver recreated with new proxy, continuing from page {current_page}")
                 # Не увеличиваем current_page - попробуем еще раз с новым прокси
                 continue
             else:
-                logger.error(f"Ошибка при парсинге страницы {current_page}: {e}")
+                logger.error(f"Error parsing page {current_page}: {e}")
                 logger.debug(traceback.format_exc())
                 current_page += 1
                 continue
@@ -1389,10 +1389,10 @@ def parse_all_pages(
     if products_buffer:
         try:
             append_to_csv(TEMP_CSV_FILE, products_buffer)
-            logger.info(f"Записаны оставшиеся товары из буфера: {len(products_buffer)}")
+            logger.info(f"Written remaining products from buffer: {len(products_buffer)}")
             products_buffer.clear()
         except Exception as buffer_error:
-            logger.error(f"Ошибка при записи оставшихся товаров: {buffer_error}")
+            logger.error(f"Error writing remaining products: {buffer_error}")
     
     # Закрываем драйвер
     if driver:
@@ -1401,7 +1401,7 @@ def parse_all_pages(
         except:
             pass
     
-    logger.info(f"Парсинг завершен: собрано {total_products} товаров, проверено {pages_checked} страниц")
+    logger.info(f"Parsing completed: collected {total_products} products, checked {pages_checked} pages")
     
     return total_products, {
         "pages_checked": pages_checked,
@@ -1428,21 +1428,21 @@ def main():
     try:
         # Создаем временный CSV файл
         create_new_csv(TEMP_CSV_FILE)
-        logger.info(f"[{main_thread_name}] Создан временный CSV файл для записи данных")
+        logger.info(f"[{main_thread_name}] Temporary CSV file created for data writing")
     except Exception as e:
-        logger.error(f"[{main_thread_name}] Ошибка при создании временных файлов: {e}")
+        logger.error(f"[{main_thread_name}] Error creating temporary files: {e}")
         logger.error(traceback.format_exc())
         error_message = str(e)
         TelegramNotifier.notify(f"[Trast] Update failed — <code>{error_message}</code>")
         sys.exit(1)
     
     # Инициализируем прокси менеджер
-    logger.info(f"[{main_thread_name}] Инициализация ProxyManager...")
+    logger.info(f"[{main_thread_name}] Initializing ProxyManager...")
     try:
         proxy_manager = ProxyManager(country_filter=PREFERRED_COUNTRIES)
-        logger.info(f"[{main_thread_name}] ProxyManager инициализирован")
+        logger.info(f"[{main_thread_name}] ProxyManager initialized")
     except Exception as e:
-        logger.error(f"[{main_thread_name}] Ошибка при инициализации ProxyManager: {e}")
+        logger.error(f"[{main_thread_name}] Error initializing ProxyManager: {e}")
         logger.error(traceback.format_exc())
         error_message = str(e)
         TelegramNotifier.notify(f"[Trast] Update failed — <code>{error_message}</code>")
@@ -1457,7 +1457,7 @@ def main():
     stop_event = threading.Event()  # Event для остановки потоков
     
     # Запускаем поток скачивания прокси
-    logger.info(f"[{main_thread_name}] Запускаем поток скачивания прокси...")
+    logger.info(f"[{main_thread_name}] Starting proxy download thread...")
     download_thread = threading.Thread(
         target=download_proxies_thread,
         args=(proxy_manager, proxies_list, proxies_lock, stop_event),
@@ -1465,10 +1465,10 @@ def main():
         name="DownloadThread"
     )
     download_thread.start()
-    logger.info(f"[{main_thread_name}] ✓ Поток скачивания прокси запущен")
+    logger.info(f"[{main_thread_name}] ✓ Proxy download thread started")
     
     # Ждем, пока загрузятся первые прокси (минимум 10)
-    logger.info(f"[{main_thread_name}] Ожидаем загрузки прокси...")
+    logger.info(f"[{main_thread_name}] Waiting for proxy download...")
     max_wait_time = 300  # Максимум 5 минут
     wait_start = time.time()
     
@@ -1477,19 +1477,19 @@ def main():
             proxy_count = len(proxies_list)
         
         if proxy_count >= 10:
-            logger.info(f"[{main_thread_name}] Загружено {proxy_count} прокси, запускаем worker потоки")
+            logger.info(f"[{main_thread_name}] Loaded {proxy_count} proxies, starting worker threads")
             break
         
         if time.time() - wait_start >= max_wait_time:
-            logger.warning(f"[{main_thread_name}] Превышено время ожидания загрузки прокси ({max_wait_time}с), запускаем с {proxy_count} прокси")
+            logger.warning(f"[{main_thread_name}] Proxy download timeout exceeded ({max_wait_time}s), starting with {proxy_count} proxies")
             break
         
         time.sleep(2)
         if int(time.time() - wait_start) % 10 == 0:
-            logger.info(f"[{main_thread_name}] Ожидание прокси... (загружено: {proxy_count}, прошло: {int(time.time() - wait_start)}с)")
+            logger.info(f"[{main_thread_name}] Waiting for proxies... (loaded: {proxy_count}, elapsed: {int(time.time() - wait_start)}s)")
     
     # Запускаем 2 worker потока
-    logger.info(f"[{main_thread_name}] Запускаем 2 worker потока для парсинга...")
+    logger.info(f"[{main_thread_name}] Starting 2 worker threads for parsing...")
     worker_threads = []
     
     for thread_id in range(PARSING_THREADS):
@@ -1501,25 +1501,25 @@ def main():
         )
         thread.start()
         worker_threads.append(thread)
-        logger.info(f"[{main_thread_name}] ✓ Поток Worker-{thread_id} запущен ({'четные' if thread_id == 0 else 'нечетные'} страницы)")
+        logger.info(f"[{main_thread_name}] ✓ Worker thread {thread_id} started ({'even' if thread_id == 0 else 'odd'} pages)")
         time.sleep(0.1)
     
-    logger.info(f"[{main_thread_name}] Все потоки запущены, ожидаем завершения...")
+    logger.info(f"[{main_thread_name}] All threads started, waiting for completion...")
     
     # Ждем завершения всех worker потоков
     for i, thread in enumerate(worker_threads):
         thread.join()
-        logger.info(f"[{main_thread_name}] Поток Worker-{i} завершен")
+        logger.info(f"[{main_thread_name}] Worker thread {i} finished")
     
-    logger.info(f"[{main_thread_name}] Все worker потоки завершены")
+    logger.info(f"[{main_thread_name}] All worker threads finished")
     
     # Останавливаем поток скачивания прокси
     stop_event.set()
     download_thread.join(timeout=30)
     if download_thread.is_alive():
-        logger.warning(f"[{main_thread_name}] Поток скачивания прокси не завершился за 30 секунд")
+        logger.warning(f"[{main_thread_name}] Proxy download thread did not finish within 30 seconds")
     else:
-        logger.info(f"[{main_thread_name}] Поток скачивания прокси завершен")
+        logger.info(f"[{main_thread_name}] Proxy download thread finished")
     
     # Финализация
     duration = (datetime.now() - start_time).total_seconds()
@@ -1537,22 +1537,22 @@ def main():
                 reader = csv.DictReader(f)
                 total_products = sum(1 for _ in reader)
     except Exception as count_error:
-        logger.warning(f"[{main_thread_name}] Не удалось подсчитать товары: {count_error}")
+        logger.warning(f"[{main_thread_name}] Failed to count products: {count_error}")
     
     # Проверяем, есть ли данные для сохранения
     try:
         if os.path.exists(TEMP_CSV_FILE) and os.path.getsize(TEMP_CSV_FILE) > 0:
             file_size = os.path.getsize(TEMP_CSV_FILE)
-            logger.info(f"[{main_thread_name}] Найдены данные для сохранения (размер файла: {file_size} байт)")
+            logger.info(f"[{main_thread_name}] Found data to save (file size: {file_size} bytes)")
             finalize_output_files()
-            logger.info(f"[{main_thread_name}] Данные сохранены успешно")
+            logger.info(f"[{main_thread_name}] Data saved successfully")
             status = 'done' if total_products >= 100 else 'insufficient_data'
         else:
-            logger.warning(f"[{main_thread_name}] Нет данных для сохранения")
+            logger.warning(f"[{main_thread_name}] No data to save")
             cleanup_temp_files()
             status = 'insufficient_data'
     except Exception as save_error:
-        logger.error(f"[{main_thread_name}] Ошибка при сохранении данных: {save_error}")
+        logger.error(f"[{main_thread_name}] Error saving data: {save_error}")
         error_message = error_message or str(save_error)
         status = 'error'
     
@@ -1571,11 +1571,11 @@ def main():
         TelegramNotifier.notify(f"[Trast] Update failed — <code>{failure_details}</code>")
     
     logger.info("=" * 80)
-    logger.info(f"[{main_thread_name}] Парсинг завершен!")
-    logger.info(f"[{main_thread_name}] Время выполнения: {round(duration, 2)} секунд")
-    logger.info(f"[{main_thread_name}] Статус: {status}")
-    logger.info(f"[{main_thread_name}] Количество страниц: {total_pages}")
-    logger.info(f"[{main_thread_name}] Товаров собрано: {total_products}")
+    logger.info(f"[{main_thread_name}] Parsing completed!")
+    logger.info(f"[{main_thread_name}] Execution time: {round(duration, 2)} seconds")
+    logger.info(f"[{main_thread_name}] Status: {status}")
+    logger.info(f"[{main_thread_name}] Number of pages: {total_pages}")
+    logger.info(f"[{main_thread_name}] Products collected: {total_products}")
     logger.info("=" * 80)
 
 
@@ -1583,22 +1583,22 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        logger.warning("Парсинг прерван пользователем (Ctrl+C)")
+        logger.warning("Parsing interrupted by user (Ctrl+C)")
         # Сохраняем то, что уже собрано
         try:
             if os.path.exists(TEMP_CSV_FILE) and os.path.getsize(TEMP_CSV_FILE) > 0:
-                logger.info("Сохраняем собранные данные...")
+                logger.info("Saving collected data...")
                 finalize_output_files()
-                logger.info("Данные сохранены успешно")
+                logger.info("Data saved successfully")
                 TelegramNotifier.notify("[Trast] Update interrupted by user — Data saved")
             else:
                 TelegramNotifier.notify("[Trast] Update interrupted by user — No data to save")
         except Exception as save_error:
-            logger.error(f"Ошибка при сохранении данных: {save_error}")
+            logger.error(f"Error saving data: {save_error}")
             TelegramNotifier.notify(f"[Trast] Update interrupted — <code>Save error: {save_error}</code>")
         sys.exit(0)
     except Exception as e:
-        logger.error(f"Критическая ошибка: {e}")
+        logger.error(f"Critical error: {e}")
         logger.error(traceback.format_exc())
         TelegramNotifier.notify(f"[Trast] Update failed with critical error — <code>{str(e)}</code>")
         sys.exit(1)
