@@ -1112,36 +1112,15 @@ def parse_all_pages_simple(
     # Буфер для товаров
     products_buffer = []
     
-    # Создаем список всех страниц и перемешиваем для случайного порядка
-    pages_to_parse = list(range(1, total_pages + 1))
-    random.shuffle(pages_to_parse)
-    logger.info(f"[{thread_name}] Created shuffled list of {len(pages_to_parse)} pages for random parsing order")
-    
-    # Отслеживаем спарсенные страницы
-    parsed_pages = set()
-    pages_remaining = len(pages_to_parse)
-    
+    # Основной цикл парсинга - парсим страницы последовательно
+    current_page = 1
     driver = None  # Инициализируем драйвер
     proxy_index = 0  # Индекс для поиска нового прокси
     
-    # Основной цикл парсинга - парсим страницы в случайном порядке
-    while pages_remaining > 0:
+    while current_page <= total_pages:
         try:
-            # Выбираем следующую страницу из списка (если список пуст - все спарсено)
-            if not pages_to_parse:
-                logger.info(f"[{thread_name}] All pages parsed, exiting...")
-                break
-            
-            current_page = pages_to_parse.pop(0)  # Берем первую страницу из списка
-            pages_remaining = len(pages_to_parse)
-            
-            # Пропускаем уже спарсенные страницы (на случай дубликатов)
-            if current_page in parsed_pages:
-                logger.debug(f"[{thread_name}] Page {current_page} already parsed, skipping...")
-                continue
-            
             page_url = f"{TARGET_URL}?_paged={current_page}"
-            logger.info(f"[{thread_name}] Parsing page {current_page}/{total_pages} (remaining: {pages_remaining}, parsed: {len(parsed_pages)})...")
+            logger.info(f"[{thread_name}] Parsing page {current_page}/{total_pages}...")
             
             # Периодически сохраняем буфер для защиты от потери данных
             if products_buffer and len(products_buffer) >= CSV_BUFFER_SAVE_SIZE:
@@ -1265,10 +1244,8 @@ def parse_all_pages_simple(
                 page_source = str(soup) if soup else ""
             
             if not page_source:
-                logger.warning(f"Failed to get page {current_page} content, will retry later")
-                # Возвращаем страницу в конец списка для повторной попытки
-                if current_page not in parsed_pages:
-                    pages_to_parse.append(current_page)
+                logger.warning(f"Failed to get page {current_page} content")
+                current_page += 1
                 continue
             
             block_check = is_page_blocked(soup, page_source)
@@ -1394,19 +1371,16 @@ def parse_all_pages_simple(
             elif page_status["status"] == "empty":
                 if products_in_stock == 0:
                     empty_pages_count += 1
-                    logger.warning(f"Page {current_page}: no products IN STOCK (empty pages found: {empty_pages_count})")
+                    logger.warning(f"Page {current_page}: no products IN STOCK (empty in a row: {empty_pages_count})")
                     
-                    # Если нашли много пустых страниц подряд - возможно, закончились товары
-                    # Но продолжаем парсить остальные страницы в случайном порядке
-                    if empty_pages_count >= MAX_EMPTY_PAGES * 2:  # Увеличиваем порог для случайного порядка
-                        logger.info(f"Found {empty_pages_count} pages without products IN STOCK. May have reached end of catalog.")
-                        # Не останавливаемся, продолжаем парсить остальные страницы
+                    if empty_pages_count >= MAX_EMPTY_PAGES:
+                        logger.info(f"Found {MAX_EMPTY_PAGES} consecutive pages without products IN STOCK. Stopping parsing.")
+                        break
                 else:
                     empty_pages_count = 0
             
-            # Отмечаем страницу как спарсенную
-            parsed_pages.add(current_page)
             pages_checked += 1
+            current_page += 1
             
             # Задержка между страницами
             time.sleep(random.uniform(MIN_DELAY_BETWEEN_PAGES, MAX_DELAY_BETWEEN_PAGES))
@@ -1469,9 +1443,7 @@ def parse_all_pages_simple(
             else:
                 logger.error(f"Error parsing page {current_page}: {e}")
                 logger.debug(traceback.format_exc())
-                # Возвращаем страницу в конец списка для повторной попытки
-                if current_page not in parsed_pages:
-                    pages_to_parse.append(current_page)
+                current_page += 1
                 continue
     
     # Записываем оставшиеся товары из буфера
