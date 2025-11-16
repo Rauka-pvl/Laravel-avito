@@ -474,7 +474,7 @@ def get_products_from_page_soup(soup: BeautifulSoup) -> Tuple[List[Dict], int, i
             "price": clean_price
         }
         results.append(product)
-        logger.debug(f"Product added: {product}")
+        logger.debug(f"Product parsed: {title[:60]}... | Art: {article} | Manuf: {manufacturer} | Price: {clean_price}")
     
     return results, len(results), total_products
 

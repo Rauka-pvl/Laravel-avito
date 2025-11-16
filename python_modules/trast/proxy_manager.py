@@ -785,16 +785,18 @@ class ProxyManager:
         debug_html_saved = False
         
         try:
-            logger.info(f"Checking proxy {proxy_key} on trast-zapchast.ru...")
+            logger.debug(f"Checking proxy {proxy_key} on trast-zapchast.ru (timeout: {timeout}s)...")
             
             protocol = proxy.get('protocol', 'http').lower()
             use_chrome = protocol in ['http', 'https']
             
             driver = create_driver(proxy, use_chrome=use_chrome)
             if not driver:
+                logger.debug(f"Failed to create driver for {proxy_key}")
                 return False, {}
             
             driver.set_page_load_timeout(timeout)
+            logger.debug(f"Loading page via proxy {proxy_key}...")
             driver.get(TARGET_URL)
             time.sleep(5)  # Ожидание загрузки
             
@@ -835,12 +837,14 @@ class ProxyManager:
             
             # Пробуем получить количество страниц - это ОСНОВНОЙ критерий работоспособности прокси
             try:
+                logger.debug(f"Getting page count via proxy {proxy_key}...")
                 total_pages = get_pages_count_with_driver(driver)
                 if total_pages and total_pages > 0:
-                    logger.info(f"✓ Proxy works! Successfully got page count: {total_pages}")
+                    logger.info(f"[{proxy_key}] PROXY WORKS! Successfully got page count: {total_pages} pages")
+                    logger.info(f"[{proxy_key}] Ready to start parsing with this proxy!")
                     return True, {'total_pages': total_pages}
                 else:
-                    logger.warning(f"Proxy {proxy_key} failed to get page count (returned {total_pages})")
+                    logger.warning(f"[{proxy_key}] Failed to get page count (returned {total_pages})")
                     # Сохраняем HTML для отладки
                     if not debug_html_saved:
                         page_source = safe_get_page_source(driver)
