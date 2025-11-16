@@ -756,6 +756,9 @@ def get_pages_count_with_driver(driver: webdriver.Remote, url: str = "https://tr
             pagination_container = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".facetwp-pager, .woocommerce-pagination, .page-numbers")))
             logger.debug("Pagination found via WebDriverWait")
             
+            # Дополнительное ожидание для Firefox (может работать медленнее с SOCKS прокси)
+            time.sleep(3)
+            
             # Пробуем найти элемент .last с несколькими селекторами
             last_page_element = None
             selectors_to_try = [
@@ -768,7 +771,8 @@ def get_pages_count_with_driver(driver: webdriver.Remote, url: str = "https://tr
             
             for selector in selectors_to_try:
                 try:
-                    last_page_element = driver.find_element(By.CSS_SELECTOR, selector)
+                    # Пробуем через WebDriverWait для надежности
+                    last_page_element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
                     if last_page_element:
                         data_page = last_page_element.get_attribute("data-page")
                         if data_page:
@@ -781,7 +785,8 @@ def get_pages_count_with_driver(driver: webdriver.Remote, url: str = "https://tr
                             total_pages = int(text_value)
                             logger.info(f"[OK] Found {total_pages} pages for parsing (via Selenium .last text, selector: {selector})")
                             return total_pages
-                except:
+                except Exception as selector_error:
+                    logger.debug(f"Selector {selector} failed: {selector_error}")
                     continue
             
             # Если .last не найден, ищем все элементы пагинации и берем максимальный номер

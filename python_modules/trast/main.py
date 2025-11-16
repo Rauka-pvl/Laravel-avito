@@ -435,47 +435,27 @@ def find_new_working_proxy(
         if int(elapsed_time) % PROXY_SEARCH_PROGRESS_LOG_INTERVAL == 0 and int(elapsed_time) > 0:
             logger.info(f"[{thread_name}] Proxy search in progress: {int(elapsed_time)}s elapsed, {proxies_checked} proxies checked")
         
-        # Получаем прокси из списка (только HTTP/HTTPS)
+        # Получаем прокси из списка (все типы прокси поддерживаются через Firefox)
         if proxies_lock:
             with proxies_lock:
                 list_size = len(proxies_list)
-                # Пропускаем прокси с неподдерживаемыми протоколами
-                skipped_count = 0
-                while current_proxy_index < list_size:
-                    proxy = proxies_list[current_proxy_index]
-                    protocol = proxy.get('protocol', 'http').lower()
-                    if protocol in ALLOWED_PROXY_PROTOCOLS:
-                        if skipped_count > 0:
-                            logger.debug(f"[{thread_name}] Skipped {skipped_count} non-HTTP/HTTPS proxies")
-                        current_proxy_index += 1
-                        break
-                    skipped_count += 1
-                    current_proxy_index += 1
-                
                 if current_proxy_index >= list_size:
                     logger.debug(f"[{thread_name}] Reached end of proxy list (index: {current_proxy_index}, list size: {list_size}), waiting for update...")
                     time.sleep(PROXY_LIST_WAIT_DELAY)
                     continue
+                
+                proxy = proxies_list[current_proxy_index]
+                current_proxy_index += 1  # В однопоточном режиме просто +1
         else:
             # Без lock - просто проверяем список
             list_size = len(proxies_list)
-            # Пропускаем прокси с неподдерживаемыми протоколами
-            skipped_count = 0
-            while current_proxy_index < list_size:
-                proxy = proxies_list[current_proxy_index]
-                protocol = proxy.get('protocol', 'http').lower()
-                if protocol in ALLOWED_PROXY_PROTOCOLS:
-                    if skipped_count > 0:
-                        logger.debug(f"[{thread_name}] Skipped {skipped_count} non-HTTP/HTTPS proxies")
-                    current_proxy_index += 1
-                    break
-                skipped_count += 1
-                current_proxy_index += 1
-            
             if current_proxy_index >= list_size:
                 logger.debug(f"[{thread_name}] Reached end of proxy list (index: {current_proxy_index}, list size: {list_size}), waiting for update...")
                 time.sleep(PROXY_LIST_WAIT_DELAY)
                 continue
+            
+            proxy = proxies_list[current_proxy_index]
+            current_proxy_index += 1  # В однопоточном режиме просто +1
         
         proxies_checked += 1
         proxy_key = f"{proxy['ip']}:{proxy['port']}"
@@ -2004,19 +1984,6 @@ def main():
             logger.warning(f"[{main_thread_name}] Proxy search timeout exceeded ({max_search_time}s), but continuing search...")
             search_start_time = time.time()
         
-        # Пропускаем прокси с неподдерживаемыми протоколами (только HTTP/HTTPS)
-        skipped_count = 0
-        while proxy_index < len(downloaded_proxies):
-            proxy = downloaded_proxies[proxy_index]
-            protocol = proxy.get('protocol', 'http').lower()
-            if protocol in ALLOWED_PROXY_PROTOCOLS:
-                if skipped_count > 0:
-                    logger.debug(f"[{main_thread_name}] Skipped {skipped_count} non-HTTP/HTTPS proxies")
-                proxy_index += 1
-                break
-            skipped_count += 1
-            proxy_index += 1
-        
         if proxy_index >= len(downloaded_proxies):
             logger.debug(f"[{main_thread_name}] Reached end of proxy list, waiting for update...")
             time.sleep(PROXY_LIST_WAIT_DELAY)
@@ -2031,6 +1998,8 @@ def main():
                 pass
             continue
         
+        proxy = downloaded_proxies[proxy_index]
+        proxy_index += 1
         proxy_key = f"{proxy['ip']}:{proxy['port']}"
         elapsed_search = int(time.time() - search_start_time)
         logger.info(f"[{main_thread_name}] [{proxy_index}] Checking proxy {proxy_key} ({proxy.get('protocol', 'http').upper()})...")
