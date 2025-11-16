@@ -1034,6 +1034,10 @@ def parse_all_pages_simple(
     cloudflare_blocks = 0
     
     current_proxy = initial_proxy
+    # Отслеживаем, когда прокси был валидирован (для retry-логики)
+    proxy_validation_time = {}  # {proxy_key: timestamp}
+    proxy_key = f"{current_proxy['ip']}:{current_proxy['port']}"
+    proxy_validation_time[proxy_key] = time.time()  # Начальный прокси только что прошел валидацию
     logger.info(f"[{thread_name}] Using initial proxy {current_proxy['ip']}:{current_proxy['port']} to start parsing")
     
     # Получаем cookies через Selenium (один раз)
@@ -1232,7 +1236,10 @@ def parse_all_pages_simple(
                     current_proxy = new_proxy
                     driver = new_driver
                     proxy_index = new_proxy_index
-                continue
+                    # Отмечаем, что новый прокси только что прошел валидацию
+                    new_proxy_key = f"{current_proxy['ip']}:{current_proxy['port']}"
+                    proxy_validation_time[new_proxy_key] = time.time()
+                    continue
             else:
                 page_source = str(soup) if soup else ""
             
@@ -1248,8 +1255,8 @@ def parse_all_pages_simple(
             if block_check["blocked"]:
                 # Если прокси только что прошел валидацию и это первые страницы - даем ему несколько попыток
                 is_first_pages = current_page <= 5  # Первые 5 страниц
-                proxy_was_recently_validated = True  # Прокси только что прошел валидацию
-                max_retries_for_validated_proxy = 2  # Количество попыток для валидированного прокси
+                max_retries_for_validated_proxy = 3  # Количество попыток для валидированного прокси (увеличено до 3)
+                validation_timeout = 300  # Прокси считается "недавно валидированным" если валидация была менее 5 минут назад
                 
                 # Используем атрибут функции для хранения счетчика попыток
                 if not hasattr(parse_all_pages_simple, '_proxy_retry_count'):
@@ -1258,6 +1265,12 @@ def parse_all_pages_simple(
                 proxy_key = f"{current_proxy['ip']}:{current_proxy['port']}"
                 if proxy_key not in parse_all_pages_simple._proxy_retry_count:
                     parse_all_pages_simple._proxy_retry_count[proxy_key] = 0
+                
+                # Проверяем, был ли прокси недавно валидирован
+                proxy_was_recently_validated = (
+                    proxy_key in proxy_validation_time and 
+                    (time.time() - proxy_validation_time[proxy_key]) < validation_timeout
+                )
                 
                 if is_first_pages and proxy_was_recently_validated and parse_all_pages_simple._proxy_retry_count[proxy_key] < max_retries_for_validated_proxy:
                     parse_all_pages_simple._proxy_retry_count[proxy_key] += 1
@@ -1329,6 +1342,9 @@ def parse_all_pages_simple(
                     current_proxy = new_proxy
                     driver = new_driver
                     proxy_index = new_proxy_index
+                    # Отмечаем, что новый прокси только что прошел валидацию
+                    new_proxy_key = f"{current_proxy['ip']}:{current_proxy['port']}"
+                    proxy_validation_time[new_proxy_key] = time.time()
                     continue
             
             # Парсим товары
@@ -1398,6 +1414,9 @@ def parse_all_pages_simple(
                 current_proxy = new_proxy
                 driver = new_driver
                 proxy_index = new_proxy_index
+                # Отмечаем, что новый прокси только что прошел валидацию
+                new_proxy_key = f"{current_proxy['ip']}:{current_proxy['port']}"
+                proxy_validation_time[new_proxy_key] = time.time()
                 continue
             elif is_proxy_error(e):
                 logger.warning(f"[PROXY ERROR] Proxy error on page {current_page}: {e}")
@@ -1422,6 +1441,9 @@ def parse_all_pages_simple(
                 current_proxy = new_proxy
                 driver = new_driver
                 proxy_index = new_proxy_index
+                # Отмечаем, что новый прокси только что прошел валидацию
+                new_proxy_key = f"{current_proxy['ip']}:{current_proxy['port']}"
+                proxy_validation_time[new_proxy_key] = time.time()
                 continue
             else:
                 logger.error(f"Error parsing page {current_page}: {e}")
