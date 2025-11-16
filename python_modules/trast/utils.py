@@ -479,32 +479,20 @@ def get_products_from_page_soup(soup: BeautifulSoup) -> Tuple[List[Dict], int, i
     return results, len(results), total_products
 
 
-def create_driver(proxy: Optional[Dict] = None, use_chrome: bool = True) -> Optional[webdriver.Remote]:
+def create_driver(proxy: Optional[Dict] = None, use_chrome: bool = False) -> Optional[webdriver.Remote]:
     """
-    Создает Chrome или Firefox драйвер с улучшенным обходом Cloudflare.
+    Создает Firefox драйвер с улучшенным обходом Cloudflare.
+    Используется только Firefox для поддержки всех типов прокси (включая SOCKS).
     
     Args:
         proxy: Словарь с прокси {"ip": str, "port": int, "protocol": str}
-        use_chrome: Использовать Chrome (True) или Firefox (False)
+        use_chrome: Игнорируется, всегда используется Firefox
         
     Returns:
         WebDriver объект или None при ошибке
     """
-    # Проверяем тип прокси - если SOCKS, используем Firefox
-    if proxy:
-        protocol = proxy.get('protocol', 'http').lower()
-        if protocol in ['socks4', 'socks5']:
-            logger.info(f"Proxy {protocol.upper()} - using Firefox (Chrome does not support SOCKS)")
-            use_chrome = False
-    
-    # Пробуем Chrome с undetected-chromedriver
-    if use_chrome and HAS_UNDETECTED_CHROME:
-        try:
-            return _create_chrome_driver(proxy)
-        except Exception as e:
-            logger.warning(f"Chrome not available: {e}, trying Firefox...")
-    
-    # Fallback на Firefox
+    # Всегда используем Firefox для поддержки всех типов прокси
+    logger.debug("Using Firefox driver (supports all proxy types including SOCKS)")
     return _create_firefox_driver(proxy)
 
 

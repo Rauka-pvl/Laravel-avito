@@ -788,9 +788,7 @@ class ProxyManager:
             logger.debug(f"Checking proxy {proxy_key} on trast-zapchast.ru (timeout: {timeout}s)...")
             
             protocol = proxy.get('protocol', 'http').lower()
-            use_chrome = protocol in ['http', 'https']
-            
-            driver = create_driver(proxy, use_chrome=use_chrome)
+            driver = create_driver(proxy)
             if not driver:
                 logger.debug(f"Failed to create driver for {proxy_key}")
                 return False, {}

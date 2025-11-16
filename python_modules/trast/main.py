@@ -488,8 +488,7 @@ def find_new_working_proxy(
                 current_proxy = proxy.copy()
                 current_proxy.update(trast_info)
                 logger.debug(f"[{thread_name}] Creating driver with new proxy {proxy_key}...")
-                use_chrome = (current_proxy.get('protocol', 'http').lower() in ['http', 'https'])
-                driver = create_driver(current_proxy, use_chrome=use_chrome)
+                driver = create_driver(current_proxy)
                 if driver:
                     found_new_proxy = True
                     logger.info(f"[{thread_name}] Found new working proxy {proxy_key} (total_pages={trast_info['total_pages']}) after checking {proxies_checked} proxies in {int(elapsed_time)}s{context_suffix}")
@@ -550,10 +549,8 @@ def recreate_driver_with_new_proxy(
     
     # Создаем новый драйвер
     protocol = new_proxy.get('protocol', 'http').lower()
-    use_chrome = protocol in ['http', 'https']
-    
     logger.info(f"Recreating driver with new proxy {new_proxy['ip']}:{new_proxy['port']} ({protocol.upper()})...")
-    new_driver = create_driver(new_proxy, use_chrome=use_chrome)
+    new_driver = create_driver(new_proxy)
     
     if not new_driver:
         logger.warning(f"Failed to create driver with proxy {new_proxy['ip']}:{new_proxy['port']}")
@@ -719,10 +716,8 @@ def worker_thread(
     
     # Создаем драйвер для парсинга
     protocol = current_proxy.get('protocol', 'http').lower()
-    use_chrome = protocol in ['http', 'https']
-    
     logger.info(f"[{thread_name}] Creating driver for parsing...")
-    driver = create_driver(current_proxy, use_chrome=use_chrome)
+    driver = create_driver(current_proxy)
     
     if not driver:
         logger.error(f"[{thread_name}] Failed to create driver, terminating thread")
@@ -782,7 +777,7 @@ def worker_thread(
             if not success or not soup:
                 if not driver:
                     # Пересоздаем драйвер
-                    driver = create_driver(current_proxy, use_chrome=use_chrome)
+                    driver = create_driver(current_proxy)
                 
                 if driver:
                     try:
@@ -1069,9 +1064,7 @@ def parse_all_pages_simple(
     
     try:
         protocol = current_proxy.get('protocol', 'http').lower()
-        use_chrome = protocol in ['http', 'https']
-        
-        driver = create_driver(current_proxy, use_chrome=use_chrome)
+        driver = create_driver(current_proxy)
         if driver:
             driver.set_page_load_timeout(25)
             driver.get(TARGET_URL)
@@ -1142,8 +1135,7 @@ def parse_all_pages_simple(
                 logger.info(f"Using Selenium for page {current_page}...")
                 if not driver:
                     protocol = current_proxy.get('protocol', 'http').lower()
-                    use_chrome = protocol in ['http', 'https']
-                    driver = create_driver(current_proxy, use_chrome=use_chrome)
+                    driver = create_driver(current_proxy)
                 
                 if driver:
                     try:
@@ -1566,9 +1558,7 @@ def parse_all_pages(
     
     try:
         protocol = current_proxy.get('protocol', 'http').lower()
-        use_chrome = protocol in ['http', 'https']
-        
-        driver = create_driver(current_proxy, use_chrome=use_chrome)
+        driver = create_driver(current_proxy)
         if driver:
             driver.set_page_load_timeout(25)
             driver.get(TARGET_URL)
@@ -1648,8 +1638,7 @@ def parse_all_pages(
                 logger.info(f"Using Selenium for page {current_page}...")
                 if not driver:
                     protocol = current_proxy.get('protocol', 'http').lower()
-                    use_chrome = protocol in ['http', 'https']
-                    driver = create_driver(current_proxy, use_chrome=use_chrome)
+                    driver = create_driver(current_proxy)
                 
                 if driver:
                     try:

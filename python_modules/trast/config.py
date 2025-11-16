@@ -41,7 +41,7 @@ MIN_WORKING_PROXIES = 10  # Минимальное количество рабо
 MAX_PROXIES_TO_CHECK = 500  # Максимальное количество прокси для проверки (увеличено для надежности)
 PROXY_CHECK_THREADS = 2  # Количество потоков для многопоточной проверки прокси
 PARSING_THREADS = 1  # Количество потоков для многопоточного парсинга (четные/нечетные страницы)
-ALLOWED_PROXY_PROTOCOLS = ['http', 'https']  # Разрешенные типы прокси (только HTTP/HTTPS, без SOCKS)
+ALLOWED_PROXY_PROTOCOLS = ['socks4', 'socks5']  # Разрешенные типы прокси (только SOCKS4/SOCKS5, без HTTP/HTTPS)
 
 # Фильтр по странам (приоритетные для российского сайта)
 PREFERRED_COUNTRIES = [
