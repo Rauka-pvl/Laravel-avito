@@ -236,10 +236,16 @@ def parse_page_with_cloudscraper(
 
 def parse_page_with_selenium(
     driver: webdriver.Remote,
-    page_url: str
+    page_url: str,
+    wait_for_content: bool = True
 ) -> Tuple[Optional[BeautifulSoup], bool]:
     """
     Парсит страницу через Selenium (fallback)
+    
+    Args:
+        driver: WebDriver объект
+        page_url: URL страницы для парсинга
+        wait_for_content: Ждать полной загрузки контента (скролл и ожидание)
     
     Returns:
         (soup, success) - BeautifulSoup объект и флаг успеха
@@ -276,6 +282,29 @@ def parse_page_with_selenium(
         
         if wait_time >= max_wait:
             return None, False
+        
+        # Если нужно ждать полной загрузки контента (как при валидации прокси)
+        if wait_for_content:
+            # Скроллим для активации динамического контента (как в get_pages_count_with_driver)
+            try:
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight/3);")
+                time.sleep(random.uniform(1, 2))
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
+                time.sleep(random.uniform(1, 2))
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(random.uniform(2, 3))
+                
+                # Дополнительное ожидание для полной загрузки динамического контента
+                time.sleep(5)  # Даем время на загрузку товаров через AJAX
+                
+                # Обновляем page_source после скролла
+                page_source = safe_get_page_source(driver)
+                if not page_source:
+                    logger.error("[TAB CRASH] Tab crash after scroll")
+                    return None, False
+            except Exception as scroll_error:
+                logger.warning(f"Error during scroll: {scroll_error}")
+                # Продолжаем с текущим page_source
         
         soup = BeautifulSoup(page_source, 'html.parser')
         return soup, True
@@ -687,11 +716,11 @@ def worker_thread(
         
         cloudflare_success, page_source = wait_for_cloudflare(driver, thread_name=thread_name, context="getting cookies")
         if cloudflare_success and page_source:
-            try:
-                cookies = get_cookies_from_selenium(driver)
-                logger.info(f"[{thread_name}] Got cookies: {len(cookies)} items")
-            except Exception as cookie_error:
-                logger.warning(f"[{thread_name}] Error getting cookies: {cookie_error}")
+                try:
+                    cookies = get_cookies_from_selenium(driver)
+                    logger.info(f"[{thread_name}] Got cookies: {len(cookies)} items")
+                except Exception as cookie_error:
+                    logger.warning(f"[{thread_name}] Error getting cookies: {cookie_error}")
         else:
             logger.warning(f"[{thread_name}] Failed to get cookies (Cloudflare timeout or page crash)")
     except Exception as e:
@@ -736,7 +765,9 @@ def worker_thread(
                 
                 if driver:
                     try:
-                        soup, success = parse_page_with_selenium(driver, page_url)
+                        # Для первых страниц ждем полной загрузки контента (как при валидации)
+                        wait_for_content = (current_page <= 3)  # Первые 3 страницы
+                        soup, success = parse_page_with_selenium(driver, page_url, wait_for_content=wait_for_content)
                         if success:
                             try:
                                 cookies = get_cookies_from_selenium(driver)
@@ -1052,19 +1083,40 @@ def parse_all_pages_simple(
             except:
                 pass
             driver = None
-    
+                
     # Буфер для товаров
     products_buffer = []
     
-    # Основной цикл парсинга
-    current_page = 1
+    # Создаем список всех страниц и перемешиваем для случайного порядка
+    pages_to_parse = list(range(1, total_pages + 1))
+    random.shuffle(pages_to_parse)
+    logger.info(f"[{thread_name}] Created shuffled list of {len(pages_to_parse)} pages for random parsing order")
+    
+    # Отслеживаем спарсенные страницы
+    parsed_pages = set()
+    pages_remaining = len(pages_to_parse)
+    
     driver = None  # Инициализируем драйвер
     proxy_index = 0  # Индекс для поиска нового прокси
     
-    while current_page <= total_pages:
+    # Основной цикл парсинга - парсим страницы в случайном порядке
+    while pages_remaining > 0:
         try:
+            # Выбираем следующую страницу из списка (если список пуст - все спарсено)
+            if not pages_to_parse:
+                logger.info(f"[{thread_name}] All pages parsed, exiting...")
+                break
+            
+            current_page = pages_to_parse.pop(0)  # Берем первую страницу из списка
+            pages_remaining = len(pages_to_parse)
+            
+            # Пропускаем уже спарсенные страницы (на случай дубликатов)
+            if current_page in parsed_pages:
+                logger.debug(f"[{thread_name}] Page {current_page} already parsed, skipping...")
+                continue
+            
             page_url = f"{TARGET_URL}?_paged={current_page}"
-            logger.info(f"[{thread_name}] Parsing page {current_page}/{total_pages}...")
+            logger.info(f"[{thread_name}] Parsing page {current_page}/{total_pages} (remaining: {pages_remaining}, parsed: {len(parsed_pages)})...")
             
             # Периодически сохраняем буфер для защиты от потери данных
             if products_buffer and len(products_buffer) >= CSV_BUFFER_SAVE_SIZE:
@@ -1091,7 +1143,9 @@ def parse_all_pages_simple(
                 
                 if driver:
                     try:
-                        soup, success = parse_page_with_selenium(driver, page_url)
+                        # Для первых страниц ждем полной загрузки контента (как при валидации)
+                        wait_for_content = (current_page <= 3)  # Первые 3 страницы
+                        soup, success = parse_page_with_selenium(driver, page_url, wait_for_content=wait_for_content)
                         if success:
                             # Обновляем cookies
                             try:
@@ -1151,7 +1205,7 @@ def parse_all_pages_simple(
                 
                 # Продолжаем с той же страницы
                 continue
-            
+                
             # Проверяем блокировку
             if driver:
                 page_source = safe_get_page_source(driver)
@@ -1178,42 +1232,104 @@ def parse_all_pages_simple(
                     current_proxy = new_proxy
                     driver = new_driver
                     proxy_index = new_proxy_index
-                    continue
+                continue
             else:
                 page_source = str(soup) if soup else ""
             
             if not page_source:
-                logger.warning(f"Failed to get page {current_page} content")
-                current_page += 1
+                logger.warning(f"Failed to get page {current_page} content, will retry later")
+                # Возвращаем страницу в конец списка для повторной попытки
+                if current_page not in parsed_pages:
+                    pages_to_parse.append(current_page)
                 continue
             
             block_check = is_page_blocked(soup, page_source)
             
             if block_check["blocked"]:
-                logger.warning(f"Page {current_page} blocked: {block_check['reason']} → switching proxy")
-                cloudflare_blocks += 1
-                proxy_switches += 1
+                # Если прокси только что прошел валидацию и это первые страницы - даем ему несколько попыток
+                is_first_pages = current_page <= 5  # Первые 5 страниц
+                proxy_was_recently_validated = True  # Прокси только что прошел валидацию
+                max_retries_for_validated_proxy = 2  # Количество попыток для валидированного прокси
                 
-                new_proxy, new_driver, proxies_checked, new_proxy_index = find_new_working_proxy(
-                    proxy_manager, proxies_list, None, proxy_index, thread_name,
-                    context=f"after blocking (page {current_page}, reason: {block_check['reason']})"
-                )
+                # Используем атрибут функции для хранения счетчика попыток
+                if not hasattr(parse_all_pages_simple, '_proxy_retry_count'):
+                    parse_all_pages_simple._proxy_retry_count = {}
                 
-                if not new_proxy or not new_driver:
-                    logger.warning(f"Failed to find new working proxy after checking {proxies_checked} proxies, will retry on next iteration")
-                    time.sleep(10)
+                proxy_key = f"{current_proxy['ip']}:{current_proxy['port']}"
+                if proxy_key not in parse_all_pages_simple._proxy_retry_count:
+                    parse_all_pages_simple._proxy_retry_count[proxy_key] = 0
+                
+                if is_first_pages and proxy_was_recently_validated and parse_all_pages_simple._proxy_retry_count[proxy_key] < max_retries_for_validated_proxy:
+                    parse_all_pages_simple._proxy_retry_count[proxy_key] += 1
+                    logger.warning(f"Page {current_page} blocked: {block_check['reason']}, but proxy was validated recently. Retry {parse_all_pages_simple._proxy_retry_count[proxy_key]}/{max_retries_for_validated_proxy}...")
+                    
+                    # Пробуем перезагрузить страницу с ожиданием полной загрузки
+                    if driver:
+                        try:
+                            logger.info(f"Reloading page {current_page} with full content wait...")
+                            time.sleep(3)  # Небольшая пауза перед перезагрузкой
+                            driver.refresh()
+                            time.sleep(5)  # Ожидание после refresh
+                            
+                            # Скроллим и ждем загрузки
+                            driver.execute_script("window.scrollTo(0, document.body.scrollHeight/3);")
+                            time.sleep(2)
+                            driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
+                            time.sleep(2)
+                            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                            time.sleep(5)  # Даем время на загрузку товаров
+                            
+                            # Получаем обновленный page_source
+                            page_source = safe_get_page_source(driver)
+                            if page_source:
+                                soup = BeautifulSoup(page_source, 'html.parser')
+                                block_check = is_page_blocked(soup, page_source)
+                                
+                                if not block_check["blocked"]:
+                                    logger.info(f"Page {current_page} loaded successfully after reload!")
+                                    parse_all_pages_simple._proxy_retry_count[proxy_key] = 0  # Сбрасываем счетчик
+                                    # Продолжаем парсинг ниже
+                                else:
+                                    logger.warning(f"Page still blocked after reload: {block_check['reason']}")
+                                    # Продолжаем цикл, попробуем еще раз
+                                    continue
+                            else:
+                                logger.warning(f"Failed to get page_source after reload")
+                                continue
+                        except Exception as reload_error:
+                            logger.warning(f"Error reloading page: {reload_error}")
+                            continue
+                    else:
+                        # Если нет драйвера, просто пропускаем эту попытку
+                        time.sleep(3)
+                        continue
+                else:
+                    # Исчерпали попытки или это не первые страницы - ищем новый прокси
+                    logger.warning(f"Page {current_page} blocked: {block_check['reason']} → switching proxy")
+                    parse_all_pages_simple._proxy_retry_count[proxy_key] = 0  # Сбрасываем счетчик
+                    cloudflare_blocks += 1
+                    proxy_switches += 1
+                    
+                    new_proxy, new_driver, proxies_checked, new_proxy_index = find_new_working_proxy(
+                        proxy_manager, proxies_list, None, proxy_index, thread_name,
+                        context=f"after blocking (page {current_page}, reason: {block_check['reason']})"
+                    )
+                    
+                    if not new_proxy or not new_driver:
+                        logger.warning(f"Failed to find new working proxy after checking {proxies_checked} proxies, will retry on next iteration")
+                        time.sleep(10)
+                        continue
+                    
+                    if driver:
+                        try:
+                            driver.quit()
+                        except:
+                            pass
+                    
+                    current_proxy = new_proxy
+                    driver = new_driver
+                    proxy_index = new_proxy_index
                     continue
-                
-                if driver:
-                    try:
-                        driver.quit()
-                    except:
-                        pass
-                
-                current_proxy = new_proxy
-                driver = new_driver
-                proxy_index = new_proxy_index
-                continue
             
             # Парсим товары
             products, products_in_stock, total_products_on_page = get_products_from_page_soup(soup)
@@ -1241,16 +1357,19 @@ def parse_all_pages_simple(
             elif page_status["status"] == "empty":
                 if products_in_stock == 0:
                     empty_pages_count += 1
-                    logger.warning(f"Page {current_page}: no products IN STOCK (empty in a row: {empty_pages_count})")
+                    logger.warning(f"Page {current_page}: no products IN STOCK (empty pages found: {empty_pages_count})")
                     
-                    if empty_pages_count >= MAX_EMPTY_PAGES:
-                        logger.info(f"Found {MAX_EMPTY_PAGES} consecutive pages without products IN STOCK. Stopping parsing.")
-                        break
+                    # Если нашли много пустых страниц подряд - возможно, закончились товары
+                    # Но продолжаем парсить остальные страницы в случайном порядке
+                    if empty_pages_count >= MAX_EMPTY_PAGES * 2:  # Увеличиваем порог для случайного порядка
+                        logger.info(f"Found {empty_pages_count} pages without products IN STOCK. May have reached end of catalog.")
+                        # Не останавливаемся, продолжаем парсить остальные страницы
                 else:
                     empty_pages_count = 0
             
+            # Отмечаем страницу как спарсенную
+            parsed_pages.add(current_page)
             pages_checked += 1
-            current_page += 1
             
             # Задержка между страницами
             time.sleep(random.uniform(MIN_DELAY_BETWEEN_PAGES, MAX_DELAY_BETWEEN_PAGES))
@@ -1307,7 +1426,9 @@ def parse_all_pages_simple(
             else:
                 logger.error(f"Error parsing page {current_page}: {e}")
                 logger.debug(traceback.format_exc())
-                current_page += 1
+                # Возвращаем страницу в конец списка для повторной попытки
+                if current_page not in parsed_pages:
+                    pages_to_parse.append(current_page)
                 continue
     
     # Записываем оставшиеся товары из буфера
@@ -1517,7 +1638,9 @@ def parse_all_pages(
                 
                 if driver:
                     try:
-                        soup, success = parse_page_with_selenium(driver, page_url)
+                        # Для первых страниц ждем полной загрузки контента (как при валидации)
+                        wait_for_content = (current_page <= 3)  # Первые 3 страницы
+                        soup, success = parse_page_with_selenium(driver, page_url, wait_for_content=wait_for_content)
                         if success:
                             # Обновляем cookies
                             try:
