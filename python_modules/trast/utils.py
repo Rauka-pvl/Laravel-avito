@@ -518,6 +518,13 @@ def _create_chrome_driver(proxy: Optional[Dict] = None) -> webdriver.Chrome:
         options.add_argument("--disable-gpu")
         options.add_argument("--window-size=1920,1080")
         
+        # Игнорируем ошибки SSL-сертификата (для прокси с самоподписанными сертификатами)
+        options.add_argument("--ignore-certificate-errors")
+        options.add_argument("--ignore-ssl-errors")
+        options.add_argument("--ignore-certificate-errors-spki-list")
+        options.add_argument("--allow-running-insecure-content")
+        options.add_argument("--disable-web-security")
+        
         selected_ua = random.choice(USER_AGENTS)
         options.add_argument(f"--user-agent={selected_ua}")
         
@@ -573,6 +580,14 @@ def _create_chrome_driver(proxy: Optional[Dict] = None) -> webdriver.Chrome:
         options.add_argument("--disable-gpu")
         options.add_argument("--window-size=1920,1080")
         options.add_argument("--disable-blink-features=AutomationControlled")
+        
+        # Игнорируем ошибки SSL-сертификата (для прокси с самоподписанными сертификатами)
+        options.add_argument("--ignore-certificate-errors")
+        options.add_argument("--ignore-ssl-errors")
+        options.add_argument("--ignore-certificate-errors-spki-list")
+        options.add_argument("--allow-running-insecure-content")
+        options.add_argument("--disable-web-security")
+        
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option('useAutomationExtension', False)
         
