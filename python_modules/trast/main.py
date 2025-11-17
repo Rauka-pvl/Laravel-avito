@@ -36,7 +36,8 @@ from config import (
 
 # Добавляем обработчики логирования после импорта config
 LOG_FILE = os.path.join(LOG_DIR, f"trast_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
-logger.add(LOG_FILE, encoding='utf-8', rotation='10 MB', retention='7 days')
+# Добавляем BOM, чтобы браузеры корректно определяли кодировку (UTF-8 with signature)
+logger.add(LOG_FILE, encoding='utf-8-sig', rotation='10 MB', retention='7 days')
 # Настраиваем stderr для правильной кодировки UTF-8
 if hasattr(sys.stderr, 'encoding') and sys.stderr.encoding != 'utf-8':
     try:
