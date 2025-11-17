@@ -56,7 +56,7 @@ from utils import (
     wait_for_cloudflare
 )
 
-# Импорт Telegram уведомлений
+# Импорт Telegram уведомлений и БД
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 try:
     from notification.main import TelegramNotifier
@@ -66,6 +66,16 @@ except ImportError:
         @classmethod
         def notify(cls, text: str):
             logger.info(f"Telegram notification (not available): {text}")
+
+try:
+    from bz_telebot.database_manager import set_script_start, set_script_end
+except ImportError:
+    # Если модуль не найден, создаем заглушки
+    def set_script_start(script_name: str):
+        logger.debug(f"set_script_start({script_name}) - database module not available")
+    
+    def set_script_end(script_name: str, status: str = "done"):
+        logger.debug(f"set_script_end({script_name}, {status}) - database module not available")
 
 
 def is_proxy_error(error) -> bool:
@@ -1914,6 +1924,7 @@ def parse_all_pages(
 
 def main():
     """Главная функция - однопоточный парсинг"""
+    script_name = "trast"
     main_thread_name = "MainThread"
     logger.info("=" * 80)
     logger.info("=== TRAST PARSER STARTED (SINGLE-THREADED) ===")
@@ -1923,6 +1934,14 @@ def main():
     
     # Уведомление о старте
     TelegramNotifier.notify("[Trast] Update started")
+    
+    # Записываем старт скрипта в БД
+    try:
+        set_script_start(script_name)
+        logger.info(f"[{main_thread_name}] Database connection successful")
+    except Exception as db_error:
+        logger.warning(f"[{main_thread_name}] Database connection failed: {db_error}, continuing without DB...")
+        # Продолжаем без БД
     
     start_time = datetime.now()
     error_message = None
@@ -2085,6 +2104,9 @@ def main():
         logger.error(f"[{main_thread_name}] Error saving data: {save_error}")
         error_message = error_message or str(save_error)
         status = 'error'
+        # При ошибке сохранения удаляем только временные файлы, основной файл не трогаем
+        cleanup_temp_files()
+        logger.info(f"[{main_thread_name}] Temporary files cleaned up, main file unchanged")
     
     # Формируем метрики для уведомления
     metrics_suffix = ""
@@ -2099,6 +2121,12 @@ def main():
     else:
         failure_details = error_message or "Unknown error"
         TelegramNotifier.notify(f"[Trast] Update failed — <code>{failure_details}</code>")
+    
+    # Записываем окончание скрипта в БД
+    try:
+        set_script_end(script_name, status=status)
+    except Exception as db_end_error:
+        logger.warning(f"[{main_thread_name}] Error saving script end to database: {db_end_error}")
     
     logger.info("=" * 80)
     logger.info(f"[{main_thread_name}] Parsing completed!")
