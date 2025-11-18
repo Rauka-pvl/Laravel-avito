@@ -2137,12 +2137,43 @@ def main():
         TelegramNotifier.notify(f"[Trast] Update failed — <code>{error_message}</code>")
         sys.exit(1)
     
+    # Приоритизируем прокси и прогреваем пул
+    logger.info(f"[{main_thread_name}] Prioritizing proxies and warming up pool...")
+    downloaded_proxies = prioritize_proxies(downloaded_proxies)
+    try:
+        proxy_manager.ensure_warm_proxy_pool(MIN_WORKING_PROXIES)
+        logger.info(f"[{main_thread_name}] Proxy pool warmed up")
+    except Exception as e:
+        logger.warning(f"[{main_thread_name}] Failed to warm up proxy pool: {e}, continuing...")
+    
     # Ищем рабочий прокси и получаем количество страниц
     logger.info(f"[{main_thread_name}] Searching for working proxy...")
     current_proxy = None
     proxy_index = 0
     max_search_time = PROXY_SEARCH_INITIAL_TIMEOUT
     search_start_time = time.time()
+    failures_since_refresh = 0
+    refresh_threshold = 15
+    cooldown_skips = 0
+    
+    def refresh_proxy_pool_local(reason: str) -> bool:
+        """Локальная функция для обновления пула прокси"""
+        logger.info(f"[{main_thread_name}] Forcing proxy refresh ({reason})...")
+        try:
+            if proxy_manager.download_proxies(force_update=True):
+                updated_proxies = proxy_manager._load_proxies()
+                if updated_proxies:
+                    downloaded_proxies.clear()
+                    downloaded_proxies.extend(prioritize_proxies(updated_proxies))
+                    logger.info(f"[{main_thread_name}] Proxy pool refreshed with {len(updated_proxies)} entries")
+                    try:
+                        proxy_manager.ensure_warm_proxy_pool(MIN_WORKING_PROXIES)
+                    except Exception as e:
+                        logger.warning(f"[{main_thread_name}] Failed to warm up after refresh: {e}")
+                    return True
+        except Exception as refresh_error:
+            logger.warning(f"[{main_thread_name}] Failed to refresh proxies: {refresh_error}")
+        return False
     
     while True:
         elapsed = time.time() - search_start_time
@@ -2154,20 +2185,43 @@ def main():
             logger.debug(f"[{main_thread_name}] Reached end of proxy list, waiting for update...")
             time.sleep(PROXY_LIST_WAIT_DELAY)
             # Попробуем обновить список прокси
-            try:
-                if proxy_manager.download_proxies(force_update=True):
-                    downloaded_proxies = proxy_manager._load_proxies()
-                    if downloaded_proxies:
-                        proxy_index = 0
-                        logger.info(f"[{main_thread_name}] Proxy list updated, continuing search...")
-            except:
-                pass
+            if refresh_proxy_pool_local("end of list reached"):
+                proxy_index = 0
+                continue
+        
+        # Пропускаем прокси в cooldown
+        proxy_candidate = downloaded_proxies[proxy_index]
+        if proxy_manager.is_proxy_in_cooldown(proxy_candidate):
+            cooldown_skips += 1
+            proxy_index += 1
+            if len(downloaded_proxies) > 0 and cooldown_skips >= len(downloaded_proxies):
+                logger.info(f"[{main_thread_name}] All proxies are cooling down, waiting {PROXY_LIST_WAIT_DELAY}s for refresh...")
+                cooldown_skips = 0
+                time.sleep(PROXY_LIST_WAIT_DELAY)
+                if refresh_proxy_pool_local("all proxies in cooldown"):
+                    proxy_index = 0
             continue
         
-        proxy = downloaded_proxies[proxy_index]
+        proxy = proxy_candidate
         proxy_index += 1
+        cooldown_skips = 0
         proxy_key = f"{proxy['ip']}:{proxy['port']}"
         elapsed_search = int(time.time() - search_start_time)
+        
+        # Сначала базовая проверка
+        basic_ok, basic_info = proxy_manager.validate_proxy_basic(proxy)
+        if not basic_ok:
+            reason = (basic_info or {}).get('reason', 'basic_check_failed')
+            logger.debug(f"[{main_thread_name}] Proxy {proxy_key} basic validation failed: reason={reason}")
+            failures_since_refresh += 1
+            if failures_since_refresh >= refresh_threshold:
+                if refresh_proxy_pool_local(f"{failures_since_refresh} consecutive failures"):
+                    proxy_index = 0
+                    failures_since_refresh = 0
+                    continue
+                failures_since_refresh = 0
+            continue
+        
         logger.info(f"[{main_thread_name}] [{proxy_index}] Checking proxy {proxy_key} ({proxy.get('protocol', 'http').upper()})...")
         logger.info(f"[{main_thread_name}] Search progress: {elapsed_search}s elapsed, {proxy_index} proxies checked")
         
@@ -2190,15 +2244,29 @@ def main():
             else:
                 reason = "validation failed"
                 if not trast_ok:
-                    reason = "not working"
+                    reason = trast_info.get('reason', 'not working')
                 elif 'total_pages' not in trast_info:
                     reason = "no page count"
                 elif trast_info.get('total_pages', 0) <= 0:
                     reason = f"invalid page count: {trast_info.get('total_pages')}"
                 logger.warning(f"[{main_thread_name}] Proxy {proxy_key} not working ({reason}), continuing search...")
+                failures_since_refresh += 1
+                if failures_since_refresh >= refresh_threshold:
+                    if refresh_proxy_pool_local(f"{failures_since_refresh} consecutive failures"):
+                        proxy_index = 0
+                        failures_since_refresh = 0
+                        continue
+                    failures_since_refresh = 0
         except Exception as e:
             error_type = type(e).__name__
             logger.warning(f"[{main_thread_name}] Error checking proxy {proxy_key}: {error_type}: {str(e)[:150]}")
+            failures_since_refresh += 1
+            if failures_since_refresh >= refresh_threshold:
+                if refresh_proxy_pool_local(f"{failures_since_refresh} consecutive failures"):
+                    proxy_index = 0
+                    failures_since_refresh = 0
+                    continue
+                failures_since_refresh = 0
             continue
     
     if not current_proxy or not total_pages or total_pages <= 0:
