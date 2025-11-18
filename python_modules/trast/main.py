@@ -334,6 +334,50 @@ def parse_page_with_selenium(
         return None, False
 
 
+def prioritize_proxies(proxies: List[Dict]) -> List[Dict]:
+    """Сортирует прокси: HTTPS + страны из PREFERRED_COUNTRIES в приоритете"""
+    def score(proxy: Dict) -> float:
+        protocol = (proxy.get('protocol') or '').lower()
+        country = (proxy.get('country') or '').upper()
+        value = 0.0
+        if country in PREFERRED_COUNTRIES:
+            value += 2.0
+        if protocol == 'https':
+            value += 1.5
+        elif protocol == 'http':
+            value += 1.0
+        elif protocol.startswith('socks'):
+            value += 0.5
+        return value
+    
+    return sorted(
+        proxies,
+        key=lambda proxy: (score(proxy), random.random()),
+        reverse=True
+    )
+
+
+def log_proxy_health_summary(proxy_manager: ProxyManager, stage: str, thread_name: str = "MainThread"):
+    summary = proxy_manager.get_health_summary()
+    if not summary:
+        logger.info(f"[{thread_name}] Proxy health summary ({stage}): no tracked proxies yet")
+        return
+    
+    logger.info(f"[{thread_name}] Proxy health summary ({stage}): "
+                f"{summary.get('cooldown_count', 0)} in cooldown / "
+                f"{summary.get('tracked_proxies', 0)} tracked")
+    
+    top_failures = summary.get('top_failure_reasons') or []
+    if top_failures:
+        fail_str = ", ".join(f"{reason}: {count}" for reason, count in top_failures)
+        logger.info(f"[{thread_name}]   Top failure reasons: {fail_str}")
+    
+    top_sources = summary.get('source_distribution') or []
+    if top_sources:
+        source_str = ", ".join(f"{source or 'unknown'}: {count}" for source, count in top_sources)
+        logger.info(f"[{thread_name}]   Source distribution: {source_str}")
+
+
 def download_proxies_thread(
     proxy_manager: ProxyManager,
     proxies_list: List[Dict],
@@ -360,10 +404,12 @@ def download_proxies_thread(
             if downloaded_proxies:
                 with proxies_lock:
                     proxies_list.clear()
-                    proxies_list.extend(downloaded_proxies)
+                    proxies_list.extend(prioritize_proxies(downloaded_proxies))
                     logger.info(f"[{thread_name}] Loaded {len(proxies_list)} proxies into shared list")
+                proxy_manager.ensure_warm_proxy_pool(MIN_WORKING_PROXIES)
             else:
                 logger.warning(f"[{thread_name}] Failed to load proxies from file")
+            proxy_manager.ensure_warm_proxy_pool(MIN_WORKING_PROXIES)
         else:
             logger.warning(f"[{thread_name}] Failed to download proxies")
         
@@ -384,8 +430,9 @@ def download_proxies_thread(
                             with proxies_lock:
                                 old_count = len(proxies_list)
                                 proxies_list.clear()
-                                proxies_list.extend(downloaded_proxies)
+                                proxies_list.extend(prioritize_proxies(downloaded_proxies))
                                 logger.info(f"[{thread_name}] Proxy list updated: {old_count} -> {len(proxies_list)}")
+                            proxy_manager.ensure_warm_proxy_pool(MIN_WORKING_PROXIES)
                         last_update = time.time()
                 except Exception as e:
                     logger.warning(f"[{thread_name}] Error updating proxies: {e}")
@@ -432,9 +479,43 @@ def find_new_working_proxy(
     proxy_search_start = time.time()
     proxies_checked = 0
     current_proxy_index = proxy_index
+    failures_since_refresh = 0
+    refresh_threshold = 15
+    cooldown_skips = 0
+    consecutive_page_block_failures = 0
+    page_block_threshold = 5
+    
+    page_in_context = None
+    if context:
+        match = re.search(r'page (\d+)', context)
+        if match:
+            try:
+                page_in_context = int(match.group(1))
+            except ValueError:
+                page_in_context = None
     
     context_suffix = f" {context}" if context else ""
     logger.info(f"[{thread_name}] Starting proxy search{context_suffix} (timeout: {max_timeout}s, starting index: {current_proxy_index})")
+    
+    def refresh_proxy_pool(reason: str) -> bool:
+        logger.info(f"[{thread_name}] Forcing proxy refresh ({reason})...")
+        try:
+            if proxy_manager.download_proxies(force_update=True):
+                updated_proxies = proxy_manager._load_proxies()
+                if updated_proxies:
+                    if proxies_lock:
+                        with proxies_lock:
+                            proxies_list.clear()
+                            proxies_list.extend(prioritize_proxies(updated_proxies))
+                    else:
+                        proxies_list.clear()
+                        proxies_list.extend(prioritize_proxies(updated_proxies))
+                    logger.info(f"[{thread_name}] Proxy pool refreshed with {len(updated_proxies)} entries")
+                    proxy_manager.ensure_warm_proxy_pool(MIN_WORKING_PROXIES)
+                    return True
+        except Exception as refresh_error:
+            logger.warning(f"[{thread_name}] Failed to refresh proxies: {refresh_error}")
+        return False
     
     while not found_new_proxy:
         elapsed_time = time.time() - proxy_search_start
@@ -446,35 +527,71 @@ def find_new_working_proxy(
         if int(elapsed_time) % PROXY_SEARCH_PROGRESS_LOG_INTERVAL == 0 and int(elapsed_time) > 0:
             logger.info(f"[{thread_name}] Proxy search in progress: {int(elapsed_time)}s elapsed, {proxies_checked} proxies checked")
         
+        proxy = None
+        list_size = 0
         # Получаем прокси из списка (все типы прокси поддерживаются через Firefox)
-        if proxies_lock:
-            with proxies_lock:
+        while proxy is None:
+            if proxies_lock:
+                with proxies_lock:
+                    list_size = len(proxies_list)
+                    if list_size == 0:
+                        logger.debug(f"[{thread_name}] Proxy list is empty, waiting for update...")
+                        break
+                    if current_proxy_index >= list_size:
+                        rotation_offset = random.randint(0, list_size - 1) if list_size > 1 else 0
+                        current_proxy_index = rotation_offset
+                    proxy_candidate = proxies_list[current_proxy_index]
+                    current_proxy_index += 1
+            else:
                 list_size = len(proxies_list)
-                if current_proxy_index >= list_size:
-                    logger.debug(f"[{thread_name}] Reached end of proxy list (index: {current_proxy_index}, list size: {list_size}), waiting for update...")
+                if list_size == 0:
+                    logger.debug(f"[{thread_name}] Proxy list is empty, waiting for update...")
                     time.sleep(PROXY_LIST_WAIT_DELAY)
-                    continue
-                
-                proxy = proxies_list[current_proxy_index]
-                current_proxy_index += 1  # В однопоточном режиме просто +1
-        else:
-            # Без lock - просто проверяем список
-            list_size = len(proxies_list)
-            if current_proxy_index >= list_size:
-                logger.debug(f"[{thread_name}] Reached end of proxy list (index: {current_proxy_index}, list size: {list_size}), waiting for update...")
-                time.sleep(PROXY_LIST_WAIT_DELAY)
+                    break
+                if current_proxy_index >= list_size:
+                    rotation_offset = random.randint(0, list_size - 1) if list_size > 1 else 0
+                    current_proxy_index = rotation_offset
+                proxy_candidate = proxies_list[current_proxy_index]
+                current_proxy_index += 1
+            
+            if not proxy_candidate:
                 continue
             
-            proxy = proxies_list[current_proxy_index]
-            current_proxy_index += 1  # В однопоточном режиме просто +1
+            if proxy_manager.is_proxy_in_cooldown(proxy_candidate):
+                cooldown_skips += 1
+                logger.debug(f"[{thread_name}] Skipping proxy {proxy_candidate.get('ip')}:{proxy_candidate.get('port')} due to cooldown")
+                if list_size > 0 and cooldown_skips >= list_size:
+                    logger.info(f"[{thread_name}] All proxies are cooling down, waiting {PROXY_LIST_WAIT_DELAY}s for refresh...")
+                    cooldown_skips = 0
+                    time.sleep(PROXY_LIST_WAIT_DELAY)
+                continue
+            
+            if page_in_context and proxy_manager.should_skip_proxy_for_page(proxy_candidate, page_in_context):
+                logger.debug(f"[{thread_name}] Skipping proxy {proxy_candidate.get('ip')}:{proxy_candidate.get('port')} (recently blocked page {page_in_context})")
+                continue
+            
+            proxy = proxy_candidate
+            cooldown_skips = 0
+        
+        if proxy is None:
+            time.sleep(PROXY_LIST_WAIT_DELAY)
+            continue
         
         proxies_checked += 1
         proxy_key = f"{proxy['ip']}:{proxy['port']}"
         protocol = proxy.get('protocol', 'http').upper()
+        
+        basic_ok, basic_info = proxy_manager.validate_proxy_basic(proxy)
+        if not basic_ok:
+            reason = (basic_info or {}).get('reason', 'basic_check_failed')
+            logger.debug(f"[{thread_name}] Proxy {proxy_key} skipped after basic check: {reason}")
+            failures_since_refresh += 1
+            continue
+        
         logger.info(f"[{thread_name}] Checking new proxy {proxy_key} ({protocol}){context_suffix} [{proxies_checked} checked, {int(elapsed_time)}s elapsed]...")
         
         try:
-            trast_ok, trast_info = proxy_manager.validate_proxy_for_trast(proxy)
+            trast_ok, trast_info = proxy_manager.validate_proxy_for_trast(proxy, page_context=page_in_context)
             if trast_ok and 'total_pages' in trast_info and trast_info['total_pages'] > 0:
                 current_proxy = proxy.copy()
                 current_proxy.update(trast_info)
@@ -483,14 +600,41 @@ def find_new_working_proxy(
                 if driver:
                     found_new_proxy = True
                     logger.info(f"[{thread_name}] Found new working proxy {proxy_key} (total_pages={trast_info['total_pages']}) after checking {proxies_checked} proxies in {int(elapsed_time)}s{context_suffix}")
+                    failures_since_refresh = 0
+                    consecutive_page_block_failures = 0
                     return current_proxy, driver, proxies_checked, current_proxy_index
                 else:
                     logger.warning(f"[{thread_name}] Failed to create driver with proxy {proxy_key}")
+                    failures_since_refresh += 1
             else:
-                logger.debug(f"[{thread_name}] Proxy {proxy_key} validation failed: ok={trast_ok}, info={trast_info}")
+                failure_reason = trast_info.get('reason', 'unknown')
+                logger.debug(f"[{thread_name}] Proxy {proxy_key} validation failed: reason={failure_reason}, details={trast_info}")
+                failures_since_refresh += 1
+                if failure_reason == 'cloudflare_block' and page_in_context:
+                    consecutive_page_block_failures += 1
+                else:
+                    consecutive_page_block_failures = 0
         except Exception as e:
             error_type = type(e).__name__
             logger.debug(f"[{thread_name}] Error checking proxy {proxy_key}: {error_type}: {str(e)[:100]}")
+            failures_since_refresh += 1
+            consecutive_page_block_failures = 0
+            continue
+        
+        if page_in_context and consecutive_page_block_failures >= page_block_threshold:
+            if refresh_proxy_pool(f"{consecutive_page_block_failures} cloudflare blocks on page {page_in_context}"):
+                current_proxy_index = 0
+                failures_since_refresh = 0
+                consecutive_page_block_failures = 0
+                continue
+            consecutive_page_block_failures = 0
+        
+        if failures_since_refresh >= refresh_threshold:
+            if refresh_proxy_pool(f"{failures_since_refresh} consecutive failures"):
+                current_proxy_index = 0
+                failures_since_refresh = 0
+                continue
+            failures_since_refresh = 0
             continue
     
     if not found_new_proxy:
@@ -1965,6 +2109,7 @@ def main():
     try:
         proxy_manager = ProxyManager(country_filter=PREFERRED_COUNTRIES)
         logger.info(f"[{main_thread_name}] ProxyManager initialized")
+        log_proxy_health_summary(proxy_manager, "startup", main_thread_name)
     except Exception as e:
         logger.error(f"[{main_thread_name}] Error initializing ProxyManager: {e}")
         logger.error(traceback.format_exc())
@@ -2129,6 +2274,7 @@ def main():
     except Exception as db_end_error:
         logger.warning(f"[{main_thread_name}] Error saving script end to database: {db_end_error}")
     
+    log_proxy_health_summary(proxy_manager, "finish", main_thread_name)
     logger.info("=" * 80)
     logger.info(f"[{main_thread_name}] Parsing completed!")
     logger.info(f"[{main_thread_name}] Execution time: {round(duration, 2)} seconds")

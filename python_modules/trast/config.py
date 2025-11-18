@@ -21,6 +21,19 @@ PROXY_CACHE_DIR = os.path.join(os.path.dirname(__file__), "proxy_cache")
 PROXIES_FILE = os.path.join(PROXY_CACHE_DIR, "proxies.json")
 SUCCESSFUL_PROXIES_FILE = os.path.join(PROXY_CACHE_DIR, "successful_proxies.json")
 LAST_UPDATE_FILE = os.path.join(PROXY_CACHE_DIR, "last_update.txt")
+PROXY_HEALTH_FILE = os.path.join(PROXY_CACHE_DIR, "proxy_health.json")
+
+# Параметры отслеживания состояния прокси
+PROXY_HEALTH_HISTORY_SIZE = 10  # Количество последних событий, сохраняемых для каждого прокси
+PROXY_FAILURE_COOLDOWN_THRESHOLD = 3  # После скольких подряд неудач включать охлаждение
+PROXY_COOLDOWN_SECONDS = {
+    "timeout": 1800,
+    "cloudflare_block": 600,
+    "connection_failure": 900,
+    "no_page_count": 900,
+    "basic_check_failed": 600,
+    "default": 600
+}
 
 # Создаем директорию для прокси
 os.makedirs(PROXY_CACHE_DIR, exist_ok=True)
@@ -35,6 +48,7 @@ PAGE_LOAD_TIMEOUT = 25
 CLOUDFLARE_WAIT_TIMEOUT = 30
 PROXY_TEST_TIMEOUT = 60
 BASIC_CHECK_TIMEOUT = 5
+PROXY_IP_CHECK_URL = "https://api.ipify.org"
 
 # Настройки прокси
 MIN_WORKING_PROXIES = 10  # Минимальное количество рабочих прокси перед началом парсинга
@@ -42,6 +56,7 @@ MAX_PROXIES_TO_CHECK = 500  # Максимальное количество пр
 PROXY_CHECK_THREADS = 2  # Количество потоков для многопоточной проверки прокси
 PARSING_THREADS = 1  # Количество потоков для многопоточного парсинга (четные/нечетные страницы)
 ALLOWED_PROXY_PROTOCOLS = ['http', 'https', 'socks4', 'socks5']  # Разрешенные типы прокси (все типы, используется только Firefox)
+PROXY_PAGE_FAILURE_COOLDOWN = 900  # 15 минут блокировки для конкретной страницы
 
 # Фильтр по странам (приоритетные для российского сайта)
 PREFERRED_COUNTRIES = [
