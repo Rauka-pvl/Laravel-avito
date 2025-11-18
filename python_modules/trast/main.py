@@ -8,6 +8,7 @@ import time
 import random
 import traceback
 import threading
+import re
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from bs4 import BeautifulSoup
