@@ -11,9 +11,8 @@ import requests
 import threading
 import queue
 import traceback
-from collections import Counter
 from typing import List, Dict, Optional, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime
 from bs4 import BeautifulSoup
 from loguru import logger
 from selenium import webdriver
@@ -22,17 +21,10 @@ from selenium.common.exceptions import TimeoutException
 from config import (
     PROXY_CACHE_DIR, PROXIES_FILE, SUCCESSFUL_PROXIES_FILE, LAST_UPDATE_FILE,
     PREFERRED_COUNTRIES, PROXY_SOURCES, PROXY_TEST_TIMEOUT, BASIC_CHECK_TIMEOUT,
-    TARGET_URL, PROXY_CHECK_THREADS, PROXY_HEALTH_FILE, PROXY_HEALTH_HISTORY_SIZE,
-    PROXY_FAILURE_COOLDOWN_THRESHOLD, PROXY_COOLDOWN_SECONDS, MAX_PROXIES_TO_CHECK,
-    PROXY_IP_CHECK_URL, PROXY_PAGE_FAILURE_COOLDOWN
+    TARGET_URL, PROXY_CHECK_THREADS
 )
 
-from utils import (
-    create_driver,
-    get_pages_count_with_driver,
-    PaginationNotDetectedError,
-    is_page_blocked
-)
+from utils import create_driver, get_pages_count_with_driver, PaginationNotDetectedError
 
 
 class ProxyManager:
@@ -48,9 +40,6 @@ class ProxyManager:
         self.country_filter = [c.upper() for c in country_filter] if country_filter else PREFERRED_COUNTRIES
         self.failed_proxies = set()
         self.successful_proxies = []
-        self.proxy_health: Dict[str, Dict] = self._load_proxy_health()
-        self.cached_total_pages: Optional[int] = None
-        self.cached_total_pages_updated_at: Optional[str] = None
         
         # Thread-safety: блокировка для доступа к критическим данным
         self.lock = threading.Lock()
@@ -59,9 +48,6 @@ class ProxyManager:
         self.successful_proxies = self.load_successful_proxies()
         if self.successful_proxies:
             logger.info(f"Loaded {len(self.successful_proxies)} successful proxies from cache")
-        
-        if self.proxy_health:
-            logger.info(f"Loaded proxy health data for {len(self.proxy_health)} proxies")
         
         logger.info(f"ProxyManager initialized with country filter: {', '.join(self.country_filter[:10])}...")
     
@@ -83,314 +69,28 @@ class ProxyManager:
         except Exception as e:
             logger.error(f"Failed to save successful proxies: {e}")
     
-    def _get_proxy_key(self, proxy: Dict) -> str:
-        return f"{proxy.get('ip', '')}:{proxy.get('port', '')}"
-    
-    def _load_proxy_health(self) -> Dict[str, Dict]:
-        """Загружает статистику по прокси"""
-        try:
-            if os.path.exists(PROXY_HEALTH_FILE):
-                with open(PROXY_HEALTH_FILE, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    if isinstance(data, dict):
-                        return data
-        except Exception as e:
-            logger.warning(f"Failed to load proxy health data: {e}")
-        return {}
-    
-    def _save_proxy_health(self):
-        """Сохраняет статистику по прокси"""
-        try:
-            with open(PROXY_HEALTH_FILE, 'w', encoding='utf-8') as f:
-                json.dump(self.proxy_health, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            logger.error(f"Failed to save proxy health data: {e}")
-    
-    def get_cached_total_pages(self) -> Optional[int]:
+    def record_successful_proxy(self, proxy: Dict):
+        """Добавляет прокси в список успешных (без дублей)"""
+        if not proxy:
+            return
+        proxy_key = f"{proxy.get('ip')}:{proxy.get('port')}"
+        if not proxy_key:
+            return
         with self.lock:
-            return self.cached_total_pages
-    
-    def set_cached_total_pages(self, total_pages: int):
-        with self.lock:
-            self.cached_total_pages = total_pages
-            self.cached_total_pages_updated_at = datetime.utcnow().isoformat()
-    
-    def get_health_summary(self, top_n: int = 3) -> Dict[str, any]:
-        with self.lock:
-            entries = list(self.proxy_health.values())
-        
-        if not entries:
-            return {}
-        
-        now = datetime.utcnow()
-        cooldown_count = 0
-        failure_counter = Counter()
-        source_counter = Counter()
-        
-        for entry in entries:
-            cooldown_until = entry.get('cooldown_until')
-            if cooldown_until:
-                try:
-                    if datetime.fromisoformat(cooldown_until) > now:
-                        cooldown_count += 1
-                except Exception:
-                    pass
-            
-            if entry.get('last_failure_reason'):
-                failure_counter[entry['last_failure_reason']] += 1
-            
-            if entry.get('source'):
-                source_counter[entry['source']] += 1
-        
-        return {
-            'tracked_proxies': len(entries),
-            'cooldown_count': cooldown_count,
-            'top_failure_reasons': failure_counter.most_common(top_n),
-            'source_distribution': source_counter.most_common(top_n)
-        }
-    
-    def _ensure_health_entry(self, proxy: Dict) -> Dict:
-        key = self._get_proxy_key(proxy)
-        entry = self.proxy_health.get(key, {})
-        entry.setdefault('ip', proxy.get('ip'))
-        entry.setdefault('port', proxy.get('port'))
-        entry.setdefault('protocol', proxy.get('protocol'))
-        entry.setdefault('country', proxy.get('country', ''))
-        entry.setdefault('source', proxy.get('source', ''))
-        entry.setdefault('consecutive_failures', 0)
-        entry.setdefault('total_failures', 0)
-        entry.setdefault('total_success', 0)
-        entry.setdefault('last_success', None)
-        entry.setdefault('last_failure', None)
-        entry.setdefault('last_failure_reason', None)
-        entry.setdefault('cooldown_until', None)
-        entry.setdefault('cooldown_reason', None)
-        entry.setdefault('success_counts', {})
-        entry.setdefault('failure_counts', {})
-        entry.setdefault('events', [])
-        self.proxy_health[key] = entry
-        return entry
-    
-    def _append_health_event(self, entry: Dict, event: Dict):
-        events = entry.get('events', [])
-        events.append(event)
-        if len(events) > PROXY_HEALTH_HISTORY_SIZE:
-            events = events[-PROXY_HEALTH_HISTORY_SIZE:]
-        entry['events'] = events
-    
-    def _calculate_cooldown(self, reason: str, consecutive_failures: int) -> Optional[int]:
-        """
-        Рассчитывает длительность охлаждения в секундах для заданной причины
-        """
-        reason = reason or 'default'
-        if reason == 'cloudflare_block':
-            return PROXY_COOLDOWN_SECONDS.get(reason, PROXY_COOLDOWN_SECONDS['default'])
-        
-        if consecutive_failures >= PROXY_FAILURE_COOLDOWN_THRESHOLD:
-            return PROXY_COOLDOWN_SECONDS.get(reason, PROXY_COOLDOWN_SECONDS['default'])
-        
-        return None
-    
-    def _increment_stage_counter(self, entry: Dict, counter_name: str, stage: str):
-        counters = entry.setdefault(counter_name, {})
-        counters[stage] = counters.get(stage, 0) + 1
-    
-    def record_proxy_success(self, proxy: Dict, stage: str, metadata: Optional[Dict] = None, final: bool = False):
-        """
-        Фиксирует успешное использование прокси
-        """
-        key = self._get_proxy_key(proxy)
-        entry = self._ensure_health_entry(proxy)
-        timestamp = datetime.utcnow().isoformat()
-        
-        event = {
-            'timestamp': timestamp,
-            'stage': stage,
-            'status': 'success',
-            'metadata': metadata or {}
-        }
-        self._append_health_event(entry, event)
-        self._increment_stage_counter(entry, 'success_counts', stage)
-        
-        if final:
-            entry['last_success'] = timestamp
-            entry['last_result'] = 'success'
-            entry['total_success'] += 1
-            entry['consecutive_failures'] = 0
-            entry['cooldown_until'] = None
-            entry['cooldown_reason'] = None
-        
-        self.proxy_health[key] = entry
-        self._save_proxy_health()
-    
-    def record_proxy_failure(
-        self,
-        proxy: Dict,
-        stage: str,
-        reason: str,
-        metadata: Optional[Dict] = None
-    ):
-        """
-        Фиксирует неудачную попытку использования прокси
-        """
-        key = self._get_proxy_key(proxy)
-        entry = self._ensure_health_entry(proxy)
-        timestamp = datetime.utcnow().isoformat()
-        
-        entry['last_failure'] = timestamp
-        entry['last_failure_reason'] = reason
-        entry['last_result'] = 'failure'
-        entry['consecutive_failures'] = entry.get('consecutive_failures', 0) + 1
-        entry['total_failures'] = entry.get('total_failures', 0) + 1
-        
-        cooldown_seconds = self._calculate_cooldown(reason, entry['consecutive_failures'])
-        if cooldown_seconds:
-            cooldown_until = datetime.utcnow() + timedelta(seconds=cooldown_seconds)
-            entry['cooldown_until'] = cooldown_until.isoformat()
-            entry['cooldown_reason'] = reason
-        else:
-            entry['cooldown_until'] = None
-            entry['cooldown_reason'] = None
-        
-        event = {
-            'timestamp': timestamp,
-            'stage': stage,
-            'status': 'failure',
-            'reason': reason,
-            'metadata': metadata or {}
-        }
-        page_value = (metadata or {}).get('page')
-        if page_value is not None:
-            entry['last_failed_page'] = page_value
-            entry['last_failed_page_at'] = timestamp
-            entry['last_failed_page_reason'] = reason
-        self._append_health_event(entry, event)
-        self._increment_stage_counter(entry, 'failure_counts', stage)
-        
-        self.proxy_health[key] = entry
-        self._save_proxy_health()
-    
-    def is_proxy_in_cooldown(self, proxy: Dict) -> bool:
-        """Проверяет, находится ли прокси в состоянии охлаждения"""
-        key = self._get_proxy_key(proxy)
-        entry = self.proxy_health.get(key)
-        if not entry:
-            return False
-        
-        cooldown_until = entry.get('cooldown_until')
-        if not cooldown_until:
-            return False
-        
-        try:
-            cooldown_time = datetime.fromisoformat(cooldown_until)
-            if datetime.utcnow() < cooldown_time:
-                return True
-        except Exception:
-            return False
-        
-        return False
-    
-    def _validate_catalog_page(self, driver: webdriver.Remote, proxy_key: str, page_num: int) -> Tuple[bool, Dict]:
-        """
-        Дополнительная проверка страницы каталога, чтобы убедиться, что прокси пропускает реальные листинги
-        """
-        from utils import safe_get_page_source
-        
-        validation_url = TARGET_URL if page_num <= 1 else f"{TARGET_URL}?_paged={page_num}"
-        metadata = {
-            'validation_page': page_num,
-            'validation_url': validation_url
-        }
-        
-        try:
-            logger.debug(f"[{proxy_key}] Validating catalog page {page_num} ({validation_url})...")
-            driver.get(validation_url)
-            time.sleep(5)
-            page_source = safe_get_page_source(driver)
-            if not page_source:
-                metadata['detail'] = 'validation_empty_page'
-                return False, metadata
-            
-            soup = BeautifulSoup(page_source, 'html.parser')
-            block_info = is_page_blocked(soup, page_source)
-            metadata['block_check'] = block_info
-            
-            if block_info.get('blocked'):
-                reason = block_info.get('reason', 'catalog_blocked')
-                metadata['detail'] = reason
-                debug_name = self._reason_with_page(reason, page_num)
-                debug_path = self._save_debug_html(proxy_key, page_source, debug_name)
-                if debug_path:
-                    metadata['debug_html'] = debug_path
-                return False, metadata
-            
-            logger.debug(f"[{proxy_key}] Catalog page {page_num} passed validation")
-            return True, metadata
-        
-        except TimeoutException:
-            metadata['detail'] = 'validation_timeout'
-            return False, metadata
-        except Exception as e:
-            metadata['detail'] = 'validation_error'
-            metadata['error'] = str(e)
-            return False, metadata
-    
-    def ensure_warm_proxy_pool(self, min_count: int):
-        """
-        Гарантирует минимальное количество предварительно проверенных прокси
-        """
-        try:
-            with self.lock:
-                current_count = len(self.successful_proxies)
-            if current_count >= min_count:
+            existing_keys = {f"{p.get('ip')}:{p.get('port')}" for p in self.successful_proxies}
+            if proxy_key in existing_keys:
                 return
-            
-            logger.info(f"Warm proxy pool below threshold ({current_count}/{min_count}), validating additional proxies...")
-            self.get_working_proxies(min_count=min_count, max_to_check=MAX_PROXIES_TO_CHECK, use_parallel=True)
-            with self.lock:
-                logger.info(f"Warm proxy pool updated: {len(self.successful_proxies)} proxies cached")
-        except Exception as e:
-            logger.warning(f"Failed to warm proxy pool: {e}")
-    
-    def should_skip_proxy_for_page(self, proxy: Dict, page: Optional[int]) -> bool:
-        """Определяет, стоит ли пропустить прокси для конкретной страницы (если недавно блокировал её)"""
-        if page is None:
-            return False
-        
-        key = self._get_proxy_key(proxy)
-        with self.lock:
-            entry = self.proxy_health.get(key)
-            if not entry:
-                return False
-            last_page = entry.get('last_failed_page')
-            last_page_time = entry.get('last_failed_page_at')
-            if last_page != page or not last_page_time:
-                return False
-        
-        try:
-            last_dt = datetime.fromisoformat(last_page_time)
-        except Exception:
-            return False
-        
-        return (datetime.utcnow() - last_dt).total_seconds() < PROXY_PAGE_FAILURE_COOLDOWN
-    
-    def _proxy_failure_response(
-        self,
-        proxy: Dict,
-        stage: str,
-        reason: str,
-        metadata: Optional[Dict] = None
-    ) -> Tuple[bool, Dict]:
-        self.record_proxy_failure(proxy, stage=stage, reason=reason, metadata=metadata or {})
-        response = {'reason': reason}
-        if metadata:
-            response.update(metadata)
-        return False, response
-    
-    def _reason_with_page(self, reason: str, page_context: Optional[int]) -> str:
-        if page_context is None:
-            return reason
-        return f"page_{int(page_context):03d}_{reason}"
+            proxy_copy = {
+                'ip': proxy.get('ip'),
+                'port': proxy.get('port'),
+                'protocol': proxy.get('protocol', 'http'),
+                'country': proxy.get('country', ''),
+                'source': proxy.get('source', 'unknown')
+            }
+            if 'total_pages' in proxy:
+                proxy_copy['total_pages'] = proxy['total_pages']
+            self.successful_proxies.append(proxy_copy)
+            self.save_successful_proxies()
     
     def _parse_proxymania_page(self, page_num: int = 1) -> List[Dict]:
         """Парсит одну страницу прокси с proxymania.su"""
@@ -1069,10 +769,6 @@ class ProxyManager:
         if timeout is None:
             timeout = BASIC_CHECK_TIMEOUT
         
-        stage = "basic"
-        endpoint = PROXY_IP_CHECK_URL
-        start_time = time.time()
-        
         try:
             protocol = proxy.get('protocol', 'http').lower()
             ip = proxy['ip']
@@ -1087,69 +783,29 @@ class ProxyManager:
             else:
                 return False, {}
             
-            response = requests.get(endpoint, proxies=proxies, timeout=timeout)
+            response = requests.get('https://ifconfig.me/ip', proxies=proxies, timeout=timeout, verify=False)
             if response.status_code == 200:
                 external_ip = response.text.strip()
                 if external_ip and len(external_ip.split('.')) == 4:
-                    duration = time.time() - start_time
-                    latency_ms = int(duration * 1000)
-                    info = {
-                        'ip': ip,
-                        'port': port,
-                        'protocol': protocol,
-                        'external_ip': external_ip,
-                        'proxies': proxies,
-                        'duration': duration,
-                        'latency_ms': latency_ms,
-                        'endpoint': endpoint
+                    logger.info(f"Proxy {ip}:{port} ({protocol.upper()}) works! IP: {external_ip}")
+                    return True, {
+                        'ip': ip, 'port': port, 'protocol': protocol,
+                        'external_ip': external_ip, 'proxies': proxies
                     }
-                    logger.info(f"Proxy {ip}:{port} ({protocol.upper()}) works! IP: {external_ip} ({latency_ms} ms via {endpoint})")
-                    self.record_proxy_success(proxy, stage=stage, metadata=info, final=False)
-                    return True, info
             
-            reason = 'basic_check_failed'
-            metadata = {
-                'status_code': response.status_code,
-                'duration': time.time() - start_time,
-                'endpoint': endpoint
-            }
-            self.record_proxy_failure(proxy, stage=stage, reason=reason, metadata=metadata)
-            return False, {'reason': reason, **metadata}
-        except requests.exceptions.ConnectTimeout as e:
-            reason = 'timeout'
-            metadata = {'error': str(e), 'duration': time.time() - start_time, 'endpoint': endpoint}
-            logger.debug(f"Proxy {proxy.get('ip', '')}:{proxy.get('port', '')} timeout during basic check: {e}")
-            self.record_proxy_failure(proxy, stage=stage, reason=reason, metadata=metadata)
-            return False, {'reason': reason, **metadata}
-        except requests.exceptions.ProxyError as e:
-            reason = 'connection_failure'
-            metadata = {'error': str(e), 'duration': time.time() - start_time, 'endpoint': endpoint}
-            logger.debug(f"Proxy {proxy.get('ip', '')}:{proxy.get('port', '')} proxy error during basic check: {e}")
-            self.record_proxy_failure(proxy, stage=stage, reason=reason, metadata=metadata)
-            return False, {'reason': reason, **metadata}
+            return False, {}
         except Exception as e:
-            reason = 'basic_check_failed'
-            metadata = {'error': str(e), 'duration': time.time() - start_time, 'endpoint': endpoint}
             logger.debug(f"Proxy {proxy.get('ip', '')}:{proxy.get('port', '')} not working: {e}")
-            self.record_proxy_failure(proxy, stage=stage, reason=reason, metadata=metadata)
-            return False, {'reason': reason, **metadata}
+            return False, {}
     
-    def validate_proxy_for_trast(self, proxy: Dict, timeout: int = None, page_context: Optional[int] = None) -> Tuple[bool, Dict]:
+    def validate_proxy_for_trast(self, proxy: Dict, timeout: int = None) -> Tuple[bool, Dict]:
         """Проверяет прокси на доступность trast-zapchast.ru через Selenium"""
         if timeout is None:
             timeout = PROXY_TEST_TIMEOUT
         
-        stage = "selenium"
         driver = None
         proxy_key = f"{proxy.get('ip', '')}:{proxy.get('port', '')}"
-        debug_html_path: Optional[str] = None
-        start_time = time.time()
-        
-        def attach_page(metadata: Optional[Dict]) -> Dict:
-            metadata = metadata or {}
-            if page_context is not None:
-                metadata.setdefault('page', page_context)
-            return metadata
+        debug_html_saved = False
         
         try:
             logger.debug(f"Checking proxy {proxy_key} on trast-zapchast.ru (timeout: {timeout}s)...")
@@ -1158,8 +814,7 @@ class ProxyManager:
             driver = create_driver(proxy)
             if not driver:
                 logger.debug(f"Failed to create driver for {proxy_key}")
-                metadata = {'detail': 'driver_creation_failed'}
-                return self._proxy_failure_response(proxy, stage, 'driver_creation_failed', attach_page(metadata))
+                return False, {}
             
             driver.set_page_load_timeout(timeout)
             logger.debug(f"Loading page via proxy {proxy_key}...")
@@ -1171,8 +826,7 @@ class ProxyManager:
             page_source = safe_get_page_source(driver)
             if not page_source:
                 logger.warning(f"Failed to get page_source for proxy {proxy_key}")
-                metadata = {'detail': 'empty_page_source'}
-                return self._proxy_failure_response(proxy, stage, 'no_page_source', attach_page(metadata))
+                return False, {}
             
             page_source_lower = page_source.lower()
             max_wait = 30
@@ -1188,159 +842,66 @@ class ProxyManager:
                     page_source = safe_get_page_source(driver)
                     if not page_source:
                         logger.warning(f"Tab crash during Cloudflare wait for proxy {proxy_key}")
-                        metadata = {'detail': 'tab_crash_during_cloudflare'}
-                        return self._proxy_failure_response(proxy, stage, 'tab_crash', attach_page(metadata))
+                        return False, {}
                     page_source_lower = page_source.lower()
                 except Exception as refresh_error:
                     logger.warning(f"Error refreshing page for proxy {proxy_key}: {refresh_error}")
-                    metadata = {'detail': 'cloudflare_refresh_error', 'error': str(refresh_error)}
-                    return self._proxy_failure_response(proxy, stage, 'cloudflare_block', attach_page(metadata))
+                    return False, {}
                 wait_time += 5
             
             if wait_time >= max_wait:
                 logger.warning(f"Cloudflare check failed for proxy {proxy_key}")
-                debug_html_path = self._save_debug_html(
-                    proxy_key,
-                    page_source,
-                    self._reason_with_page("cloudflare_timeout", page_context)
-                )
-                metadata = {
-                    'detail': 'cloudflare_timeout',
-                    'wait_time': wait_time,
-                    'debug_html': debug_html_path
-                }
-                return self._proxy_failure_response(proxy, stage, 'cloudflare_block', attach_page(metadata))
+                # Сохраняем HTML для отладки
+                self._save_debug_html(proxy_key, page_source, "cloudflare_timeout")
+                debug_html_saved = True
+                return False, {}
             
-            total_pages = None
-            used_cached_pages = False
-            cached_total_pages = self.get_cached_total_pages()
-            
-            if cached_total_pages and cached_total_pages > 0:
-                soup = BeautifulSoup(page_source, 'html.parser')
-                homepage_block = is_page_blocked(soup, page_source)
-                if homepage_block.get('blocked'):
-                    reason = homepage_block.get('reason', 'homepage_blocked')
-                    debug_html_path = self._save_debug_html(
-                        proxy_key,
-                        page_source,
-                        self._reason_with_page(reason, page_context)
-                    )
-                    metadata = {
-                        'detail': 'homepage_blocked',
-                        'block_check': homepage_block,
-                        'debug_html': debug_html_path
-                    }
-                    return self._proxy_failure_response(proxy, stage, 'cloudflare_block', attach_page(metadata))
-                
-                total_pages = cached_total_pages
-                used_cached_pages = True
-                logger.debug(f"[{proxy_key}] Using cached total_pages={total_pages}")
-            else:
-                try:
-                    logger.debug(f"Getting page count via proxy {proxy_key}...")
-                    total_pages = get_pages_count_with_driver(driver)
-                    if total_pages and total_pages > 0:
-                        self.set_cached_total_pages(total_pages)
-                except PaginationNotDetectedError as e:
-                    logger.warning(f"Proxy {proxy_key} blocked on site: {e}")
+            # Пробуем получить количество страниц - это ОСНОВНОЙ критерий работоспособности прокси
+            try:
+                logger.debug(f"Getting page count via proxy {proxy_key}...")
+                total_pages = get_pages_count_with_driver(driver)
+                if total_pages and total_pages > 0:
+                    logger.info(f"[{proxy_key}] PROXY WORKS! Successfully got page count: {total_pages} pages")
+                    logger.info(f"[{proxy_key}] Ready to start parsing with this proxy!")
+                    return True, {'total_pages': total_pages}
+                else:
+                    logger.warning(f"[{proxy_key}] Failed to get page count (returned {total_pages})")
+                    # Сохраняем HTML для отладки
+                    if not debug_html_saved:
+                        page_source = safe_get_page_source(driver)
+                        if page_source:
+                            self._save_debug_html(proxy_key, page_source, "no_page_count")
+                    return False, {}
+            except PaginationNotDetectedError as e:
+                # Страница заблокирована - прокси не работает
+                logger.warning(f"Proxy {proxy_key} blocked on site: {e}")
+                # Сохраняем HTML для отладки
+                if not debug_html_saved:
                     page_source = safe_get_page_source(driver)
-                    debug_html_path = self._save_debug_html(
-                        proxy_key,
-                        page_source or "",
-                        self._reason_with_page(f"blocked_{str(e)[:50]}", page_context)
-                    ) if page_source else None
-                    metadata = {
-                        'detail': 'pagination_not_detected',
-                        'error': str(e),
-                        'debug_html': debug_html_path
-                    }
-                    return self._proxy_failure_response(proxy, stage, 'cloudflare_block', attach_page(metadata))
-                except Exception as e:
-                    logger.warning(f"Error getting page count via proxy {proxy_key}: {e}")
+                    if page_source:
+                        self._save_debug_html(proxy_key, page_source, f"blocked_{str(e)[:50]}")
+                return False, {}
+            except Exception as e:
+                logger.warning(f"Error getting page count via proxy {proxy_key}: {e}")
+                # Сохраняем HTML для отладки
+                if not debug_html_saved:
                     page_source = safe_get_page_source(driver)
-                    debug_html_path = self._save_debug_html(
-                        proxy_key,
-                        page_source or "",
-                        self._reason_with_page(f"error_{type(e).__name__}", page_context)
-                    ) if page_source else None
-                    metadata = {
-                        'detail': 'page_count_error',
-                        'error': str(e),
-                        'debug_html': debug_html_path
-                    }
-                    return self._proxy_failure_response(proxy, stage, 'selenium_error', attach_page(metadata))
+                    if page_source:
+                        self._save_debug_html(proxy_key, page_source, f"error_{type(e).__name__}")
+                return False, {}
             
-            if total_pages and total_pages > 0:
-                duration = time.time() - start_time
-                
-                validation_page = None
-                if total_pages >= 3:
-                    validation_page = min(5, total_pages)
-                elif total_pages == 2:
-                    validation_page = 2
-                
-                catalog_metadata = {'validation_page': 1, 'validation_url': TARGET_URL}
-                if validation_page:
-                    catalog_ok, catalog_metadata = self._validate_catalog_page(driver, proxy_key, validation_page)
-                    if not catalog_ok:
-                        catalog_metadata['total_pages'] = total_pages
-                        return self._proxy_failure_response(
-                            proxy,
-                            stage,
-                            'catalog_validation_failed',
-                            attach_page(catalog_metadata)
-                        )
-                
-                logger.info(f"[{proxy_key}] PROXY WORKS! Successfully got page count: {total_pages} pages")
-                logger.info(f"[{proxy_key}] Ready to start parsing with this proxy!")
-                metadata = {
-                    'total_pages': total_pages,
-                    'duration': duration,
-                    'validation_page': catalog_metadata.get('validation_page'),
-                    'validation_url': catalog_metadata.get('validation_url'),
-                    'page_context': page_context,
-                    'total_pages_source': 'cached' if used_cached_pages else 'fresh'
-                }
-                if catalog_metadata:
-                    metadata['catalog_validation'] = catalog_metadata
-                self.record_proxy_success(proxy, stage=stage, metadata=metadata, final=True)
-                return True, {'total_pages': total_pages}
-            
-            logger.warning(f"[{proxy_key}] Failed to get page count (returned {total_pages})")
-            page_source = safe_get_page_source(driver)
-            debug_html_path = self._save_debug_html(
-                proxy_key,
-                page_source or "",
-                self._reason_with_page("no_page_count", page_context)
-            ) if page_source else None
-            metadata = {
-                'detail': 'no_page_count',
-                'returned_value': total_pages,
-                'debug_html': debug_html_path
-            }
-            return self._proxy_failure_response(proxy, stage, 'no_page_count', attach_page(metadata))
-            
-        except TimeoutException as e:
-            logger.debug(f"Timeout while checking proxy {proxy_key}: {e}")
-            metadata = {'error': str(e)}
-            return self._proxy_failure_response(proxy, stage, 'timeout', attach_page(metadata))
         except Exception as e:
             logger.debug(f"Error checking proxy {proxy_key} on trast: {e}")
-            page_source = None
-            if driver:
+            # Сохраняем HTML для отладки если возможно
+            if driver and not debug_html_saved:
                 try:
                     from utils import safe_get_page_source
                     page_source = safe_get_page_source(driver)
-                except Exception:
-                    page_source = None
-            if page_source:
-                debug_html_path = self._save_debug_html(
-                    proxy_key,
-                    page_source,
-                    self._reason_with_page(f"exception_{type(e).__name__}", page_context)
-                )
-            metadata = {'error': str(e), 'debug_html': debug_html_path}
-            return self._proxy_failure_response(proxy, stage, 'selenium_error', attach_page(metadata))
+                    if page_source:
+                        self._save_debug_html(proxy_key, page_source, f"exception_{type(e).__name__}")
+                except:
+                    pass
+            return False, {}
         finally:
             if driver:
                 try:
@@ -1348,7 +909,7 @@ class ProxyManager:
                 except:
                     pass
     
-    def _save_debug_html(self, proxy_key: str, page_source: str, reason: str) -> Optional[str]:
+    def _save_debug_html(self, proxy_key: str, page_source: str, reason: str):
         """Сохраняет HTML страницы для отладки при неудачных проверках прокси"""
         try:
             from config import LOG_DIR
@@ -1371,10 +932,8 @@ class ProxyManager:
                 f.write(page_source)
             
             logger.debug(f"Debug HTML saved for proxy {proxy_key}: {filepath} (reason: {reason})")
-            return filepath
         except Exception as e:
             logger.debug(f"Failed to save debug HTML for proxy {proxy_key}: {e}")
-        return None
     
     def _proxy_search_worker(self, thread_id: int, proxy_queue: queue.Queue, found_proxies: List[Dict], 
                              stop_event: threading.Event, stats: Dict, min_count: int):
@@ -1667,11 +1226,11 @@ class ProxyManager:
     
     def get_next_proxy(self) -> Optional[Dict]:
         """Получает следующий рабочий прокси из списка"""
-        if not self.successful_proxies:
-            return None
-        
-        # Простая ротация
-        proxy = self.successful_proxies[0]
-        self.successful_proxies = self.successful_proxies[1:] + [proxy]
-        return proxy
+        with self.lock:
+            if not self.successful_proxies:
+                return None
+            
+            proxy = self.successful_proxies[0]
+            self.successful_proxies = self.successful_proxies[1:] + [proxy]
+            return proxy.copy()
 

@@ -3,6 +3,7 @@ import subprocess
 import os
 import time
 import logging
+import json
 from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, Router, F, types
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
@@ -32,6 +33,113 @@ for item in os.listdir(BASE_DIR):
     if os.path.isfile(full_path):
         SCRIPTS[item] = full_path
 
+AUTOSTART_CONFIG_KEY = "bz_telebot.autostart_scripts"
+
+
+def collect_running_script_processes():
+    running = {}
+    script_items = list(SCRIPTS.items())
+    for proc in psutil.process_iter(["pid", "cmdline"]):
+        try:
+            cmdline = proc.info.get("cmdline") or []
+            if not cmdline:
+                continue
+            joined = " ".join(cmdline)
+            for name, path in script_items:
+                if path in joined:
+                    running.setdefault(name, []).append(proc)
+                    break
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+    return running
+
+
+def stop_running_scripts(process_map: dict):
+    stopped = []
+    errors = []
+    for name, processes in process_map.items():
+        alive = []
+        for proc in processes:
+            try:
+                proc.terminate()
+                alive.append(proc)
+            except (psutil.NoSuchProcess, psutil.AccessDenied) as exc:
+                errors.append(f"{name} (PID {proc.pid}): {exc}")
+        if not alive:
+            continue
+        gone, still_alive = psutil.wait_procs(alive, timeout=5)
+        for proc in still_alive:
+            try:
+                proc.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied) as exc:
+                errors.append(f"{name} (PID {proc.pid}) force kill: {exc}")
+        set_script_end(name, status="stopped")
+        stopped.append(name)
+    return stopped, errors
+
+
+def remember_autostart_scripts(script_names):
+    if script_names:
+        try:
+            set_config(AUTOSTART_CONFIG_KEY, json.dumps(script_names))
+        except Exception as exc:
+            logging.error(f"Не удалось сохранить список автозапускаемых скриптов: {exc}")
+    else:
+        delete_config_key(AUTOSTART_CONFIG_KEY)
+
+
+async def restore_autostart_scripts():
+    raw = get_config(AUTOSTART_CONFIG_KEY)
+    if not raw:
+        return
+    delete_config_key(AUTOSTART_CONFIG_KEY)
+    try:
+        scripts_to_start = json.loads(raw)
+        if not isinstance(scripts_to_start, list):
+            scripts_to_start = []
+    except json.JSONDecodeError:
+        scripts_to_start = [item.strip() for item in raw.split(",") if item.strip()]
+
+    if not scripts_to_start:
+        return
+
+    started = []
+    failed = []
+    for name in scripts_to_start:
+        script_path = SCRIPTS.get(name)
+        if not script_path or not os.path.exists(script_path):
+            failed.append(f"{name} (нет файла)")
+            continue
+        try:
+            set_script_start(name)
+            subprocess.Popen(
+                ["nohup", "python3", script_path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                preexec_fn=os.setpgrp
+            )
+            started.append(name)
+        except Exception as exc:
+            failed.append(f"{name}: {exc}")
+
+    if not started and not failed:
+        return
+
+    summary_lines = []
+    if started:
+        summary_lines.append(f"♻️ Автозапущены скрипты: {', '.join(started)}")
+    if failed:
+        summary_lines.append("⚠️ Не удалось запустить: " + ", ".join(failed))
+
+    for uid in ADMIN_IDS:
+        uid = uid.strip()
+        if not uid:
+            continue
+        try:
+            await bot.send_message(uid, "\n".join(summary_lines))
+        except Exception as exc:
+            logging.warning(f"Не удалось отправить уведомление {uid}: {exc}")
+
 # === Telegram setup ===
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
@@ -54,6 +162,24 @@ async def handle_git_pull(message: types.Message):
     restart_script = os.path.join(repo_dir, "bot_start.sh")
 
     try:
+        running_processes = collect_running_script_processes()
+        if running_processes:
+            stopped_scripts, stop_errors = stop_running_scripts(running_processes)
+            remember_autostart_scripts(stopped_scripts)
+            if stopped_scripts:
+                await message.reply(
+                    "⏹ Остановлены скрипты: " + ", ".join(stopped_scripts),
+                    parse_mode="HTML"
+                )
+            if stop_errors:
+                await message.reply(
+                    "⚠️ Ошибки при остановке:\n" + "\n".join(stop_errors[:10]),
+                    parse_mode="HTML"
+                )
+        else:
+            remember_autostart_scripts([])
+            await message.reply("ℹ️ Активных скриптов не найдено.", parse_mode="HTML")
+
         # Выполняем git pull и ждём завершения
         result = subprocess.run(
             ["git", "-C", repo_dir, "pull"],
@@ -111,6 +237,7 @@ def format_script_info(name):
         "running": "🟢 Работает",
         "done": "✅ Завершён",
         "failed": "❌ Ошибка",
+        "stopped": "🟡 Остановлен",
         "unknown": "⚪ Неизвестно"
     }.get(status, status)
 
@@ -266,6 +393,7 @@ def periodic_schedule_runner(interval_seconds=60):
 # === Запуск ===
 async def main():
     init_db()
+    await restore_autostart_scripts()
     for uid in ADMIN_IDS:
         try:
             await bot.send_message(uid.strip(), "🤖 Бот запущен", reply_markup=get_main_keyboard())
