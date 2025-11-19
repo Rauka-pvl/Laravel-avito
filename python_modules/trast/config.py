@@ -57,6 +57,7 @@ PROXY_CHECK_THREADS = 2  # Количество потоков для много
 PARSING_THREADS = 1  # Количество потоков для многопоточного парсинга (четные/нечетные страницы)
 ALLOWED_PROXY_PROTOCOLS = ['http', 'https', 'socks4', 'socks5']  # Разрешенные типы прокси (все типы, используется только Firefox)
 PROXY_PAGE_FAILURE_COOLDOWN = 900  # 15 минут блокировки для конкретной страницы
+USE_UNDETECTED_CHROME = True  # Использовать undetected-chrome для HTTP/HTTPS прокси
 
 # Фильтр по странам (приоритетные для российского сайта)
 PREFERRED_COUNTRIES = [

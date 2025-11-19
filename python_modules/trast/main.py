@@ -520,7 +520,8 @@ def recreate_driver_with_new_proxy(
     working_proxies_list: List[Dict],
     driver: Optional[webdriver.Remote],
     cookies: Dict,
-    proxies_lock: Optional[threading.Lock] = None
+    proxies_lock: Optional[threading.Lock] = None,
+    cached_proxies: Optional[Deque[Dict]] = None
 ) -> Tuple[Optional[webdriver.Remote], Optional[Dict], Dict]:
     """
     Пересоздает драйвер с новым прокси.
@@ -535,10 +536,21 @@ def recreate_driver_with_new_proxy(
         except:
             pass
     
-    # Получаем новый прокси
-    new_proxy = proxy_manager.get_next_proxy()
+    def get_proxy_from_cache() -> Optional[Dict]:
+        if not cached_proxies:
+            return None
+        attempts = len(cached_proxies)
+        for _ in range(attempts):
+            proxy_candidate = cached_proxies.popleft()
+            cached_proxies.append(proxy_candidate)
+            return proxy_candidate
+        return None
+    
+    new_proxy = get_proxy_from_cache()
     if not new_proxy:
-        # Если прокси закончились, получаем новые
+        new_proxy = proxy_manager.get_next_proxy()
+    
+    if not new_proxy:
         logger.warning("[MainThread] Working proxies exhausted, searching for new ones...")
         new_proxies = proxy_manager.get_working_proxies(min_count=1, max_to_check=MAX_PROXIES_TO_CHECK)
         if new_proxies:
@@ -549,7 +561,9 @@ def recreate_driver_with_new_proxy(
             else:
                 working_proxies_list.extend(new_proxies)
                 new_proxy = working_proxies_list[0] if working_proxies_list else None
-        else:
+        if not new_proxy and cached_proxies:
+            new_proxy = get_proxy_from_cache()
+        if not new_proxy:
             logger.error("[MainThread] Failed to find new working proxies!")
             return None, None, {}
     
@@ -1718,7 +1732,7 @@ def parse_all_pages(
                 
                 # Пересоздаем драйвер с новым прокси
                 driver, current_proxy, cookies = recreate_driver_with_new_proxy(
-                    proxy_manager, current_proxy, working_proxies_list, driver, cookies, proxies_lock
+                    proxy_manager, current_proxy, working_proxies_list, driver, cookies, proxies_lock, cached_working_proxies
                 )
                 
                 if not driver or not current_proxy:
@@ -1739,7 +1753,7 @@ def parse_all_pages(
                     proxy_switches += 1
                     
                     driver, current_proxy, cookies = recreate_driver_with_new_proxy(
-                        proxy_manager, current_proxy, working_proxies_list, driver, cookies, proxies_lock
+                        proxy_manager, current_proxy, working_proxies_list, driver, cookies, proxies_lock, cached_working_proxies
                     )
                     
                     if not driver or not current_proxy:
@@ -1767,7 +1781,7 @@ def parse_all_pages(
                 
                 # Пересоздаем драйвер с новым прокси
                 driver, current_proxy, cookies = recreate_driver_with_new_proxy(
-                    proxy_manager, current_proxy, working_proxies_list, driver, cookies, proxies_lock
+                    proxy_manager, current_proxy, working_proxies_list, driver, cookies, proxies_lock, cached_working_proxies
                 )
                 
                 if not driver or not current_proxy:
@@ -1831,7 +1845,7 @@ def parse_all_pages(
                             proxy_switches += 1
                             
                             driver, current_proxy, cookies = recreate_driver_with_new_proxy(
-                                proxy_manager, current_proxy, working_proxies_list, driver, cookies, proxies_lock
+                                proxy_manager, current_proxy, working_proxies_list, driver, cookies, proxies_lock, cached_working_proxies
                             )
                             
                             if not driver or not current_proxy:
@@ -1851,7 +1865,7 @@ def parse_all_pages(
                 proxy_switches += 1
                 
                 driver, current_proxy, cookies = recreate_driver_with_new_proxy(
-                    proxy_manager, current_proxy, working_proxies_list, driver, cookies, proxies_lock
+                    proxy_manager, current_proxy, working_proxies_list, driver, cookies, proxies_lock, cached_working_proxies
                 )
                 
                 if not driver or not current_proxy:
@@ -1877,7 +1891,7 @@ def parse_all_pages(
                 proxy_switches += 1
                 
                 driver, current_proxy, cookies = recreate_driver_with_new_proxy(
-                    proxy_manager, current_proxy, working_proxies_list, driver, cookies, proxies_lock
+                    proxy_manager, current_proxy, working_proxies_list, driver, cookies, proxies_lock, cached_working_proxies
                 )
                 
                 if not driver or not current_proxy:
@@ -1910,7 +1924,7 @@ def parse_all_pages(
                             proxy_switches += 1
                             
                             driver, current_proxy, cookies = recreate_driver_with_new_proxy(
-                                proxy_manager, current_proxy, working_proxies_list, driver, cookies, proxies_lock
+                                proxy_manager, current_proxy, working_proxies_list, driver, cookies, proxies_lock, cached_working_proxies
                             )
                             
                             if not driver or not current_proxy:
@@ -1926,7 +1940,7 @@ def parse_all_pages(
                 proxy_switches += 1
                 
                 driver, current_proxy, cookies = recreate_driver_with_new_proxy(
-                    proxy_manager, current_proxy, working_proxies_list, driver, cookies, proxies_lock
+                    proxy_manager, current_proxy, working_proxies_list, driver, cookies, proxies_lock, cached_working_proxies
                 )
                 
                 if not driver or not current_proxy:

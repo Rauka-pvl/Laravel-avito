@@ -22,6 +22,8 @@ import geckodriver_autoinstaller
 from openpyxl import Workbook
 from loguru import logger
 
+HAS_SELENIUM_CHROME = False
+
 try:
     import undetected_chromedriver as uc
     HAS_UNDETECTED_CHROME = True
@@ -54,7 +56,8 @@ from config import (
     LOG_DIR,
     CLOUDFLARE_REFRESH_DELAY,
     CLOUDFLARE_REFRESH_WAIT,
-    CLOUDFLARE_CHECK_INTERVAL
+    CLOUDFLARE_CHECK_INTERVAL,
+    USE_UNDETECTED_CHROME
 )
 
 
@@ -479,19 +482,25 @@ def get_products_from_page_soup(soup: BeautifulSoup) -> Tuple[List[Dict], int, i
     return results, len(results), total_products
 
 
-def create_driver(proxy: Optional[Dict] = None, use_chrome: bool = False) -> Optional[webdriver.Remote]:
+def create_driver(proxy: Optional[Dict] = None) -> Optional[webdriver.Remote]:
     """
-    Создает Firefox драйвер с улучшенным обходом Cloudflare.
-    Используется только Firefox для поддержки всех типов прокси (включая SOCKS).
+    Создает WebDriver с учетом типа прокси.
     
-    Args:
-        proxy: Словарь с прокси {"ip": str, "port": int, "protocol": str}
-        use_chrome: Игнорируется, всегда используется Firefox
-        
-    Returns:
-        WebDriver объект или None при ошибке
+    - Для HTTP/HTTPS прокси пытаемся использовать undetected-chrome (если включено и доступно).
+    - Для SOCKS-прокси (или при ошибке Chrome) автоматически откатываемся на Firefox.
     """
-    # Всегда используем Firefox для поддержки всех типов прокси
+    protocol = (proxy.get('protocol') if proxy else 'http') or 'http'
+    protocol = protocol.lower()
+    prefer_chrome = USE_UNDETECTED_CHROME and protocol in ('http', 'https')
+    
+    if prefer_chrome:
+        try:
+            driver = _create_chrome_driver(proxy)
+            logger.debug("Using undetected Chrome driver")
+            return driver
+        except Exception as chrome_error:
+            logger.warning(f"Failed to initialize undetected Chrome: {chrome_error}. Falling back to Firefox.")
+    
     logger.debug("Using Firefox driver (supports all proxy types including SOCKS)")
     return _create_firefox_driver(proxy)
 
