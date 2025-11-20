@@ -19,12 +19,37 @@ from selenium import webdriver
 from selenium.common.exceptions import TimeoutException
 
 from config import (
-    PROXY_CACHE_DIR, PROXIES_FILE, SUCCESSFUL_PROXIES_FILE, LAST_UPDATE_FILE,
-    PREFERRED_COUNTRIES, PROXY_SOURCES, PROXY_TEST_TIMEOUT, BASIC_CHECK_TIMEOUT,
-    TARGET_URL, PROXY_CHECK_THREADS
+    PROXY_CACHE_DIR,
+    PROXIES_FILE,
+    SUCCESSFUL_PROXIES_FILE,
+    LAST_UPDATE_FILE,
+    PREFERRED_COUNTRIES,
+    PROXY_SOURCES,
+    PROXY_TEST_TIMEOUT,
+    BASIC_CHECK_TIMEOUT,
+    TARGET_URL,
+    PROXY_CHECK_THREADS,
+    USE_UNDETECTED_CHROME,
+    FORCE_FIREFOX,
+    BROWSER_RETRY_DELAY,
 )
 
 from utils import create_driver, get_pages_count_with_driver, PaginationNotDetectedError
+
+
+def is_proxy_connection_error(error: Exception) -> bool:
+    """Определяет, относится ли ошибка Selenium к проблемам подключения через прокси."""
+    if not error:
+        return False
+    message = str(error).lower()
+    keywords = [
+        "err_proxy_connection_failed",
+        "err_tunnel_connection_failed",
+        "connectionfailure",
+        "connection failed",
+        "could not establish connection",
+    ]
+    return any(keyword in message for keyword in keywords)
 
 
 class ProxyManager:
@@ -798,116 +823,183 @@ class ProxyManager:
             logger.debug(f"Proxy {proxy.get('ip', '')}:{proxy.get('port', '')} not working: {e}")
             return False, {}
     
+    def _precheck_proxy_connection(self, proxy: Dict, timeout: int = 10) -> Tuple[bool, Optional[str]]:
+        """
+        Быстрая проверка доступности целевого сайта через SOCKS-прокси до запуска Selenium.
+        """
+        protocol = proxy.get('protocol', 'http').lower()
+        if protocol not in ('socks4', 'socks5'):
+            return True, None
+        
+        ip = proxy.get('ip')
+        port = proxy.get('port')
+        if not ip or not port:
+            return False, "invalid_proxy"
+        
+        proxy_schema = "socks5h" if protocol == 'socks5' else "socks4"
+        proxy_url = f"{proxy_schema}://{ip}:{port}"
+        proxies = {'http': proxy_url, 'https': proxy_url}
+        
+        try:
+            response = requests.get(
+                TARGET_URL,
+                proxies=proxies,
+                timeout=timeout,
+                verify=False,
+                allow_redirects=False
+            )
+            if response.status_code < 500:
+                return True, None
+            return False, f"status_{response.status_code}"
+        except requests.RequestException as e:
+            return False, str(e)
+    
     def validate_proxy_for_trast(self, proxy: Dict, timeout: int = None) -> Tuple[bool, Dict]:
         """Проверяет прокси на доступность trast-zapchast.ru через Selenium"""
         if timeout is None:
             timeout = PROXY_TEST_TIMEOUT
         
-        driver = None
         proxy_key = f"{proxy.get('ip', '')}:{proxy.get('port', '')}"
         debug_html_saved = False
         
         try:
-            logger.debug(f"Checking proxy {proxy_key} on trast-zapchast.ru (timeout: {timeout}s)...")
-            
             protocol = proxy.get('protocol', 'http').lower()
-            driver = create_driver(proxy)
-            if not driver:
-                logger.debug(f"Failed to create driver for {proxy_key}")
-                return False, {}
+            if protocol in ('socks4', 'socks5'):
+                precheck_ok, precheck_reason = self._precheck_proxy_connection(proxy, timeout=8)
+                if not precheck_ok:
+                    logger.debug(f"[{proxy_key}] SOCKS pre-check failed: {precheck_reason}")
+                    return False, {}
             
-            driver.set_page_load_timeout(timeout)
-            logger.debug(f"Loading page via proxy {proxy_key}...")
-            driver.get(TARGET_URL)
-            time.sleep(5)  # Ожидание загрузки
+            prefer_chrome = (
+                USE_UNDETECTED_CHROME
+                and not FORCE_FIREFOX
+                and protocol in ('http', 'https')
+            )
             
-            # Проверяем Cloudflare
+            attempt_order = []
+            if prefer_chrome:
+                attempt_order.append("chrome")
+            attempt_order.append("firefox")
+            
+            last_error = None
             from utils import safe_get_page_source
-            page_source = safe_get_page_source(driver)
-            if not page_source:
-                logger.warning(f"Failed to get page_source for proxy {proxy_key}")
-                return False, {}
             
-            page_source_lower = page_source.lower()
-            max_wait = 30
-            wait_time = 0
-            
-            while ("cloudflare" in page_source_lower or "checking your browser" in page_source_lower or 
-                   "just a moment" in page_source_lower) and wait_time < max_wait:
-                logger.info(f"Cloudflare check... waiting {wait_time}/{max_wait} sec")
-                time.sleep(3)
+            for browser_name in attempt_order:
+                driver = None
                 try:
-                    driver.refresh()
-                    time.sleep(2)
+                    logger.debug(
+                        f"Checking proxy {proxy_key} on trast-zapchast.ru via {browser_name.upper()} "
+                        f"(timeout: {timeout}s)..."
+                    )
+                    driver = create_driver(proxy, prefer_chrome=(browser_name == "chrome"))
+                    if not driver:
+                        logger.debug(f"Failed to create {browser_name} driver for {proxy_key}")
+                        continue
+                    
+                    driver.set_page_load_timeout(timeout)
+                    logger.debug(f"Loading page via proxy {proxy_key} ({browser_name.upper()})...")
+                    driver.get(TARGET_URL)
+                    time.sleep(5)
+                    
                     page_source = safe_get_page_source(driver)
                     if not page_source:
-                        logger.warning(f"Tab crash during Cloudflare wait for proxy {proxy_key}")
-                        return False, {}
+                        logger.warning(f"Failed to get page_source for proxy {proxy_key} ({browser_name})")
+                        last_error = RuntimeError("empty_page_source")
+                        continue
+                    
                     page_source_lower = page_source.lower()
-                except Exception as refresh_error:
-                    logger.warning(f"Error refreshing page for proxy {proxy_key}: {refresh_error}")
-                    return False, {}
-                wait_time += 5
-            
-            if wait_time >= max_wait:
-                logger.warning(f"Cloudflare check failed for proxy {proxy_key}")
-                # Сохраняем HTML для отладки
-                self._save_debug_html(proxy_key, page_source, "cloudflare_timeout")
-                debug_html_saved = True
-                return False, {}
-            
-            # Пробуем получить количество страниц - это ОСНОВНОЙ критерий работоспособности прокси
-            try:
-                logger.debug(f"Getting page count via proxy {proxy_key}...")
-                total_pages = get_pages_count_with_driver(driver)
-                if total_pages and total_pages > 0:
-                    logger.info(f"[{proxy_key}] PROXY WORKS! Successfully got page count: {total_pages} pages")
-                    logger.info(f"[{proxy_key}] Ready to start parsing with this proxy!")
-                    return True, {'total_pages': total_pages}
-                else:
-                    logger.warning(f"[{proxy_key}] Failed to get page count (returned {total_pages})")
-                    # Сохраняем HTML для отладки
+                    max_wait = 30
+                    wait_time = 0
+                    
+                    while ("cloudflare" in page_source_lower or "checking your browser" in page_source_lower or 
+                           "just a moment" in page_source_lower) and wait_time < max_wait:
+                        logger.info(f"Cloudflare check ({browser_name})... waiting {wait_time}/{max_wait} sec")
+                        time.sleep(3)
+                        try:
+                            driver.refresh()
+                            time.sleep(2)
+                            page_source = safe_get_page_source(driver)
+                            if not page_source:
+                                logger.warning(f"Tab crash during Cloudflare wait for proxy {proxy_key}")
+                                last_error = RuntimeError("tab_crash_during_cloudflare")
+                                break
+                            page_source_lower = page_source.lower()
+                        except Exception as refresh_error:
+                            logger.warning(f"Error refreshing page for proxy {proxy_key}: {refresh_error}")
+                            last_error = refresh_error
+                            break
+                        wait_time += 5
+                    
+                    if wait_time >= max_wait:
+                        logger.warning(f"Cloudflare check failed for proxy {proxy_key} ({browser_name})")
+                        self._save_debug_html(proxy_key, page_source, f"{browser_name}_cloudflare_timeout")
+                        debug_html_saved = True
+                        return False, {}
+                    
+                    if last_error:
+                        continue
+                    
+                    logger.debug(f"Getting page count via proxy {proxy_key} ({browser_name})...")
+                    total_pages = get_pages_count_with_driver(driver)
+                    if total_pages and total_pages > 0:
+                        logger.info(
+                            f"[{proxy_key}] PROXY WORKS via {browser_name.upper()}! "
+                            f"Page count: {total_pages}"
+                        )
+                        return True, {'total_pages': total_pages, 'browser': browser_name}
+                    
+                    logger.warning(
+                        f"[{proxy_key}] Failed to get page count via {browser_name} (returned {total_pages})"
+                    )
                     if not debug_html_saved:
                         page_source = safe_get_page_source(driver)
                         if page_source:
-                            self._save_debug_html(proxy_key, page_source, "no_page_count")
+                            self._save_debug_html(proxy_key, page_source, f"{browser_name}_no_page_count")
+                            debug_html_saved = True
                     return False, {}
-            except PaginationNotDetectedError as e:
-                # Страница заблокирована - прокси не работает
-                logger.warning(f"Proxy {proxy_key} blocked on site: {e}")
-                # Сохраняем HTML для отладки
-                if not debug_html_saved:
-                    page_source = safe_get_page_source(driver)
-                    if page_source:
-                        self._save_debug_html(proxy_key, page_source, f"blocked_{str(e)[:50]}")
-                return False, {}
-            except Exception as e:
-                logger.warning(f"Error getting page count via proxy {proxy_key}: {e}")
-                # Сохраняем HTML для отладки
-                if not debug_html_saved:
-                    page_source = safe_get_page_source(driver)
-                    if page_source:
-                        self._save_debug_html(proxy_key, page_source, f"error_{type(e).__name__}")
-                return False, {}
+                
+                except PaginationNotDetectedError as e:
+                    logger.warning(f"Proxy {proxy_key} blocked on site via {browser_name}: {e}")
+                    if not debug_html_saved:
+                        page_source = safe_get_page_source(driver)
+                        if page_source:
+                            self._save_debug_html(
+                                proxy_key, page_source, f"{browser_name}_blocked_{str(e)[:40]}"
+                            )
+                            debug_html_saved = True
+                    return False, {}
+                except Exception as e:
+                    last_error = e
+                    if browser_name == "chrome" and is_proxy_connection_error(e) and not FORCE_FIREFOX:
+                        logger.warning(
+                            f"[{proxy_key}] Chrome proxy connection failed: {e}. Retrying with Firefox..."
+                        )
+                        time.sleep(BROWSER_RETRY_DELAY)
+                        continue
+                    
+                    logger.warning(f"Error checking proxy {proxy_key} via {browser_name}: {e}")
+                    if driver and not debug_html_saved:
+                        page_source = safe_get_page_source(driver)
+                        if page_source:
+                            self._save_debug_html(
+                                proxy_key, page_source, f"{browser_name}_exception_{type(e).__name__}"
+                            )
+                            debug_html_saved = True
+                    return False, {}
+                finally:
+                    if driver:
+                        try:
+                            driver.quit()
+                        except:
+                            pass
             
+            if last_error:
+                logger.debug(f"Last error for proxy {proxy_key}: {last_error}")
+            return False, {}
+        
         except Exception as e:
             logger.debug(f"Error checking proxy {proxy_key} on trast: {e}")
-            # Сохраняем HTML для отладки если возможно
-            if driver and not debug_html_saved:
-                try:
-                    from utils import safe_get_page_source
-                    page_source = safe_get_page_source(driver)
-                    if page_source:
-                        self._save_debug_html(proxy_key, page_source, f"exception_{type(e).__name__}")
-                except:
-                    pass
             return False, {}
-        finally:
-            if driver:
-                try:
-                    driver.quit()
-                except:
-                    pass
     
     def _save_debug_html(self, proxy_key: str, page_source: str, reason: str):
         """Сохраняет HTML страницы для отладки при неудачных проверках прокси"""

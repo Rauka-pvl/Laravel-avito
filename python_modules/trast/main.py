@@ -25,14 +25,29 @@ except ValueError:
     pass  # Обработчик уже удален или не существует
 
 from config import (
-    TARGET_URL, MAX_EMPTY_PAGES, MIN_WORKING_PROXIES, MAX_PROXIES_TO_CHECK,
-    PREFERRED_COUNTRIES, TEMP_CSV_FILE, OUTPUT_FILE, CSV_FILE,
-    MIN_DELAY_BETWEEN_PAGES, MAX_DELAY_BETWEEN_PAGES,
-    MIN_DELAY_AFTER_LOAD, MAX_DELAY_AFTER_LOAD, LOG_DIR, PARSING_THREADS,
-    PROXY_SEARCH_TIMEOUT, PROXY_SEARCH_PROGRESS_LOG_INTERVAL,
-    PROXY_LIST_WAIT_DELAY, PROXY_SEARCH_INITIAL_TIMEOUT,
-    PAGE_STEP_FOR_THREADS, CSV_BUFFER_SAVE_SIZE, CSV_BUFFER_FULL_SIZE,
-    ALLOWED_PROXY_PROTOCOLS
+    TARGET_URL,
+    MAX_EMPTY_PAGES,
+    MIN_WORKING_PROXIES,
+    MAX_PROXIES_TO_CHECK,
+    PREFERRED_COUNTRIES,
+    TEMP_CSV_FILE,
+    OUTPUT_FILE,
+    CSV_FILE,
+    MIN_DELAY_BETWEEN_PAGES,
+    MAX_DELAY_BETWEEN_PAGES,
+    MIN_DELAY_AFTER_LOAD,
+    MAX_DELAY_AFTER_LOAD,
+    LOG_DIR,
+    PARSING_THREADS,
+    PROXY_SEARCH_TIMEOUT,
+    PROXY_SEARCH_PROGRESS_LOG_INTERVAL,
+    PROXY_LIST_WAIT_DELAY,
+    PROXY_SEARCH_INITIAL_TIMEOUT,
+    PAGE_STEP_FOR_THREADS,
+    CSV_BUFFER_SAVE_SIZE,
+    CSV_BUFFER_FULL_SIZE,
+    ALLOWED_PROXY_PROTOCOLS,
+    FORCE_FIREFOX,
 )
 
 # Добавляем обработчики логирования после импорта config
@@ -1989,6 +2004,8 @@ def main():
     logger.info("=== TRAST PARSER STARTED (SINGLE-THREADED) ===")
     logger.info(f"Target URL: {TARGET_URL}")
     logger.info(f"Start time: {datetime.now()}")
+    browser_mode = "Firefox-only" if FORCE_FIREFOX else "Chrome+Firefox fallback"
+    logger.info(f"Browser mode: {browser_mode}")
     logger.info("=" * 80)
     
     # Уведомление о старте
@@ -2073,12 +2090,15 @@ def main():
                 current_proxy.update(trast_info)
                 total_pages = trast_info['total_pages']
                 proxy_manager.record_successful_proxy(current_proxy)
+                browser_used = trast_info.get('browser')
                 
                 elapsed_search = int(time.time() - search_start_time)
                 logger.info(f"[{main_thread_name}] {'='*60}")
                 logger.info(f"[{main_thread_name}] WORKING PROXY FOUND via {source}!")
                 logger.info(f"[{main_thread_name}] Proxy: {proxy_key} ({proxy.get('protocol', 'http').upper()})")
                 logger.info(f"[{main_thread_name}] Total pages: {total_pages}")
+                if browser_used:
+                    logger.info(f"[{main_thread_name}] Driver: {browser_used.upper()}")
                 logger.info(f"[{main_thread_name}] Search time: {elapsed_search}s")
                 logger.info(f"[{main_thread_name}] {'='*60}")
                 logger.info(f"[{main_thread_name}] STARTING PARSING NOW with proxy {proxy_key}...")

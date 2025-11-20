@@ -58,6 +58,14 @@ PARSING_THREADS = 1  # Количество потоков для многопо
 ALLOWED_PROXY_PROTOCOLS = ['http', 'https', 'socks4', 'socks5']  # Разрешенные типы прокси (все типы, используется только Firefox)
 PROXY_PAGE_FAILURE_COOLDOWN = 900  # 15 минут блокировки для конкретной страницы
 USE_UNDETECTED_CHROME = True  # Использовать undetected-chrome для HTTP/HTTPS прокси
+FORCE_FIREFOX = os.getenv("TRAST_FORCE_FIREFOX", "1").lower() in ("1", "true", "yes", "on")  # Принудительно использовать Firefox (по умолчанию на сервере)
+
+# Настройки мягкой прогрузки первой страницы
+FIRST_PAGE_SCROLL_STEPS = 3
+FIRST_PAGE_SCROLL_PAUSE = 1.2
+FIRST_PAGE_FINAL_WAIT = 5
+FIRST_PAGE_RELOAD_DELAY = 2
+BROWSER_RETRY_DELAY = 2.5
 
 # Фильтр по странам (приоритетные для российского сайта)
 PREFERRED_COUNTRIES = [

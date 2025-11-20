@@ -57,7 +57,13 @@ from config import (
     CLOUDFLARE_REFRESH_DELAY,
     CLOUDFLARE_REFRESH_WAIT,
     CLOUDFLARE_CHECK_INTERVAL,
-    USE_UNDETECTED_CHROME
+    USE_UNDETECTED_CHROME,
+    FORCE_FIREFOX,
+    FIRST_PAGE_SCROLL_STEPS,
+    FIRST_PAGE_SCROLL_PAUSE,
+    FIRST_PAGE_FINAL_WAIT,
+    FIRST_PAGE_RELOAD_DELAY,
+    BROWSER_RETRY_DELAY,
 )
 
 
@@ -96,6 +102,57 @@ def safe_get_page_source(driver: webdriver.Remote) -> Optional[str]:
         else:
             logger.warning(f"Error getting page_source: {e}")
         return None
+
+
+def warm_up_first_page(driver: webdriver.Remote, allow_reload: bool = True) -> bool:
+    """
+    Выполняет мягкую прогрузку первой страницы каталога с несколькими скроллами.
+    
+    Returns:
+        bool: True если document.body появился и содержит данные, False иначе
+    """
+    try:
+        driver.execute_script("window.scrollTo(0, 0);")
+    except Exception as e:
+        logger.debug(f"Failed to reset scroll before warm-up: {e}")
+    
+    steps = max(1, FIRST_PAGE_SCROLL_STEPS)
+    logger.debug(f"Warming up catalog page ({steps} scroll steps)")
+    
+    for step in range(steps):
+        fraction = (step + 1) / steps
+        try:
+            driver.execute_script(
+                "window.scrollTo(0, Math.max(document.body.scrollHeight * arguments[0], 300));",
+                fraction
+            )
+        except Exception as scroll_error:
+            logger.debug(f"Scroll step {step + 1}/{steps} failed: {scroll_error}")
+            break
+        time.sleep(FIRST_PAGE_SCROLL_PAUSE)
+    
+    time.sleep(FIRST_PAGE_FINAL_WAIT)
+    
+    try:
+        has_body = driver.execute_script(
+            "return !!document.body && document.body.innerText.trim().length > 0;"
+        )
+    except Exception as body_error:
+        logger.debug(f"Failed to check document.body during warm-up: {body_error}")
+        has_body = False
+    
+    if not has_body and allow_reload:
+        logger.warning("document.body is empty after warm-up, reloading page once...")
+        time.sleep(FIRST_PAGE_RELOAD_DELAY)
+        try:
+            driver.refresh()
+            time.sleep(FIRST_PAGE_RELOAD_DELAY)
+            return warm_up_first_page(driver, allow_reload=False)
+        except Exception as reload_error:
+            logger.warning(f"Failed to reload page during warm-up: {reload_error}")
+            return False
+    
+    return bool(has_body)
 
 
 def wait_for_cloudflare(
@@ -482,16 +539,26 @@ def get_products_from_page_soup(soup: BeautifulSoup) -> Tuple[List[Dict], int, i
     return results, len(results), total_products
 
 
-def create_driver(proxy: Optional[Dict] = None) -> Optional[webdriver.Remote]:
+def create_driver(proxy: Optional[Dict] = None, prefer_chrome: bool = True) -> Optional[webdriver.Remote]:
     """
     Создает WebDriver с учетом типа прокси.
     
-    - Для HTTP/HTTPS прокси пытаемся использовать undetected-chrome (если включено и доступно).
+    Args:
+        proxy: словарь с параметрами прокси
+        prefer_chrome: если True, сначала пробуем undetected-chromedriver (при разрешенных условиях)
+    
+    - При активном FORCE_FIREFOX используем только Firefox.
+    - Для HTTP/HTTPS прокси при разрешенном Chrome пробуем undetected-chrome, иначе Firefox.
     - Для SOCKS-прокси (или при ошибке Chrome) автоматически откатываемся на Firefox.
     """
     protocol = (proxy.get('protocol') if proxy else 'http') or 'http'
     protocol = protocol.lower()
-    prefer_chrome = USE_UNDETECTED_CHROME and protocol in ('http', 'https')
+    prefer_chrome = (
+        prefer_chrome
+        and not FORCE_FIREFOX
+        and USE_UNDETECTED_CHROME
+        and protocol in ('http', 'https')
+    )
     
     if prefer_chrome:
         try:
@@ -500,6 +567,13 @@ def create_driver(proxy: Optional[Dict] = None) -> Optional[webdriver.Remote]:
             return driver
         except Exception as chrome_error:
             logger.warning(f"Failed to initialize undetected Chrome: {chrome_error}. Falling back to Firefox.")
+    else:
+        if FORCE_FIREFOX:
+            logger.debug("FORCE_FIREFOX enabled: skipping Chrome and using Firefox directly")
+        elif protocol not in ('http', 'https'):
+            logger.debug(f"Protocol {protocol.upper()} requires Firefox (SOCKS support)")
+        elif not USE_UNDETECTED_CHROME:
+            logger.debug("undetected-chromedriver disabled or unavailable, using Firefox")
     
     logger.debug("Using Firefox driver (supports all proxy types including SOCKS)")
     return _create_firefox_driver(proxy)
@@ -737,16 +811,8 @@ def get_pages_count_with_driver(driver: webdriver.Remote, url: str = "https://tr
                 return None
             wait_time += 5
         
-        # Скроллим для активации динамического контента (как в старой версии)
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight/3);")
-        time.sleep(random.uniform(1, 2))
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
-        time.sleep(random.uniform(1, 2))
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(random.uniform(2, 3))
-        
-        # Дополнительное ожидание для полной загрузки динамического контента
-        time.sleep(8)  # Увеличено с 5 до 8 секунд
+        if not warm_up_first_page(driver):
+            logger.warning("Warm-up sequence did not detect populated document.body (continuing anyway)")
         
         # Метод 1: Ищем через Selenium WebDriverWait (самый надежный для динамического контента)
         total_pages = None
