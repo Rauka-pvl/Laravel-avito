@@ -207,58 +207,10 @@ def parse_page_with_cloudscraper(
     proxy: Optional[Dict] = None
 ) -> Tuple[Optional[BeautifulSoup], bool]:
     """
-    Парсит страницу через cloudscraper с cookies (быстро)
-    
-    Returns:
-        (soup, success) - BeautifulSoup объект и флаг успеха
+    Заглушка: cloudscraper отключен (используем только Selenium).
     """
-    try:
-        scraper = cloudscraper.create_scraper(
-            browser={
-                'browser': 'chrome',
-                'platform': 'windows',
-                'desktop': True
-            },
-            delay=15
-        )
-        
-        # Устанавливаем cookies
-        scraper.cookies.update(cookies)
-        
-        # Настраиваем прокси если есть
-        proxies = None
-        if proxy:
-            protocol = proxy.get('protocol', 'http').lower()
-            ip = proxy['ip']
-            port = proxy['port']
-            if protocol in ['http', 'https']:
-                proxy_url = f"{protocol}://{ip}:{port}"
-                proxies = {'http': proxy_url, 'https': proxy_url}
-            elif protocol in ['socks4', 'socks5']:
-                proxy_url = f"socks5h://{ip}:{port}" if protocol == 'socks5' else f"socks4://{ip}:{port}"
-                proxies = {'http': proxy_url, 'https': proxy_url}
-        
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Referer': 'https://trast-zapchast.ru/shop/',
-            'Origin': 'https://trast-zapchast.ru'
-        }
-        
-        response = scraper.get(page_url, headers=headers, proxies=proxies, timeout=30)
-        
-        if response.status_code in [200, 301, 302, 303, 307, 308]:
-            # Проверяем что это не Cloudflare challenge
-            if 'cloudflare' in response.text.lower() or 'checking your browser' in response.text.lower():
-                return None, False
-            
-            soup = BeautifulSoup(response.text, 'html.parser')
-            return soup, True
-        
-        return None, False
-        
-    except Exception as e:
-        logger.debug(f"Error parsing with cloudscraper: {e}")
-        return None, False
+    logger.debug("Cloudscraper disabled: returning empty result")
+    return None, False
 
 
 def parse_page_with_selenium(
@@ -1172,55 +1124,48 @@ def parse_all_pages_simple(
                 except Exception as save_error:
                     logger.warning(f"Error during periodic buffer save: {save_error}")
             
-            # Пробуем через cloudscraper (быстро)
+            logger.info(f"Using Selenium for page {current_page}...")
             soup = None
             success = False
             
-            if cookies:
-                soup, success = parse_page_with_cloudscraper(page_url, cookies, current_proxy)
+            if not driver:
+                driver = create_driver(current_proxy)
             
-            # Fallback на Selenium
-            if not success or not soup:
-                logger.info(f"Using Selenium for page {current_page}...")
-                if not driver:
-                    protocol = current_proxy.get('protocol', 'http').lower()
-                    driver = create_driver(current_proxy)
-                
-                if driver:
-                    try:
-                        # Для первых страниц ждем полной загрузки контента (как при валидации)
-                        wait_for_content = (current_page <= 3)  # Первые 3 страницы
-                        soup, success = parse_page_with_selenium(driver, page_url, wait_for_content=wait_for_content)
-                        if success:
-                            # Обновляем cookies
-                            try:
-                                cookies = get_cookies_from_selenium(driver)
-                            except Exception as cookie_error:
-                                if is_tab_crashed_error(cookie_error):
-                                    logger.error(f"[TAB CRASH] Tab crash while updating cookies: {cookie_error}")
-                                    try:
-                                        driver.quit()
-                                    except:
-                                        pass
-                                    driver = None
-                                    success = False
-                                else:
-                                    logger.warning(f"Error updating cookies: {cookie_error}")
-                    except Exception as selenium_error:
-                        if is_tab_crashed_error(selenium_error):
-                            logger.error(f"[TAB CRASH] Tab crash while parsing with Selenium, recreating driver...")
-                            try:
-                                driver.quit()
-                            except:
-                                pass
-                            driver = None
-                            success = False
-                        elif is_proxy_error(selenium_error):
-                            logger.warning(f"[PROXY ERROR] Proxy error while parsing: {selenium_error}")
-                            success = False
-                        else:
-                            logger.warning(f"Error parsing with Selenium: {selenium_error}")
-                            success = False
+            if driver:
+                try:
+                    wait_for_content = (current_page <= 3)
+                    soup, success = parse_page_with_selenium(
+                        driver, page_url, wait_for_content=wait_for_content
+                    )
+                    if success:
+                        try:
+                            cookies = get_cookies_from_selenium(driver)
+                        except Exception as cookie_error:
+                            if is_tab_crashed_error(cookie_error):
+                                logger.error(f"[TAB CRASH] Tab crash while updating cookies: {cookie_error}")
+                                try:
+                                    driver.quit()
+                                except:
+                                    pass
+                                driver = None
+                                success = False
+                            else:
+                                logger.warning(f"Error updating cookies: {cookie_error}")
+                except Exception as selenium_error:
+                    if is_tab_crashed_error(selenium_error):
+                        logger.error(f"[TAB CRASH] Tab crash while parsing with Selenium, recreating driver...")
+                        try:
+                            driver.quit()
+                        except:
+                            pass
+                        driver = None
+                        success = False
+                    elif is_proxy_error(selenium_error):
+                        logger.warning(f"[PROXY ERROR] Proxy error while parsing: {selenium_error}")
+                        success = False
+                    else:
+                        logger.warning(f"Error parsing with Selenium: {selenium_error}")
+                        success = False
             
             if not success or not soup:
                 logger.warning(f"Failed to load page {current_page}, trying new proxy...")
