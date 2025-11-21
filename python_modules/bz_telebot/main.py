@@ -379,14 +379,35 @@ def periodic_schedule_runner(interval_seconds=60):
                 script_name = task["script_name"]
                 script_path = SCRIPTS.get(script_name)
                 if script_path and os.path.exists(script_path):
-                    logging.info(f"[SCHEDULE] Запуск по cron: {script_name} ({task['cron_expr']})")
-                    set_script_start(script_name)
-                    subprocess.Popen(
-                        ["nohup", "python3", script_path],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        preexec_fn=os.setpgrp
-                    )
+                    # Проверяем, запущен ли уже экземпляр скрипта через проверку реальных процессов
+                    running_processes = collect_running_script_processes()
+                    is_running = script_name in running_processes and len(running_processes[script_name]) > 0
+                    
+                    if is_running:
+                        # Скрипт уже работает, пропускаем плановый запуск
+                        logging.info(f"[SCHEDULE] Пропущен плановый запуск {script_name} - скрипт уже работает")
+                        notification_text = f"⏭️ Плановый запуск скрипта <b>{script_name}</b> пропущен\n" \
+                                          f"Причина: скрипт уже работает (статус: Работает)"
+                        
+                        # Отправляем уведомление всем администраторам
+                        for uid in ADMIN_IDS:
+                            uid = uid.strip()
+                            if not uid:
+                                continue
+                            try:
+                                await bot.send_message(uid, notification_text, parse_mode="HTML")
+                            except Exception as exc:
+                                logging.warning(f"Не удалось отправить уведомление {uid}: {exc}")
+                    else:
+                        # Скрипт не работает, запускаем по расписанию
+                        logging.info(f"[SCHEDULE] Запуск по cron: {script_name} ({task['cron_expr']})")
+                        set_script_start(script_name)
+                        subprocess.Popen(
+                            ["nohup", "python3", script_path],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            preexec_fn=os.setpgrp
+                        )
             await asyncio.sleep(interval_seconds)
     return _loop()
 

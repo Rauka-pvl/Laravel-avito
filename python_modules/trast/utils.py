@@ -89,13 +89,39 @@ def is_tab_crashed_error(error) -> bool:
 
 def safe_get_page_source(driver: webdriver.Remote) -> Optional[str]:
     """
-    Безопасно получает page_source с обработкой крашей вкладок
+    Безопасно получает page_source с обработкой крашей вкладок и правильной кодировкой UTF-8
     
     Returns:
         page_source или None при ошибке
     """
     try:
-        return driver.page_source
+        # Пробуем получить HTML через JavaScript для гарантии правильной кодировки
+        try:
+            # Получаем HTML через JavaScript - это гарантирует правильную кодировку
+            page_source = driver.execute_script("return document.documentElement.outerHTML;")
+            if not page_source:
+                # Fallback на стандартный метод
+                page_source = driver.page_source
+        except Exception:
+            # Если JavaScript не сработал, используем стандартный метод
+            page_source = driver.page_source
+        
+        # Убеждаемся, что page_source правильно декодирован как UTF-8
+        if isinstance(page_source, bytes):
+            page_source = page_source.decode('utf-8', errors='replace')
+        elif isinstance(page_source, str):
+            # Проверяем, нет ли признаков неправильной кодировки (например, "Ð'" вместо "В")
+            # Если находим такие символы, пробуем исправить
+            if 'Ð' in page_source or 'Ñ' in page_source:
+                try:
+                    # Пробуем перекодировать: если UTF-8 был неправильно прочитан как latin-1
+                    # то нужно: latin-1 -> bytes -> utf-8
+                    page_source = page_source.encode('latin-1', errors='ignore').decode('utf-8', errors='replace')
+                except (UnicodeEncodeError, UnicodeDecodeError):
+                    # Если не получается, оставляем как есть
+                    pass
+        
+        return page_source
     except Exception as e:
         if is_tab_crashed_error(e):
             logger.error(f"[TAB CRASH] Tab crash while getting page_source: {e}")
@@ -589,6 +615,12 @@ def _create_chrome_driver(proxy: Optional[Dict] = None) -> webdriver.Chrome:
         options.add_argument("--disable-gpu")
         options.add_argument("--window-size=1920,1080")
         
+        # Настройки кодировки для правильного отображения UTF-8
+        options.add_argument("--lang=ru-RU,ru")
+        options.add_experimental_option('prefs', {
+            'intl.accept_languages': 'ru-RU,ru,en-US,en'
+        })
+        
         # Игнорируем ошибки SSL-сертификата (для прокси с самоподписанными сертификатами)
         options.add_argument("--ignore-certificate-errors")
         options.add_argument("--ignore-ssl-errors")
@@ -652,6 +684,12 @@ def _create_chrome_driver(proxy: Optional[Dict] = None) -> webdriver.Chrome:
         options.add_argument("--window-size=1920,1080")
         options.add_argument("--disable-blink-features=AutomationControlled")
         
+        # Настройки кодировки для правильного отображения UTF-8
+        options.add_argument("--lang=ru-RU,ru")
+        prefs = {
+            'intl.accept_languages': 'ru-RU,ru,en-US,en'
+        }
+        
         # Игнорируем ошибки SSL-сертификата (для прокси с самоподписанными сертификатами)
         options.add_argument("--ignore-certificate-errors")
         options.add_argument("--ignore-ssl-errors")
@@ -661,6 +699,7 @@ def _create_chrome_driver(proxy: Optional[Dict] = None) -> webdriver.Chrome:
         
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option('useAutomationExtension', False)
+        options.add_experimental_option('prefs', prefs)
         
         selected_ua = random.choice(USER_AGENTS)
         options.add_argument(f"--user-agent={selected_ua}")
