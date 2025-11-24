@@ -465,7 +465,17 @@ def find_new_working_proxy(
             logger.debug(f"[{thread_name}] Error checking proxy {proxy_key} ({source_label}): {error_type}: {str(e)[:100]}")
         return None
     
-    # Сначала пробуем кэшированные рабочие прокси
+    # Сначала пробуем приоритетные прокси из proxies_data.json
+    priority_proxies = proxy_manager.priority_proxies.copy()
+    if priority_proxies:
+        logger.info(f"[{thread_name}] Trying {len(priority_proxies)} priority proxies first{context_suffix}...")
+        for proxy in priority_proxies:
+            result = attempt_proxy(proxy, "priority")
+            if result:
+                current_proxy, driver = result
+                return current_proxy, driver, proxies_checked, current_proxy_index
+    
+    # Затем пробуем кэшированные рабочие прокси
     if cached_proxies:
         cached_attempts = len(cached_proxies)
         for _ in range(cached_attempts):
@@ -2097,12 +2107,22 @@ def main():
             logger.debug(f"[{main_thread_name}] Error checking proxy {proxy_key} from {source}: {error_type}: {str(e)[:150]}")
         return False
     
-    cached_successful = proxy_manager.successful_proxies.copy()
-    if cached_successful:
-        logger.info(f"[{main_thread_name}] Trying {len(cached_successful)} cached successful proxies before full scan...")
-        for proxy in cached_successful:
-            if try_candidate_proxy(proxy, "cached"):
+    # Сначала пробуем приоритетные прокси из proxies_data.json
+    priority_proxies = proxy_manager.priority_proxies.copy()
+    if priority_proxies:
+        logger.info(f"[{main_thread_name}] Trying {len(priority_proxies)} priority proxies from proxies_data.json first...")
+        for proxy in priority_proxies:
+            if try_candidate_proxy(proxy, "priority"):
                 break
+    
+    # Затем пробуем кэшированные успешные прокси
+    if not current_proxy:
+        cached_successful = proxy_manager.successful_proxies.copy()
+        if cached_successful:
+            logger.info(f"[{main_thread_name}] Trying {len(cached_successful)} cached successful proxies before full scan...")
+            for proxy in cached_successful:
+                if try_candidate_proxy(proxy, "cached"):
+                    break
     
     if not current_proxy:
         while True:

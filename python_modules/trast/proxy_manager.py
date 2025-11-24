@@ -65,9 +65,15 @@ class ProxyManager:
         self.country_filter = [c.upper() for c in country_filter] if country_filter else PREFERRED_COUNTRIES
         self.failed_proxies = set()
         self.successful_proxies = []
+        self.priority_proxies = []  # Приоритетные прокси из proxies_credentials.json или proxies_data.json
         
         # Thread-safety: блокировка для доступа к критическим данным
         self.lock = threading.Lock()
+        
+        # Загружаем приоритетные прокси (сначала из proxies_credentials.json, затем из proxies_data.json)
+        self.priority_proxies = self.load_priority_proxies()
+        if self.priority_proxies:
+            logger.info(f"Loaded {len(self.priority_proxies)} priority proxies")
         
         # Загружаем успешные прокси при инициализации
         self.successful_proxies = self.load_successful_proxies()
@@ -75,6 +81,114 @@ class ProxyManager:
             logger.info(f"Loaded {len(self.successful_proxies)} successful proxies from cache")
         
         logger.info(f"ProxyManager initialized with country filter: {', '.join(self.country_filter[:10])}...")
+    
+    def load_priority_proxies(self) -> List[Dict]:
+        """
+        Загружает приоритетные прокси из proxies_credentials.json или proxies_data.json.
+        Сначала пробует proxies_credentials.json, затем proxies_data.json.
+        """
+        priority_proxies = []
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        # Список файлов для проверки (в порядке приоритета)
+        proxy_files = [
+            ('proxies_credentials.json', 'credentials'),
+            ('proxies_data.json', 'hardcoded_proxies.proxies')
+        ]
+        
+        for filename, data_path in proxy_files:
+            try:
+                file_path = os.path.join(base_dir, filename)
+                
+                if not os.path.exists(file_path):
+                    logger.debug(f"Priority proxies file not found: {file_path}, trying next...")
+                    continue
+                
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                
+                # Извлекаем прокси в зависимости от структуры файла
+                if data_path == 'credentials':
+                    # Формат proxies_credentials.json: data['credentials']
+                    proxy_list = data.get('credentials', [])
+                else:
+                    # Формат proxies_data.json: data['hardcoded_proxies']['proxies']
+                    parts = data_path.split('.')
+                    proxy_list = data
+                    for part in parts:
+                        proxy_list = proxy_list.get(part, [])
+                        if not proxy_list:
+                            break
+                
+                if not proxy_list:
+                    logger.debug(f"No proxies found in {filename}, trying next file...")
+                    continue
+                
+                # Парсим прокси
+                for proxy_data in proxy_list:
+                    try:
+                        host = proxy_data.get('host', '')
+                        port = str(proxy_data.get('port', ''))
+                        protocol_raw = proxy_data.get('protocol', 'HTTPS').upper()
+                        auth = proxy_data.get('authentication', {})
+                        
+                        if not host or not port:
+                            logger.debug(f"Skipping invalid proxy entry: missing host or port")
+                            continue
+                        
+                        # Преобразуем протокол: HTTPS -> https, PROXY -> http (или https для порта 443)
+                        if protocol_raw == 'HTTPS' or port == '443':
+                            protocol = 'https'
+                        else:
+                            protocol = 'http'
+                        
+                        proxy_dict = {
+                            'ip': host,
+                            'port': port,
+                            'protocol': protocol,
+                            'source': f'priority_{filename}',
+                            'country': ''  # Страна не указана в данных
+                        }
+                        
+                        # Добавляем аутентификацию, если есть
+                        if auth.get('required', False):
+                            login = auth.get('login', '')
+                            password = auth.get('password', '')
+                            if login and password:
+                                proxy_dict['login'] = login
+                                proxy_dict['password'] = password
+                                logger.debug(f"Loaded priority proxy with auth: {host}:{port} ({protocol})")
+                            else:
+                                logger.debug(f"Loaded priority proxy: {host}:{port} ({protocol})")
+                        else:
+                            logger.debug(f"Loaded priority proxy: {host}:{port} ({protocol})")
+                        
+                        priority_proxies.append(proxy_dict)
+                        
+                    except Exception as e:
+                        logger.warning(f"Error parsing priority proxy from {filename}: {e}")
+                        continue
+                
+                if priority_proxies:
+                    logger.info(f"Successfully loaded {len(priority_proxies)} priority proxies from {filename}")
+                    break  # Успешно загрузили из первого доступного файла
+                else:
+                    logger.debug(f"No valid proxies found in {filename}, trying next file...")
+                    
+            except FileNotFoundError:
+                logger.debug(f"{filename} not found, trying next file...")
+                continue
+            except json.JSONDecodeError as e:
+                logger.warning(f"Error parsing {filename}: {e}, trying next file...")
+                continue
+            except Exception as e:
+                logger.warning(f"Error loading priority proxies from {filename}: {e}, trying next file...")
+                continue
+        
+        if not priority_proxies:
+            logger.debug("No priority proxies loaded from any source file")
+        
+        return priority_proxies
     
     def load_successful_proxies(self) -> List[Dict]:
         """Загружает успешные прокси из файла"""

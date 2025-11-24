@@ -1,0 +1,260 @@
+{
+  "project_info": {
+    "name": "VPN для ChatGPT",
+    "version": "4.5",
+    "update_date": "15.10.2025",
+    "type": "Chrome Extension"
+  },
+  "hardcoded_proxies": {
+    "source_file": "js/conf.js",
+    "variable": "serverConfigs",
+    "count": 4,
+    "proxies": [
+      {
+        "id": 1,
+        "host": "nl-hub.freeruproxy.ink",
+        "port": "443",
+        "protocol": "HTTPS",
+        "authentication": {
+          "required": true,
+          "login": "openproxy",
+          "password": "2ad5c3cece9f19f6"
+        },
+        "status": "free",
+        "raw": "nl-hub.freeruproxy.ink:443:openproxy:2ad5c3cece9f19f6"
+      },
+      {
+        "id": 2,
+        "host": "srv10.undiscord.com",
+        "port": "443",
+        "protocol": "HTTPS",
+        "authentication": {
+          "required": true,
+          "login": "discord_0.0.2",
+          "password": "dkVDPxFyi5IWnGnHjvj2jY5V"
+        },
+        "status": "free",
+        "raw": "srv10.undiscord.com:443:discord_0.0.2:dkVDPxFyi5IWnGnHjvj2jY5V"
+      },
+      {
+        "id": 3,
+        "host": "62.133.62.12",
+        "port": "1081",
+        "protocol": "PROXY",
+        "authentication": {
+          "required": false,
+          "login": null,
+          "password": null
+        },
+        "status": "free",
+        "raw": "62.133.62.12:1081"
+      },
+      {
+        "id": 4,
+        "host": "178.130.47.129",
+        "port": "1082",
+        "protocol": "PROXY",
+        "authentication": {
+          "required": false,
+          "login": null,
+          "password": null
+        },
+        "status": "free",
+        "raw": "178.130.47.129:1082"
+      }
+    ]
+  },
+  "dynamic_proxies": {
+    "description": "Прокси загружаются динамически из внешних источников",
+    "storage_key": "servers",
+    "storage_location": "chrome.storage.local",
+    "sources": [
+      {
+        "type": "telegram",
+        "url": "https://t.me/liservers/15"
+      },
+      {
+        "type": "telegraph",
+        "url": "https://telegra.ph/Servers-10-16-15"
+      }
+    ],
+    "format": {
+      "encoding": "base64",
+      "structure": "host:port:login:pass|date|country|flags",
+      "fields": [
+        {
+          "index": 0,
+          "name": "proxy_info",
+          "format": "host:port:login:pass",
+          "description": "Основная информация о прокси"
+        },
+        {
+          "index": 1,
+          "name": "expiry_date",
+          "format": "YYYY-MM-DD",
+          "description": "Дата окончания действия"
+        },
+        {
+          "index": 2,
+          "name": "country_code",
+          "format": "ISO 3166-1 alpha-2",
+          "description": "Код страны прокси"
+        },
+        {
+          "index": 3,
+          "name": "flags",
+          "format": "string",
+          "description": "Дополнительные флаги (например: 'rmd' для случайного выбора)",
+          "optional": true
+        }
+      ]
+    },
+    "processing": {
+      "filter_banned_countries": true,
+      "banned_countries_key": "bancountries",
+      "random_selection": {
+        "enabled": true,
+        "flag": "rmd",
+        "description": "Прокси с флагом |rmd могут быть выбраны случайным образом"
+      },
+      "priority": "high",
+      "description": "Динамические прокси добавляются в начало списка serverConfigs"
+    }
+  },
+  "vip_proxies": {
+    "description": "Премиум прокси-серверы",
+    "storage_key": "vipserver",
+    "storage_location": "chrome.storage.local",
+    "format": "json",
+    "structure": {
+      "host": "string",
+      "port": "string",
+      "user": "string",
+      "pass": "string",
+      "date_end": "string (YYYY-MM-DD HH:mm:ss)",
+      "country": "string (optional, ISO 3166-1 alpha-2)"
+    },
+    "activation": {
+      "methods": [
+        {
+          "type": "payment",
+          "description": "Активация через оплату"
+        },
+        {
+          "type": "vip_code",
+          "format": "base64",
+          "structure": "host:port:user:pass|date_end|country",
+          "description": "Активация через VIP код"
+        }
+      ]
+    },
+    "features": {
+      "priority": "highest",
+      "expiry_check": true,
+      "auto_fallback": true,
+      "description": "При истечении срока автоматически переключается на обычный прокси"
+    }
+  },
+  "pac_script": {
+    "source_file": "js/conf.js",
+    "variable": "pacscript",
+    "domains": {
+      "openai": [
+        "openai.com",
+        "chatgpt.com",
+        "snc.apps.openai.com",
+        "oaistatic.com",
+        "oaiusercontent.com"
+      ],
+      "google": [
+        "apis.google.com",
+        "googleapis.com",
+        "googleusercontent.com",
+        "gstatic.com"
+      ],
+      "microsoft": [
+        "live.com",
+        "live.net",
+        "microsoft.com",
+        "onedrive.com",
+        "sharepoint.com",
+        "webpubsub.azure.com",
+        "blob.core.windows.net"
+      ],
+      "other": [
+        "stripe.com",
+        "cloudflare.com",
+        "facebook.net",
+        "mapbox.com",
+        "reddit.com",
+        "redditstatic.com",
+        "atlassian.com",
+        "datadoghq.com",
+        "statsigapi.net",
+        "featuregates.org",
+        "livekit.io",
+        "browser-intake-datadoghq.com",
+        "vimeo.com",
+        "youtube.com"
+      ]
+    },
+    "logic": {
+      "proxy_usage": "Если домен совпадает с одним из указанных - используется прокси",
+      "direct_connection": "Иначе - прямое соединение (DIRECT)",
+      "protocol_detection": "Для порта 443 используется HTTPS прокси, иначе PROXY"
+    },
+    "total_domains": 30
+  },
+  "api_configuration": {
+    "base_url": "https://api.hhos.ru",
+    "version": "2.0",
+    "type": "vpnchatgpt2",
+    "endpoints": {
+      "getvpn": "/api/v2.0/getvpn",
+      "setcode": "/api/v2.0/setcode",
+      "payments": "/payments"
+    },
+    "configurable": true,
+    "storage_key": "apiurl",
+    "description": "Базовый URL может быть переопределен через apiurl в storage"
+  },
+  "proxy_management": {
+    "functions": {
+      "setProxy": {
+        "file": "js/bg.js",
+        "description": "Установка прокси через chrome.proxy.settings.set()"
+      },
+      "getProxyData": {
+        "file": "js/bg.js",
+        "description": "Получение данных прокси из storage или hardcoded списка"
+      },
+      "authHandler": {
+        "file": "js/bg.js",
+        "description": "Обработка аутентификации прокси",
+        "max_attempts": 10
+      }
+    },
+    "error_handling": {
+      "auto_remove_on_error": true,
+      "error_listener": "chrome.proxy.onProxyError",
+      "fatal_errors": [
+        "net::ERR_TUNNEL_CONNECTION_FAILED"
+      ]
+    }
+  },
+  "countries": {
+    "supported": 53,
+    "banned": [],
+    "source_file": "js/conf.js",
+    "variable": "countrys",
+    "note": "Список всех поддерживаемых стран находится в js/conf.js (строки 91-153)"
+  },
+  "statistics": {
+    "hardcoded_count": 4,
+    "dynamic_count": "variable",
+    "vip_count": "0-1",
+    "total_pac_domains": 30,
+    "total_supported_countries": 53
+  }
+}
+

@@ -636,11 +636,17 @@ def _create_chrome_driver(proxy: Optional[Dict] = None) -> webdriver.Chrome:
             protocol = proxy.get('protocol', 'http').lower()
             ip = proxy['ip']
             port = proxy['port']
+            login = proxy.get('login', '')
+            password = proxy.get('password', '')
             
             if protocol in ['http', 'https']:
-                proxy_arg = f"{protocol}://{ip}:{port}"
+                # Если есть логин и пароль, добавляем их в URL
+                if login and password:
+                    proxy_arg = f"{protocol}://{login}:{password}@{ip}:{port}"
+                else:
+                    proxy_arg = f"{protocol}://{ip}:{port}"
                 options.add_argument(f"--proxy-server={proxy_arg}")
-                logger.debug(f"Chrome proxy configured: {proxy_arg}")
+                logger.debug(f"Chrome proxy configured: {protocol}://{'***:***@' if login else ''}{ip}:{port}")
             else:
                 raise ValueError(f"Chrome does not support {protocol.upper()} proxy. Use Firefox.")
         
@@ -708,9 +714,15 @@ def _create_chrome_driver(proxy: Optional[Dict] = None) -> webdriver.Chrome:
             protocol = proxy.get('protocol', 'http').lower()
             ip = proxy['ip']
             port = proxy['port']
+            login = proxy.get('login', '')
+            password = proxy.get('password', '')
             
             if protocol in ['http', 'https']:
-                proxy_arg = f"{protocol}://{ip}:{port}"
+                # Если есть логин и пароль, добавляем их в URL
+                if login and password:
+                    proxy_arg = f"{protocol}://{login}:{password}@{ip}:{port}"
+                else:
+                    proxy_arg = f"{protocol}://{ip}:{port}"
                 options.add_argument(f"--proxy-server={proxy_arg}")
             else:
                 raise ValueError(f"Chrome does not support {protocol.upper()} proxy. Use Firefox.")
@@ -757,6 +769,8 @@ def _create_firefox_driver(proxy: Optional[Dict] = None) -> webdriver.Firefox:
         protocol = proxy.get('protocol', 'http').lower()
         ip = proxy['ip']
         port = proxy['port']
+        login = proxy.get('login', '')
+        password = proxy.get('password', '')
         
         if protocol in ['http', 'https']:
             options.set_preference("network.proxy.type", 1)
@@ -764,12 +778,24 @@ def _create_firefox_driver(proxy: Optional[Dict] = None) -> webdriver.Firefox:
             options.set_preference("network.proxy.http_port", int(port))
             options.set_preference("network.proxy.ssl", ip)
             options.set_preference("network.proxy.ssl_port", int(port))
+            
+            # Для Firefox с аутентификацией прокси нужно использовать расширение или профиль
+            # Пока сохраняем логин/пароль в настройках, но Firefox не поддерживает это напрямую
+            # Можно будет добавить расширение для аутентификации позже
+            if login and password:
+                logger.debug(f"Firefox proxy with auth: {ip}:{port} (login: {login})")
+                # Примечание: Firefox требует расширение для аутентификации прокси
+                # Пока просто логируем, что прокси требует аутентификацию
         elif protocol in ['socks4', 'socks5']:
             options.set_preference("network.proxy.type", 1)
             options.set_preference("network.proxy.socks", ip)
             options.set_preference("network.proxy.socks_port", int(port))
             if protocol == 'socks5':
                 options.set_preference("network.proxy.socks_version", 5)
+                # SOCKS5 поддерживает аутентификацию
+                if login and password:
+                    logger.debug(f"Firefox SOCKS5 proxy with auth: {ip}:{port} (login: {login})")
+                    # SOCKS5 аутентификация в Firefox требует расширения
             else:
                 options.set_preference("network.proxy.socks_version", 4)
             options.set_preference("network.proxy.socks_remote_dns", True)
