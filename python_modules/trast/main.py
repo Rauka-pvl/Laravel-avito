@@ -35,6 +35,11 @@ from config import (
     CSV_FILE,
     MIN_DELAY_BETWEEN_PAGES,
     MAX_DELAY_BETWEEN_PAGES,
+    HUMAN_DELAY_MIN,
+    HUMAN_DELAY_MAX,
+    HUMAN_LONG_PAUSE_EVERY,
+    HUMAN_LONG_PAUSE_MIN,
+    HUMAN_LONG_PAUSE_MAX,
     MIN_DELAY_AFTER_LOAD,
     MAX_DELAY_AFTER_LOAD,
     LOG_DIR,
@@ -199,6 +204,36 @@ def get_cookies_from_selenium(driver: webdriver.Remote) -> Dict[str, str]:
     for cookie in driver.get_cookies():
         cookies[cookie['name']] = cookie['value']
     return cookies
+
+
+def humanized_page_sleep(
+    next_page_number: int,
+    thread_name: str = "MainThread",
+    reason: str = "between pages"
+):
+    """
+    Добавляет паузы между страницами, имитируя поведение живого пользователя.
+    """
+    delay = random.uniform(MIN_DELAY_BETWEEN_PAGES, MAX_DELAY_BETWEEN_PAGES)
+    delay += random.uniform(HUMAN_DELAY_MIN, HUMAN_DELAY_MAX)
+
+    if (
+        HUMAN_LONG_PAUSE_EVERY
+        and next_page_number > 0
+        and next_page_number % HUMAN_LONG_PAUSE_EVERY == 0
+    ):
+        extra_pause = random.uniform(HUMAN_LONG_PAUSE_MIN, HUMAN_LONG_PAUSE_MAX)
+        delay += extra_pause
+        logger.debug(
+            f"[{thread_name}] Extra long pause {extra_pause:.2f}s "
+            f"after milestone page {next_page_number - 1}"
+        )
+
+    logger.debug(
+        f"[{thread_name}] Sleeping {delay:.2f}s {reason}. "
+        f"Next target page: {next_page_number}"
+    )
+    time.sleep(delay)
 
 
 def parse_page_with_cloudscraper(
@@ -919,7 +954,7 @@ def worker_thread(
             current_page += page_step
             
             # Задержка между страницами
-            time.sleep(random.uniform(MIN_DELAY_BETWEEN_PAGES, MAX_DELAY_BETWEEN_PAGES))
+            humanized_page_sleep(current_page, thread_name=thread_name)
             
         except Exception as e:
             error_msg = str(e).lower()
@@ -1378,7 +1413,7 @@ def parse_all_pages_simple(
             current_page += 1
             
             # Задержка между страницами
-            time.sleep(random.uniform(MIN_DELAY_BETWEEN_PAGES, MAX_DELAY_BETWEEN_PAGES))
+            humanized_page_sleep(current_page, thread_name=thread_name)
             
         except Exception as e:
             if is_tab_crashed_error(e):
@@ -1840,7 +1875,7 @@ def parse_all_pages(
             current_page += 1
             
             # Задержка между страницами
-            time.sleep(random.uniform(MIN_DELAY_BETWEEN_PAGES, MAX_DELAY_BETWEEN_PAGES))
+            humanized_page_sleep(current_page, thread_name=thread_name)
             
         except Exception as e:
             error_msg = str(e).lower()
@@ -1876,7 +1911,7 @@ def parse_all_pages(
                                 total_products += len(products)
                                 pages_checked += 1
                                 current_page += 1
-                                time.sleep(random.uniform(MIN_DELAY_BETWEEN_PAGES, MAX_DELAY_BETWEEN_PAGES))
+                                humanized_page_sleep(current_page, thread_name=thread_name)
                                 continue
                     except Exception as retry_error:
                         if is_tab_crashed_error(retry_error):

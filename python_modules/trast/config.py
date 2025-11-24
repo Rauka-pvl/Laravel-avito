@@ -148,8 +148,13 @@ USER_AGENTS = [
 ]
 
 # Настройки задержек (в секундах)
-MIN_DELAY_BETWEEN_PAGES = 2
-MAX_DELAY_BETWEEN_PAGES = 4
+MIN_DELAY_BETWEEN_PAGES = 3
+MAX_DELAY_BETWEEN_PAGES = 6
+HUMAN_DELAY_MIN = 6   # Дополнительная пауза перед следующей страницей
+HUMAN_DELAY_MAX = 12
+HUMAN_LONG_PAUSE_EVERY = 10  # Каждая N-я страница вызывает дополнительный "перерыв"
+HUMAN_LONG_PAUSE_MIN = 15
+HUMAN_LONG_PAUSE_MAX = 30
 MIN_DELAY_AFTER_LOAD = 3
 MAX_DELAY_AFTER_LOAD = 6
 
