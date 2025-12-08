@@ -54,6 +54,7 @@ from config import (
     ALLOWED_PROXY_PROTOCOLS,
     FORCE_FIREFOX,
     PROGRESS_NOTIFICATION_INTERVAL,
+    PROXY_SEARCH_NOTIFICATION_INTERVAL,
 )
 
 # Добавляем обработчики логирования после импорта config
@@ -2153,6 +2154,12 @@ def main():
             elapsed = time.time() - search_start_time
             if elapsed >= max_search_time:
                 logger.warning(f"[{main_thread_name}] Proxy search timeout exceeded ({max_search_time}s), but continuing search...")
+                elapsed_minutes = int(elapsed // 60)
+                elapsed_seconds = int(elapsed % 60)
+                TelegramNotifier.notify(
+                    f"[Trast] Proxy search timeout exceeded ({elapsed_minutes}m {elapsed_seconds}s), "
+                    f"but continuing search... ({proxy_index} checked so far)"
+                )
                 search_start_time = time.time()
             
             if proxy_index >= len(downloaded_proxies):
@@ -2189,6 +2196,16 @@ def main():
             remaining = len(downloaded_proxies) - proxy_index
             logger.info(f"[{main_thread_name}] [{proxy_index}] Checking proxy {proxy_key} ({proxy.get('protocol', 'http').upper()})...")
             logger.info(f"[{main_thread_name}] Search progress: {elapsed_search}s elapsed, {proxy_index} checked, {remaining} remaining")
+            
+            # Уведомление о прогрессе поиска прокси каждые N проверок
+            if proxy_index % PROXY_SEARCH_NOTIFICATION_INTERVAL == 0:
+                elapsed_minutes = elapsed_search // 60
+                elapsed_seconds = elapsed_search % 60
+                TelegramNotifier.notify(
+                    f"[Trast] Proxy search progress: {proxy_index} proxies checked "
+                    f"({elapsed_minutes}m {elapsed_seconds}s elapsed), "
+                    f"{remaining} remaining"
+                )
             
             if try_candidate_proxy(proxy, "downloaded"):
                 break
