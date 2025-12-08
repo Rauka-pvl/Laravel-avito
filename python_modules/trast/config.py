@@ -201,6 +201,9 @@ PAGE_STEP_FOR_THREADS = 2  # Шаг страниц для чередования
 CSV_BUFFER_SAVE_SIZE = 10  # Размер буфера для периодического сохранения в CSV
 CSV_BUFFER_FULL_SIZE = 50  # Размер буфера для полного сохранения в CSV
 
+# Интервал уведомлений о прогрессе (в страницах)
+PROGRESS_NOTIFICATION_INTERVAL = 50  # Отправлять уведомление каждые N страниц
+
 # Настройки ожидания Cloudflare
 CLOUDFLARE_REFRESH_DELAY = 3  # Задержка между обновлениями страницы при ожидании Cloudflare
 CLOUDFLARE_REFRESH_WAIT = 2  # Задержка после обновления страницы

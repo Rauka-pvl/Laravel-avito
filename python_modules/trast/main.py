@@ -53,6 +53,7 @@ from config import (
     CSV_BUFFER_FULL_SIZE,
     ALLOWED_PROXY_PROTOCOLS,
     FORCE_FIREFOX,
+    PROGRESS_NOTIFICATION_INTERVAL,
 )
 
 # Добавляем обработчики логирования после импорта config
@@ -950,6 +951,15 @@ def worker_thread(
             pages_parsed += 1
             current_page += page_step
             
+            # Уведомление о прогрессе каждые N страниц
+            if pages_parsed % PROGRESS_NOTIFICATION_INTERVAL == 0:
+                TelegramNotifier.notify(
+                    f"[Trast] [{thread_name}] Progress: {pages_parsed} pages parsed "
+                    f"(current: {current_page}/{total_pages}), "
+                    f"products: {len(local_buffer)} in buffer, "
+                    f"total collected: {products_collected}"
+                )
+            
             # Задержка между страницами
             humanized_page_sleep(current_page, thread_name=thread_name)
             
@@ -1408,6 +1418,14 @@ def parse_all_pages_simple(
             
             pages_checked += 1
             current_page += 1
+            
+            # Уведомление о прогрессе каждые N страниц
+            if pages_checked % PROGRESS_NOTIFICATION_INTERVAL == 0:
+                TelegramNotifier.notify(
+                    f"[Trast] Progress: {pages_checked} pages parsed "
+                    f"(current: {current_page}/{total_pages}), "
+                    f"products: {len(products_buffer)} in buffer"
+                )
             
             # Задержка между страницами
             humanized_page_sleep(current_page, thread_name=thread_name)
@@ -1871,6 +1889,15 @@ def parse_all_pages(
             pages_checked += 1
             current_page += 1
             
+            # Уведомление о прогрессе каждые N страниц
+            if pages_checked % PROGRESS_NOTIFICATION_INTERVAL == 0:
+                TelegramNotifier.notify(
+                    f"[Trast] Progress: {pages_checked} pages parsed "
+                    f"(current: {current_page}/{total_pages}), "
+                    f"products: {len(products_buffer)} in buffer, "
+                    f"total: {total_products}"
+                )
+            
             # Задержка между страницами
             humanized_page_sleep(current_page, thread_name=thread_name)
             
@@ -1908,6 +1935,16 @@ def parse_all_pages(
                                 total_products += len(products)
                                 pages_checked += 1
                                 current_page += 1
+                                
+                                # Уведомление о прогрессе каждые N страниц
+                                if pages_checked % PROGRESS_NOTIFICATION_INTERVAL == 0:
+                                    TelegramNotifier.notify(
+                                        f"[Trast] Progress: {pages_checked} pages parsed "
+                                        f"(current: {current_page}/{total_pages}), "
+                                        f"products: {len(products_buffer)} in buffer, "
+                                        f"total: {total_products}"
+                                    )
+                                
                                 humanized_page_sleep(current_page, thread_name=thread_name)
                                 continue
                     except Exception as retry_error:
