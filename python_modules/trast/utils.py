@@ -248,12 +248,28 @@ def wait_for_cloudflare(
             time.sleep(CLOUDFLARE_REFRESH_DELAY)
         
         try:
+            # Устанавливаем таймаут для операций Selenium
+            try:
+                driver.set_page_load_timeout(30)  # Таймаут для загрузки страницы
+            except:
+                pass  # Если не удалось установить, продолжаем
+            
             # Для JS challenge не делаем refresh сразу, даем время на выполнение
             if "challenge" in protection_type.lower():
                 time.sleep(3)  # Дополнительное ожидание для выполнения JS
             else:
-                driver.refresh()
-                time.sleep(CLOUDFLARE_REFRESH_WAIT)
+                try:
+                    driver.refresh()
+                    time.sleep(CLOUDFLARE_REFRESH_WAIT)
+                except TimeoutException:
+                    logger.warning(f"{log_prefix}Page refresh timeout{context_suffix}, checking current page...")
+                    # Продолжаем с текущей страницей
+                except Exception as refresh_err:
+                    error_str = str(refresh_err).lower()
+                    if "timeout" in error_str or "timed out" in error_str:
+                        logger.warning(f"{log_prefix}Page operation timeout{context_suffix}, checking current page...")
+                    else:
+                        raise
             
             page_source = safe_get_page_source(driver)
             if not page_source:
@@ -261,8 +277,15 @@ def wait_for_cloudflare(
                 return False, None
             page_source_lower = page_source.lower()
             has_protection = any(keyword in page_source_lower for keyword in protection_keywords)
+        except TimeoutException:
+            logger.warning(f"{log_prefix}Timeout during protection wait{context_suffix}")
+            return False, None
         except Exception as refresh_error:
-            logger.warning(f"{log_prefix}Error refreshing page{context_suffix}: {refresh_error}")
+            error_str = str(refresh_error).lower()
+            if "timeout" in error_str or "timed out" in error_str:
+                logger.warning(f"{log_prefix}Timeout error{context_suffix}: {refresh_error}")
+            else:
+                logger.warning(f"{log_prefix}Error refreshing page{context_suffix}: {refresh_error}")
             return False, None
         wait_time += CLOUDFLARE_CHECK_INTERVAL
     

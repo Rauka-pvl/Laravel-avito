@@ -52,6 +52,58 @@ def is_proxy_connection_error(error: Exception) -> bool:
     return any(keyword in message for keyword in keywords)
 
 
+def safe_load_page_with_selenium(url: str, max_wait: int = 20, context: str = "") -> Tuple[Optional[BeautifulSoup], bool]:
+    """
+    Безопасно загружает страницу через Selenium с обходом защиты и таймаутами.
+    
+    Args:
+        url: URL для загрузки
+        max_wait: Максимальное время ожидания защиты (секунды)
+        context: Контекст для логирования
+        
+    Returns:
+        tuple: (soup, success) - BeautifulSoup объект и флаг успеха
+    """
+    from utils import create_driver, wait_for_cloudflare, safe_get_page_source
+    driver = None
+    try:
+        driver = create_driver(prefer_chrome=False)
+        if not driver:
+            return None, False
+        
+        # Устанавливаем таймауты для предотвращения зависаний
+        driver.set_page_load_timeout(30)
+        driver.implicitly_wait(5)
+        
+        driver.get(url)
+        
+        # Ограничиваем время ожидания защиты
+        cloudflare_success, page_source = wait_for_cloudflare(driver, max_wait=max_wait, context=context)
+        if not cloudflare_success:
+            logger.warning(f"Failed to bypass protection on {context}, skipping...")
+            return None, False
+        
+        page_source = safe_get_page_source(driver)
+        if not page_source:
+            return None, False
+        
+        soup = BeautifulSoup(page_source, 'html.parser')
+        return soup, True
+        
+    except TimeoutException:
+        logger.warning(f"Timeout while loading {context}, skipping...")
+        return None, False
+    except Exception as e:
+        logger.warning(f"Error loading {context} with Selenium: {e}")
+        return None, False
+    finally:
+        if driver:
+            try:
+                driver.quit()
+            except:
+                pass
+
+
 def filter_proxies_by_country(proxies: List[Dict], country_filter: Optional[List[str]]) -> List[Dict]:
     """
     Фильтрует прокси по странам СНГ.
@@ -982,21 +1034,9 @@ class ProxyManager:
             except Exception as req_error:
                 # Если requests не работает (nginx JS challenge), используем Selenium
                 logger.debug(f"Requests failed for Proxy6, trying Selenium: {req_error}")
-                driver = create_driver(prefer_chrome=False)  # Используем Firefox
-                if not driver:
+                soup, success = safe_load_page_with_selenium(url, max_wait=20, context="Proxy6 page")
+                if not success or not soup:
                     return []
-                try:
-                    driver.get(url)
-                    wait_for_cloudflare(driver, max_wait=30, context="Proxy6 page")
-                    page_source = safe_get_page_source(driver)
-                    if not page_source:
-                        return []
-                    soup = BeautifulSoup(page_source, 'html.parser')
-                finally:
-                    try:
-                        driver.quit()
-                    except:
-                        pass
             
             # Парсим прокси со страницы (структура может отличаться)
             # Ищем таблицы или списки прокси
@@ -1062,21 +1102,9 @@ class ProxyManager:
                 soup = BeautifulSoup(response.text, 'html.parser')
             except Exception:
                 # Используем Selenium для обхода JS challenge
-                driver = create_driver(prefer_chrome=False)
-                if not driver:
+                soup, success = safe_load_page_with_selenium(url, max_wait=20, context="Proxys.io page")
+                if not success or not soup:
                     return []
-                try:
-                    driver.get(url)
-                    wait_for_cloudflare(driver, max_wait=30, context="Proxys.io page")
-                    page_source = safe_get_page_source(driver)
-                    if not page_source:
-                        return []
-                    soup = BeautifulSoup(page_source, 'html.parser')
-                finally:
-                    try:
-                        driver.quit()
-                    except:
-                        pass
             
             # Парсим прокси (адаптируем под структуру сайта)
             # Ищем элементы с прокси
@@ -1138,21 +1166,9 @@ class ProxyManager:
                 soup = BeautifulSoup(response.text, 'html.parser')
             except Exception:
                 # Используем Selenium для обхода JS challenge
-                driver = create_driver(prefer_chrome=False)
-                if not driver:
+                soup, success = safe_load_page_with_selenium(url, max_wait=20, context="Proxy-Seller page")
+                if not success or not soup:
                     return []
-                try:
-                    driver.get(url)
-                    wait_for_cloudflare(driver, max_wait=30, context="Proxy-Seller page")
-                    page_source = safe_get_page_source(driver)
-                    if not page_source:
-                        return []
-                    soup = BeautifulSoup(page_source, 'html.parser')
-                finally:
-                    try:
-                        driver.quit()
-                    except:
-                        pass
             
             # Парсим прокси (адаптируем под структуру сайта)
             # Ищем таблицы, списки или div-ы с прокси
@@ -1238,21 +1254,9 @@ class ProxyManager:
                 soup = BeautifulSoup(response.text, 'html.parser')
             except Exception:
                 # Используем Selenium для обхода JS challenge
-                driver = create_driver(prefer_chrome=False)
-                if not driver:
+                soup, success = safe_load_page_with_selenium(url, max_wait=20, context="Floppydata page")
+                if not success or not soup:
                     return []
-                try:
-                    driver.get(url)
-                    wait_for_cloudflare(driver, max_wait=30, context="Floppydata page")
-                    page_source = safe_get_page_source(driver)
-                    if not page_source:
-                        return []
-                    soup = BeautifulSoup(page_source, 'html.parser')
-                finally:
-                    try:
-                        driver.quit()
-                    except:
-                        pass
             
             # Парсим прокси
             tables = soup.find_all('table')
@@ -1316,21 +1320,9 @@ class ProxyManager:
                 soup = BeautifulSoup(response.text, 'html.parser')
             except Exception:
                 # Используем Selenium для обхода JS challenge
-                driver = create_driver(prefer_chrome=False)
-                if not driver:
+                soup, success = safe_load_page_with_selenium(url, max_wait=20, context="Prosox page")
+                if not success or not soup:
                     return []
-                try:
-                    driver.get(url)
-                    wait_for_cloudflare(driver, max_wait=30, context="Prosox page")
-                    page_source = safe_get_page_source(driver)
-                    if not page_source:
-                        return []
-                    soup = BeautifulSoup(page_source, 'html.parser')
-                finally:
-                    try:
-                        driver.quit()
-                    except:
-                        pass
             
             # Парсим прокси
             tables = soup.find_all('table')
