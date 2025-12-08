@@ -67,14 +67,15 @@ FIRST_PAGE_FINAL_WAIT = 5
 FIRST_PAGE_RELOAD_DELAY = 2
 BROWSER_RETRY_DELAY = 2.5
 
-# Фильтр по странам (приоритетные для российского сайта)
+# Фильтр по странам (только СНГ для российского сайта)
 PREFERRED_COUNTRIES = [
-    "RU", "BY", "KZ",  # СНГ
+    "RU", "BY", "KZ",  # Основные СНГ
     "AM", "AZ", "GE", "KG", "MD", "TJ", "TM", "UZ", "UA",  # Остальные СНГ
-    "PL", "LT", "LV", "EE", "FI", "CZ", "SK", "HU", "RO", "BG",  # Европа
-    "DE", "NL", "SE", "FR",  # Западная Европа
-    "CN", "MN"  # Азия
 ]
+
+# TTL для успешных прокси (в часах)
+# Прокси старше этого времени будут автоматически удаляться из кеша
+SUCCESSFUL_PROXY_TTL_HOURS = 24  # 24 часа по умолчанию
 
 # Источники прокси
 PROXY_SOURCES = {
@@ -137,6 +138,37 @@ PROXY_SOURCES = {
         'url': 'https://www.proxylist.me/api/v1/get?type=http',
         'type': 'proxylist_me',
         'active': True
+    },
+    # Новые источники прокси из СНГ (с поддержкой nginx JS challenge)
+    'proxy6': {
+        'url': 'https://proxy6.net',
+        'type': 'proxy6',
+        'active': True  # Парсинг с обходом nginx JS challenge
+    },
+    'proxys_io': {
+        'url': 'https://proxys.io',
+        'type': 'proxys_io',
+        'active': True  # Парсинг с обходом nginx JS challenge
+    },
+    'proxy_seller': {
+        'url': 'https://proxy-seller.com',
+        'type': 'proxy_seller',
+        'active': True  # Парсинг с обходом nginx JS challenge
+    },
+    'floppydata': {
+        'url': 'https://floppydata.com',
+        'type': 'floppydata',
+        'active': True  # Парсинг с обходом nginx JS challenge
+    },
+    'bright_data': {
+        'url': 'https://brightdata.com',
+        'type': 'bright_data',
+        'active': False  # Требует API ключ (платный сервис)
+    },
+    'prosox': {
+        'url': 'https://prosox.com',
+        'type': 'prosox',
+        'active': True  # Парсинг с обходом nginx JS challenge
     }
 }
 

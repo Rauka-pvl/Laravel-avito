@@ -1,6 +1,6 @@
 """
 Главный файл парсера trast-zapchast.ru
-Однопоточный парсинг с улучшенным обходом Cloudflare
+Однопоточный парсинг с улучшенным обходом nginx и других систем защиты
 """
 import os
 import sys
@@ -146,26 +146,28 @@ def reload_page_if_needed(
             except TimeoutException:
                 logger.warning(f"[WARNING] Timeout waiting for page load {page_url}")
             
-            # Проверяем Cloudflare
+            # Проверяем защиту (nginx/cloudflare/другие)
             page_source = safe_get_page_source(driver)
             if not page_source:
                 # Краш вкладки - пробрасываем ошибку
                 raise Exception("Tab crashed while getting page_source")
             
-            page_source_lower = page_source.lower()
-            max_wait = 30
-            wait_time = 0
+            # Используем единую функцию wait_for_cloudflare для обработки защиты
+            cloudflare_success, page_source = wait_for_cloudflare(driver, max_wait=30, context="reload_page")
             
-            while ("cloudflare" in page_source_lower or "checking your browser" in page_source_lower or 
-                   "just a moment" in page_source_lower) and wait_time < max_wait:
-                logger.info(f"Cloudflare check... waiting {wait_time}/{max_wait} sec")
+            if not cloudflare_success or not page_source:
+                if attempt < max_retries:
+                    continue
+                return None, False
+                logger.info(f"{protection_type.capitalize()} check... waiting {wait_time}/{max_wait} sec")
                 time.sleep(3)
                 driver.refresh()
                 time.sleep(2)
                 page_source = safe_get_page_source(driver)
                 if not page_source:
-                    raise Exception("Tab crashed during Cloudflare wait")
+                    raise Exception("Tab crashed during protection wait")
                 page_source_lower = page_source.lower()
+                has_protection = any(keyword in page_source_lower for keyword in protection_keywords)
                 wait_time += 5
             
             if wait_time >= max_wait:
@@ -269,32 +271,17 @@ def parse_page_with_selenium(
         driver.get(page_url)
         time.sleep(random.uniform(MIN_DELAY_AFTER_LOAD, MAX_DELAY_AFTER_LOAD))
         
-        # Проверяем Cloudflare - используем безопасное получение page_source
+        # Проверяем защиту (nginx/cloudflare/другие) - используем безопасное получение page_source
         page_source = safe_get_page_source(driver)
         if not page_source:
             # Краш вкладки
             logger.error("[TAB CRASH] Tab crash while getting page_source after load")
             return None, False
         
-        page_source_lower = page_source.lower()
-        max_wait = 30
-        wait_time = 0
+        # Используем единую функцию wait_for_cloudflare для обработки защиты
+        cloudflare_success, page_source = wait_for_cloudflare(driver, max_wait=30, context="parse_page")
         
-        while ("cloudflare" in page_source_lower or "checking your browser" in page_source_lower or 
-               "just a moment" in page_source_lower) and wait_time < max_wait:
-            logger.info(f"Cloudflare check... waiting {wait_time}/{max_wait} sec")
-            time.sleep(3)
-            driver.refresh()
-            time.sleep(2)
-            page_source = safe_get_page_source(driver)
-            if not page_source:
-                # Краш вкладки во время ожидания Cloudflare
-                logger.error("[TAB CRASH] Tab crash during Cloudflare wait")
-                return None, False
-            page_source_lower = page_source.lower()
-            wait_time += 5
-        
-        if wait_time >= max_wait:
+        if not cloudflare_success or not page_source:
             return None, False
         
         # Если нужно ждать полной загрузки контента (как при валидации прокси)
@@ -624,7 +611,7 @@ def worker_thread(
     pages_parsed = 0
     products_collected = 0
     proxy_switches = 0
-    cloudflare_blocks = 0
+    protection_blocks = 0  # Блокировки nginx/cloudflare/другие
     
     driver = None
     current_proxy = None
@@ -770,7 +757,7 @@ def worker_thread(
                 except Exception as cookie_error:
                     logger.warning(f"[{thread_name}] Error getting cookies: {cookie_error}")
         else:
-            logger.warning(f"[{thread_name}] Failed to get cookies (Cloudflare timeout or page crash)")
+                logger.warning(f"[{thread_name}] Failed to get cookies (protection timeout or page crash)")
     except Exception as e:
         logger.warning(f"[{thread_name}] Error getting cookies: {e}")
     
@@ -886,7 +873,7 @@ def worker_thread(
                 block_reason = block_check.get('reason', 'unknown')
                 partial_load = block_check.get('partial_load', False)
                 logger.warning(f"[{thread_name}] Page {current_page} blocked: {block_reason} (partial_load={partial_load}) → searching for new proxy")
-                cloudflare_blocks += 1
+                protection_blocks += 1
                 proxy_switches += 1
                 
                 # Закрываем драйвер
@@ -1052,7 +1039,7 @@ def worker_thread(
     logger.info(f"[{thread_name}] Products collected: {products_collected}")
     logger.info(f"[{thread_name}] Pages parsed: {pages_parsed}")
     logger.info(f"[{thread_name}] Proxy switches: {proxy_switches}")
-    logger.info(f"[{thread_name}] Cloudflare blocks: {cloudflare_blocks}")
+    logger.info(f"[{thread_name}] Protection blocks (nginx/cloudflare): {protection_blocks}")
     logger.info(f"[{thread_name}] {'='*60}")
 
 
@@ -1079,7 +1066,7 @@ def parse_all_pages_simple(
     empty_pages_count = 0
     pages_checked = 0
     proxy_switches = 0
-    cloudflare_blocks = 0
+    protection_blocks = 0  # Блокировки nginx/cloudflare/другие
     
     current_proxy = initial_proxy
     # Отслеживаем, когда прокси был валидирован (для retry-логики)
@@ -1116,7 +1103,7 @@ def parse_all_pages_simple(
             driver.get(TARGET_URL)
             time.sleep(MIN_DELAY_AFTER_LOAD)
             
-            # Ждем Cloudflare
+            # Ждем прохождения защиты (nginx/cloudflare)
             page_source = safe_get_page_source(driver)
             if not page_source:
                 logger.error("[TAB CRASH] Tab crash while getting cookies")
@@ -1132,7 +1119,7 @@ def parse_all_pages_simple(
                         else:
                             logger.warning(f"Error getting cookies: {cookie_error}")
                 else:
-                    logger.warning("Failed to get cookies due to Cloudflare or tab crash")
+                    logger.warning("Failed to get cookies due to protection (nginx/cloudflare) or tab crash")
     except Exception as e:
         if is_tab_crashed_error(e):
             logger.error(f"[TAB CRASH] Tab crash while getting cookies: {e}")
@@ -1355,7 +1342,7 @@ def parse_all_pages_simple(
                     # Исчерпали попытки или это не первые страницы - ищем новый прокси
                     logger.warning(f"Page {current_page} blocked: {block_check['reason']} → switching proxy")
                     parse_all_pages_simple._proxy_retry_count[proxy_key] = 0  # Сбрасываем счетчик
-                    cloudflare_blocks += 1
+                    protection_blocks += 1
                     proxy_switches += 1
                     
                     new_proxy, new_driver, proxies_checked, new_proxy_index = find_new_working_proxy(
@@ -1513,7 +1500,7 @@ def parse_all_pages_simple(
     return total_products, {
         "pages_checked": pages_checked,
         "proxy_switches": proxy_switches,
-        "cloudflare_blocks": cloudflare_blocks
+        "protection_blocks": protection_blocks
     }
 
 
@@ -1538,7 +1525,7 @@ def parse_all_pages(
     empty_pages_count = 0
     pages_checked = 0
     proxy_switches = 0
-    cloudflare_blocks = 0
+    protection_blocks = 0  # Блокировки nginx/cloudflare/другие
     
     # Если передан начальный прокси - используем его, иначе ищем новые
     if initial_proxy:
@@ -1556,7 +1543,7 @@ def parse_all_pages(
     
     if not working_proxies:
         logger.error(f"[{thread_name}] Failed to find working proxies!")
-        return 0, {"pages_checked": 0, "proxy_switches": 0, "cloudflare_blocks": 0}
+        return 0, {"pages_checked": 0, "proxy_switches": 0, "protection_blocks": 0}
     
     logger.info(f"[{thread_name}] Found {len(working_proxies)} working proxies, starting parsing")
     
@@ -1603,7 +1590,7 @@ def parse_all_pages(
         current_proxy = working_proxies_list[0] if working_proxies_list else None
     if not current_proxy:
         logger.error(f"[{thread_name}] No working proxies for getting cookies!")
-        return 0, {"pages_checked": 0, "proxy_switches": 0, "cloudflare_blocks": 0}
+        return 0, {"pages_checked": 0, "proxy_switches": 0, "protection_blocks": 0}
     
     logger.info(f"[{thread_name}] Getting cookies via proxy {current_proxy['ip']}:{current_proxy['port']}...")
     
@@ -1618,7 +1605,7 @@ def parse_all_pages(
             driver.get(TARGET_URL)
             time.sleep(MIN_DELAY_AFTER_LOAD)
             
-            # Ждем Cloudflare - используем безопасное получение page_source
+            # Ждем прохождения защиты (nginx/cloudflare) - используем безопасное получение page_source
             page_source = safe_get_page_source(driver)
             if not page_source:
                 logger.error("[TAB CRASH] Tab crash while getting cookies")
@@ -1634,7 +1621,7 @@ def parse_all_pages(
                         else:
                             logger.warning(f"Error getting cookies: {cookie_error}")
                 else:
-                    logger.warning("Failed to get cookies due to Cloudflare or tab crash")
+                    logger.warning("Failed to get cookies due to protection (nginx/cloudflare) or tab crash")
     except Exception as e:
         if is_tab_crashed_error(e):
             logger.error(f"[TAB CRASH] Tab crash while getting cookies: {e}")
@@ -1781,7 +1768,7 @@ def parse_all_pages(
             
             if block_check["blocked"]:
                 logger.warning(f"Page {current_page} blocked: {block_check['reason']} → switching proxy")
-                cloudflare_blocks += 1
+                protection_blocks += 1
                 proxy_switches += 1
                 
                 # Пересоздаем драйвер с новым прокси
@@ -1866,7 +1853,7 @@ def parse_all_pages(
             elif page_status["status"] == "blocked":
                 # Блокировка - получаем новый прокси
                 logger.warning(f"Page {current_page}: blocked (status blocked) → switching proxy")
-                cloudflare_blocks += 1
+                protection_blocks += 1
                 proxy_switches += 1
                 
                 driver, current_proxy, cookies = recreate_driver_with_new_proxy(
@@ -1982,7 +1969,7 @@ def parse_all_pages(
     return total_products, {
         "pages_checked": pages_checked,
         "proxy_switches": proxy_switches,
-        "cloudflare_blocks": cloudflare_blocks
+        "protection_blocks": protection_blocks
     }
 
 

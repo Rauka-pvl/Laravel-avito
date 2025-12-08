@@ -52,6 +52,34 @@ def is_proxy_connection_error(error: Exception) -> bool:
     return any(keyword in message for keyword in keywords)
 
 
+def filter_proxies_by_country(proxies: List[Dict], country_filter: Optional[List[str]]) -> List[Dict]:
+    """
+    Фильтрует прокси по странам СНГ.
+    
+    Args:
+        proxies: Список прокси для фильтрации
+        country_filter: Список кодов стран для фильтрации (например, ['RU', 'BY', 'KZ'])
+        
+    Returns:
+        Отфильтрованный список прокси
+    """
+    if not country_filter:
+        return proxies
+    
+    country_filter_upper = [c.upper() for c in country_filter]
+    filtered = []
+    
+    for proxy in proxies:
+        country = proxy.get('country', '').upper()
+        # Если страна указана и не в фильтре - пропускаем
+        if country and country not in country_filter_upper:
+            continue
+        # Если страна не указана - оставляем (может быть определена позже)
+        filtered.append(proxy)
+    
+    return filtered
+
+
 class ProxyManager:
     """Менеджер прокси с поддержкой многопоточности для проверки прокси"""
     
@@ -75,10 +103,11 @@ class ProxyManager:
         if self.priority_proxies:
             logger.info(f"Loaded {len(self.priority_proxies)} priority proxies")
         
-        # Загружаем успешные прокси при инициализации
-        self.successful_proxies = self.load_successful_proxies()
+        # Загружаем успешные прокси при инициализации (с автоматической очисткой устаревших)
+        from config import SUCCESSFUL_PROXY_TTL_HOURS
+        self.successful_proxies = self.load_successful_proxies(max_age_hours=SUCCESSFUL_PROXY_TTL_HOURS)
         if self.successful_proxies:
-            logger.info(f"Loaded {len(self.successful_proxies)} successful proxies from cache")
+            logger.info(f"Loaded {len(self.successful_proxies)} successful proxies from cache (TTL: {SUCCESSFUL_PROXY_TTL_HOURS}h)")
         
         logger.info(f"ProxyManager initialized with country filter: {', '.join(self.country_filter[:10])}...")
     
@@ -190,12 +219,54 @@ class ProxyManager:
         
         return priority_proxies
     
-    def load_successful_proxies(self) -> List[Dict]:
-        """Загружает успешные прокси из файла"""
+    def load_successful_proxies(self, max_age_hours: int = 24) -> List[Dict]:
+        """
+        Загружает успешные прокси из файла и удаляет устаревшие (старше max_age_hours).
+        
+        Args:
+            max_age_hours: Максимальный возраст прокси в часах (по умолчанию 24 часа)
+            
+        Returns:
+            Список актуальных успешных прокси
+        """
         try:
             if os.path.exists(SUCCESSFUL_PROXIES_FILE):
                 with open(SUCCESSFUL_PROXIES_FILE, 'r', encoding='utf-8') as f:
-                    return json.load(f)
+                    proxies = json.load(f)
+                    
+                    # Фильтруем устаревшие прокси
+                    if max_age_hours > 0:
+                        current_time = datetime.now()
+                        valid_proxies = []
+                        removed_count = 0
+                        
+                        for proxy in proxies:
+                            last_verified = proxy.get('last_verified')
+                            if last_verified:
+                                try:
+                                    verified_time = datetime.fromisoformat(last_verified)
+                                    age_hours = (current_time - verified_time).total_seconds() / 3600
+                                    if age_hours <= max_age_hours:
+                                        valid_proxies.append(proxy)
+                                    else:
+                                        removed_count += 1
+                                except (ValueError, TypeError):
+                                    # Если не удалось распарсить дату, оставляем прокси (для обратной совместимости)
+                                    valid_proxies.append(proxy)
+                            else:
+                                # Для старых прокси без временной метки добавляем её
+                                proxy['last_verified'] = current_time.isoformat()
+                                valid_proxies.append(proxy)
+                        
+                        if removed_count > 0:
+                            logger.info(f"Removed {removed_count} expired proxies (older than {max_age_hours}h)")
+                            # Сохраняем очищенный список
+                            self.successful_proxies = valid_proxies
+                            self.save_successful_proxies()
+                            return valid_proxies
+                        
+                        return proxies
+                    return proxies
         except Exception as e:
             logger.warning(f"Failed to load successful proxies: {e}")
         return []
@@ -209,7 +280,7 @@ class ProxyManager:
             logger.error(f"Failed to save successful proxies: {e}")
     
     def record_successful_proxy(self, proxy: Dict):
-        """Добавляет прокси в список успешных (без дублей)"""
+        """Добавляет прокси в список успешных (без дублей) с временной меткой"""
         if not proxy:
             return
         proxy_key = f"{proxy.get('ip')}:{proxy.get('port')}"
@@ -218,23 +289,105 @@ class ProxyManager:
         with self.lock:
             existing_keys = {f"{p.get('ip')}:{p.get('port')}" for p in self.successful_proxies}
             if proxy_key in existing_keys:
+                # Обновляем временную метку для существующего прокси
+                for p in self.successful_proxies:
+                    if f"{p.get('ip')}:{p.get('port')}" == proxy_key:
+                        p['last_verified'] = datetime.now().isoformat()
+                        break
+                self.save_successful_proxies()
                 return
             proxy_copy = {
                 'ip': proxy.get('ip'),
                 'port': proxy.get('port'),
                 'protocol': proxy.get('protocol', 'http'),
                 'country': proxy.get('country', ''),
-                'source': proxy.get('source', 'unknown')
+                'source': proxy.get('source', 'unknown'),
+                'last_verified': datetime.now().isoformat()  # Временная метка для TTL
             }
             if 'total_pages' in proxy:
                 proxy_copy['total_pages'] = proxy['total_pages']
             self.successful_proxies.append(proxy_copy)
             self.save_successful_proxies()
     
+    def clean_failed_proxies_from_cache(self, max_to_check: int = 50) -> int:
+        """
+        Очищает неработающие прокси из кеша successful_proxies.
+        Проверяет старые успешные прокси и удаляет те, которые перестали работать.
+        
+        Args:
+            max_to_check: Максимальное количество прокси для проверки за раз
+            
+        Returns:
+            Количество удаленных неработающих прокси
+        """
+        if not self.successful_proxies:
+            return 0
+        
+        logger.info(f"Cleaning failed proxies from cache (checking up to {max_to_check} of {len(self.successful_proxies)} cached proxies)...")
+        
+        # Берем первые N прокси для проверки
+        proxies_to_check = self.successful_proxies[:max_to_check]
+        removed_count = 0
+        
+        for proxy in proxies_to_check:
+            proxy_key = f"{proxy.get('ip')}:{proxy.get('port')}"
+            
+            # Быстрая базовая проверка
+            basic_ok, _ = self.validate_proxy_basic(proxy, timeout=5)
+            if not basic_ok:
+                logger.warning(f"Removing failed proxy from cache: {proxy_key}")
+                with self.lock:
+                    self.successful_proxies = [p for p in self.successful_proxies 
+                                             if f"{p.get('ip')}:{p.get('port')}" != proxy_key]
+                    self.failed_proxies.add(proxy_key)
+                    removed_count += 1
+        
+        if removed_count > 0:
+            self.save_successful_proxies()
+            logger.info(f"Cleaned {removed_count} failed proxies from cache. Remaining: {len(self.successful_proxies)}")
+        else:
+            logger.info(f"No failed proxies found in cache. All {len(proxies_to_check)} checked proxies are working.")
+        
+        return removed_count
+    
+    def remove_failed_proxy(self, proxy: Dict):
+        """
+        Удаляет прокси из списка успешных и добавляет в список неработающих.
+        
+        Args:
+            proxy: Прокси для удаления
+        """
+        if not proxy:
+            return
+        
+        proxy_key = f"{proxy.get('ip')}:{proxy.get('port')}"
+        if not proxy_key:
+            return
+        
+        with self.lock:
+            # Удаляем из успешных
+            before_count = len(self.successful_proxies)
+            self.successful_proxies = [p for p in self.successful_proxies 
+                                     if f"{p.get('ip')}:{p.get('port')}" != proxy_key]
+            after_count = len(self.successful_proxies)
+            
+            # Добавляем в неработающие
+            self.failed_proxies.add(proxy_key)
+            
+            if before_count != after_count:
+                self.save_successful_proxies()
+                logger.debug(f"Removed failed proxy {proxy_key} from successful list")
+    
     def _parse_proxymania_page(self, page_num: int = 1) -> List[Dict]:
         """Парсит одну страницу прокси с proxymania.su"""
         try:
-            url = f"https://proxymania.su/free-proxy?page={page_num}"
+            # Если есть фильтр по странам, используем его в URL для оптимизации
+            country_param = ""
+            if self.country_filter and len(self.country_filter) == 1:
+                # Если только одна страна, используем фильтр в URL
+                country_param = f"&country={self.country_filter[0]}"
+            
+            url = f"https://proxymania.su/free-proxy?page={page_num}{country_param}"
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -249,7 +402,8 @@ class ProxyManager:
             if not table:
                 return []
             
-            rows = table.select('tbody#resultTable tr')
+            # Пробуем оба варианта селектора (на случай изменения структуры)
+            rows = table.select('tbody#resultTable tr') or table.select('tbody tr')
             proxies = []
             
             country_name_to_code = {
@@ -268,7 +422,17 @@ class ProxyManager:
                 'Moldova': 'MD', 'Молдова': 'MD',
                 'Georgia': 'GE', 'საქართველო': 'GE',
                 'Armenia': 'AM', 'Հայաստан': 'AM',
-                'Azerbaijan': 'AZ', 'Azərbaycan': 'AZ',
+                'Azerbaijan': 'AZ', 'Azərbaycan': 'AZ', 'Азербайджан': 'AZ',
+                'Kyrgyzstan': 'KG', 'Кыргызстан': 'KG', 'Киргизия': 'KG',
+                'Tajikistan': 'TJ', 'Тоҷикистон': 'TJ', 'Таджикистан': 'TJ',
+                'Turkmenistan': 'TM', 'Туркменистан': 'TM',
+                'Uzbekistan': 'UZ', 'Oʻzbekiston': 'UZ', 'Узбекистан': 'UZ',
+                'Russia': 'RU', 'Россия': 'RU',  # Дополнительные варианты
+                'Belarus': 'BY', 'Белоруссия': 'BY',  # Дополнительные варианты
+                'Ukraine': 'UA', 'Украина': 'UA',  # Дополнительные варианты
+                'Moldova': 'MD', 'Молдавия': 'MD',  # Дополнительные варианты
+                'Georgia': 'GE', 'Грузия': 'GE',  # Дополнительные варианты
+                'Armenia': 'AM', 'Армения': 'AM',  # Дополнительные варианты
                 'Lithuania': 'LT', 'Lietuva': 'LT',
                 'Latvia': 'LV', 'Latvija': 'LV',
                 'Estonia': 'EE', 'Eesti': 'EE',
@@ -794,11 +958,434 @@ class ProxyManager:
             logger.warning(f"Error loading proxies from proxylist.me: {e}")
             return []
     
-    def download_proxies(self, force_update: bool = False) -> bool:
+    def _download_proxies_from_proxy6(self) -> List[Dict]:
+        """Загружает прокси с Proxy6 (требует обход nginx JS challenge)"""
+        try:
+            logger.info("Loading proxies from Proxy6 (may require JS challenge bypass)...")
+            # Proxy6 может требовать JS challenge, используем Selenium если нужно
+            from utils import create_driver, wait_for_cloudflare, safe_get_page_source
+            from bs4 import BeautifulSoup
+            
+            url = "https://proxy6.net/free-proxy"
+            proxies = []
+            
+            # Пробуем сначала через requests
+            try:
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
+                }
+                response = requests.get(url, headers=headers, timeout=30)
+                response.raise_for_status()
+                soup = BeautifulSoup(response.text, 'html.parser')
+            except Exception as req_error:
+                # Если requests не работает (nginx JS challenge), используем Selenium
+                logger.debug(f"Requests failed for Proxy6, trying Selenium: {req_error}")
+                driver = create_driver(prefer_chrome=False)  # Используем Firefox
+                if not driver:
+                    return []
+                try:
+                    driver.get(url)
+                    wait_for_cloudflare(driver, max_wait=30, context="Proxy6 page")
+                    page_source = safe_get_page_source(driver)
+                    if not page_source:
+                        return []
+                    soup = BeautifulSoup(page_source, 'html.parser')
+                finally:
+                    try:
+                        driver.quit()
+                    except:
+                        pass
+            
+            # Парсим прокси со страницы (структура может отличаться)
+            # Ищем таблицы или списки прокси
+            tables = soup.find_all('table')
+            for table in tables:
+                rows = table.find_all('tr')[1:]  # Пропускаем заголовок
+                for row in rows:
+                    cols = row.find_all(['td', 'th'])
+                    if len(cols) >= 2:
+                        try:
+                            ip_port = cols[0].get_text(strip=True)
+                            if ':' in ip_port:
+                                ip, port = ip_port.split(':', 1)
+                                country = cols[1].get_text(strip=True).upper() if len(cols) > 1 else 'UN'
+                                
+                                # Определяем протокол
+                                protocol = 'http'
+                                if len(cols) > 2:
+                                    protocol_text = cols[2].get_text(strip=True).lower()
+                                    if 'socks5' in protocol_text:
+                                        protocol = 'socks5'
+                                    elif 'socks4' in protocol_text:
+                                        protocol = 'socks4'
+                                    elif 'https' in protocol_text:
+                                        protocol = 'https'
+                                
+                                if self.country_filter and country not in self.country_filter:
+                                    continue
+                                
+                                proxies.append({
+                                    'ip': ip.strip(),
+                                    'port': port.strip(),
+                                    'protocol': protocol,
+                                    'country': country,
+                                    'source': 'proxy6'
+                                })
+                        except Exception:
+                            continue
+            
+            logger.info(f"Received {len(proxies)} proxies from Proxy6")
+            return proxies
+        except Exception as e:
+            logger.warning(f"Error loading proxies from Proxy6: {e}")
+            return []
+    
+    def _download_proxies_from_proxys_io(self) -> List[Dict]:
+        """Загружает прокси с Proxys.io (может требовать обход nginx JS challenge)"""
+        try:
+            logger.info("Loading proxies from Proxys.io (may require JS challenge bypass)...")
+            from utils import create_driver, wait_for_cloudflare, safe_get_page_source
+            from bs4 import BeautifulSoup
+            
+            url = "https://proxys.io/free-proxy-list"
+            proxies = []
+            
+            # Пробуем сначала через requests
+            try:
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                }
+                response = requests.get(url, headers=headers, timeout=30)
+                response.raise_for_status()
+                soup = BeautifulSoup(response.text, 'html.parser')
+            except Exception:
+                # Используем Selenium для обхода JS challenge
+                driver = create_driver(prefer_chrome=False)
+                if not driver:
+                    return []
+                try:
+                    driver.get(url)
+                    wait_for_cloudflare(driver, max_wait=30, context="Proxys.io page")
+                    page_source = safe_get_page_source(driver)
+                    if not page_source:
+                        return []
+                    soup = BeautifulSoup(page_source, 'html.parser')
+                finally:
+                    try:
+                        driver.quit()
+                    except:
+                        pass
+            
+            # Парсим прокси (адаптируем под структуру сайта)
+            # Ищем элементы с прокси
+            proxy_elements = soup.find_all(['tr', 'div'], class_=lambda x: x and ('proxy' in x.lower() or 'ip' in x.lower()))
+            for elem in proxy_elements:
+                text = elem.get_text()
+                if ':' in text:
+                    parts = text.split()
+                    for part in parts:
+                        if ':' in part and '.' in part:
+                            try:
+                                ip, port = part.split(':', 1)
+                                if ip.count('.') == 3 and port.isdigit():
+                                    country = 'UN'
+                                    # Пытаемся найти страну в элементе
+                                    country_elem = elem.find(['span', 'td'], class_=lambda x: x and 'country' in x.lower() if x else False)
+                                    if country_elem:
+                                        country = country_elem.get_text(strip=True).upper()[:2]
+                                    
+                                    if self.country_filter and country not in self.country_filter:
+                                        continue
+                                    
+                                    proxies.append({
+                                        'ip': ip.strip(),
+                                        'port': port.strip(),
+                                        'protocol': 'http',
+                                        'country': country,
+                                        'source': 'proxys_io'
+                                    })
+                                    break
+                            except Exception:
+                                continue
+            
+            logger.info(f"Received {len(proxies)} proxies from Proxys.io")
+            return proxies
+        except Exception as e:
+            logger.warning(f"Error loading proxies from Proxys.io: {e}")
+            return []
+    
+    def _download_proxies_from_proxy_seller(self) -> List[Dict]:
+        """Загружает прокси с Proxy-Seller (может требовать обход nginx JS challenge)"""
+        try:
+            logger.info("Loading proxies from Proxy-Seller (may require JS challenge bypass)...")
+            from utils import create_driver, wait_for_cloudflare, safe_get_page_source
+            from bs4 import BeautifulSoup
+            
+            url = "https://proxy-seller.com/free-proxy"
+            proxies = []
+            
+            # Пробуем сначала через requests
+            try:
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
+                }
+                response = requests.get(url, headers=headers, timeout=30)
+                response.raise_for_status()
+                soup = BeautifulSoup(response.text, 'html.parser')
+            except Exception:
+                # Используем Selenium для обхода JS challenge
+                driver = create_driver(prefer_chrome=False)
+                if not driver:
+                    return []
+                try:
+                    driver.get(url)
+                    wait_for_cloudflare(driver, max_wait=30, context="Proxy-Seller page")
+                    page_source = safe_get_page_source(driver)
+                    if not page_source:
+                        return []
+                    soup = BeautifulSoup(page_source, 'html.parser')
+                finally:
+                    try:
+                        driver.quit()
+                    except:
+                        pass
+            
+            # Парсим прокси (адаптируем под структуру сайта)
+            # Ищем таблицы, списки или div-ы с прокси
+            tables = soup.find_all('table')
+            for table in tables:
+                rows = table.find_all('tr')[1:]
+                for row in rows:
+                    cols = row.find_all(['td', 'th'])
+                    if len(cols) >= 2:
+                        try:
+                            ip_port = cols[0].get_text(strip=True)
+                            if ':' in ip_port and '.' in ip_port:
+                                ip, port = ip_port.split(':', 1)
+                                country = cols[1].get_text(strip=True).upper()[:2] if len(cols) > 1 else 'UN'
+                                
+                                protocol = 'http'
+                                if len(cols) > 2:
+                                    protocol_text = cols[2].get_text(strip=True).lower()
+                                    if 'socks5' in protocol_text:
+                                        protocol = 'socks5'
+                                    elif 'socks4' in protocol_text:
+                                        protocol = 'socks4'
+                                    elif 'https' in protocol_text:
+                                        protocol = 'https'
+                                
+                                if self.country_filter and country not in self.country_filter:
+                                    continue
+                                
+                                proxies.append({
+                                    'ip': ip.strip(),
+                                    'port': port.strip(),
+                                    'protocol': protocol,
+                                    'country': country,
+                                    'source': 'proxy_seller'
+                                })
+                        except Exception:
+                            continue
+            
+            # Также ищем в div-ах и других элементах
+            proxy_divs = soup.find_all(['div', 'span'], class_=lambda x: x and ('proxy' in str(x).lower() or 'ip' in str(x).lower()) if x else False)
+            for div in proxy_divs:
+                text = div.get_text()
+                if ':' in text and '.' in text:
+                    parts = text.split()
+                    for part in parts:
+                        if ':' in part and part.count('.') == 3:
+                            try:
+                                ip, port = part.split(':', 1)
+                                if port.isdigit():
+                                    proxies.append({
+                                        'ip': ip.strip(),
+                                        'port': port.strip(),
+                                        'protocol': 'http',
+                                        'country': 'UN',
+                                        'source': 'proxy_seller'
+                                    })
+                            except Exception:
+                                continue
+            
+            logger.info(f"Received {len(proxies)} proxies from Proxy-Seller")
+            return proxies
+        except Exception as e:
+            logger.warning(f"Error loading proxies from Proxy-Seller: {e}")
+            return []
+    
+    def _download_proxies_from_floppydata(self) -> List[Dict]:
+        """Загружает прокси с Floppydata (может требовать обход nginx JS challenge)"""
+        try:
+            logger.info("Loading proxies from Floppydata (may require JS challenge bypass)...")
+            from utils import create_driver, wait_for_cloudflare, safe_get_page_source
+            from bs4 import BeautifulSoup
+            
+            url = "https://floppydata.com/free-proxy"
+            proxies = []
+            
+            # Пробуем сначала через requests
+            try:
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                }
+                response = requests.get(url, headers=headers, timeout=30)
+                response.raise_for_status()
+                soup = BeautifulSoup(response.text, 'html.parser')
+            except Exception:
+                # Используем Selenium для обхода JS challenge
+                driver = create_driver(prefer_chrome=False)
+                if not driver:
+                    return []
+                try:
+                    driver.get(url)
+                    wait_for_cloudflare(driver, max_wait=30, context="Floppydata page")
+                    page_source = safe_get_page_source(driver)
+                    if not page_source:
+                        return []
+                    soup = BeautifulSoup(page_source, 'html.parser')
+                finally:
+                    try:
+                        driver.quit()
+                    except:
+                        pass
+            
+            # Парсим прокси
+            tables = soup.find_all('table')
+            for table in tables:
+                rows = table.find_all('tr')[1:]
+                for row in rows:
+                    cols = row.find_all(['td', 'th'])
+                    if len(cols) >= 2:
+                        try:
+                            ip_port = cols[0].get_text(strip=True)
+                            if ':' in ip_port:
+                                ip, port = ip_port.split(':', 1)
+                                country = cols[1].get_text(strip=True).upper()[:2] if len(cols) > 1 else 'UN'
+                                
+                                protocol = 'http'
+                                if len(cols) > 2:
+                                    protocol_text = cols[2].get_text(strip=True).lower()
+                                    if 'socks5' in protocol_text:
+                                        protocol = 'socks5'
+                                    elif 'socks4' in protocol_text:
+                                        protocol = 'socks4'
+                                    elif 'https' in protocol_text:
+                                        protocol = 'https'
+                                
+                                if self.country_filter and country not in self.country_filter:
+                                    continue
+                                
+                                proxies.append({
+                                    'ip': ip.strip(),
+                                    'port': port.strip(),
+                                    'protocol': protocol,
+                                    'country': country,
+                                    'source': 'floppydata'
+                                })
+                        except Exception:
+                            continue
+            
+            logger.info(f"Received {len(proxies)} proxies from Floppydata")
+            return proxies
+        except Exception as e:
+            logger.warning(f"Error loading proxies from Floppydata: {e}")
+            return []
+    
+    def _download_proxies_from_prosox(self) -> List[Dict]:
+        """Загружает прокси с Prosox (может требовать обход nginx JS challenge)"""
+        try:
+            logger.info("Loading proxies from Prosox (may require JS challenge bypass)...")
+            from utils import create_driver, wait_for_cloudflare, safe_get_page_source
+            from bs4 import BeautifulSoup
+            
+            url = "https://prosox.com/free-proxy"
+            proxies = []
+            
+            # Пробуем сначала через requests
+            try:
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                }
+                response = requests.get(url, headers=headers, timeout=30)
+                response.raise_for_status()
+                soup = BeautifulSoup(response.text, 'html.parser')
+            except Exception:
+                # Используем Selenium для обхода JS challenge
+                driver = create_driver(prefer_chrome=False)
+                if not driver:
+                    return []
+                try:
+                    driver.get(url)
+                    wait_for_cloudflare(driver, max_wait=30, context="Prosox page")
+                    page_source = safe_get_page_source(driver)
+                    if not page_source:
+                        return []
+                    soup = BeautifulSoup(page_source, 'html.parser')
+                finally:
+                    try:
+                        driver.quit()
+                    except:
+                        pass
+            
+            # Парсим прокси
+            tables = soup.find_all('table')
+            for table in tables:
+                rows = table.find_all('tr')[1:]
+                for row in rows:
+                    cols = row.find_all(['td', 'th'])
+                    if len(cols) >= 2:
+                        try:
+                            ip_port = cols[0].get_text(strip=True)
+                            if ':' in ip_port:
+                                ip, port = ip_port.split(':', 1)
+                                country = cols[1].get_text(strip=True).upper()[:2] if len(cols) > 1 else 'UN'
+                                
+                                protocol = 'http'
+                                if len(cols) > 2:
+                                    protocol_text = cols[2].get_text(strip=True).lower()
+                                    if 'socks5' in protocol_text:
+                                        protocol = 'socks5'
+                                    elif 'socks4' in protocol_text:
+                                        protocol = 'socks4'
+                                    elif 'https' in protocol_text:
+                                        protocol = 'https'
+                                
+                                if self.country_filter and country not in self.country_filter:
+                                    continue
+                                
+                                proxies.append({
+                                    'ip': ip.strip(),
+                                    'port': port.strip(),
+                                    'protocol': protocol,
+                                    'country': country,
+                                    'source': 'prosox'
+                                })
+                        except Exception:
+                            continue
+            
+            logger.info(f"Received {len(proxies)} proxies from Prosox")
+            return proxies
+        except Exception as e:
+            logger.warning(f"Error loading proxies from Prosox: {e}")
+            return []
+    
+    def download_proxies(self, force_update: bool = False, clean_old: bool = True) -> bool:
         """Скачивает свежие прокси из всех источников"""
         try:
             if force_update:
                 logger.info("Forced proxy list update...")
+            
+            # Очищаем старые неработающие прокси из кеша перед загрузкой новых
+            if clean_old and self.successful_proxies:
+                logger.info("Cleaning old failed proxies from cache...")
+                removed = self.clean_failed_proxies_from_cache(max_to_check=50)
+                if removed > 0:
+                    logger.info(f"Removed {removed} failed proxies from cache")
             
             all_proxies = []
             
@@ -868,7 +1455,32 @@ class ProxyManager:
                 proxylist_me_proxies = self._download_proxies_from_proxylist_me()
                 all_proxies.extend(proxylist_me_proxies)
             
-            # Удаляем дубликаты
+            # Загружаем с Proxy6 (может требовать обход nginx JS challenge)
+            if PROXY_SOURCES.get('proxy6', {}).get('active', False):
+                proxy6_proxies = self._download_proxies_from_proxy6()
+                all_proxies.extend(proxy6_proxies)
+            
+            # Загружаем с Proxys.io (может требовать обход nginx JS challenge)
+            if PROXY_SOURCES.get('proxys_io', {}).get('active', False):
+                proxys_io_proxies = self._download_proxies_from_proxys_io()
+                all_proxies.extend(proxys_io_proxies)
+            
+            # Загружаем с Proxy-Seller (может требовать обход nginx JS challenge)
+            if PROXY_SOURCES.get('proxy_seller', {}).get('active', False):
+                proxy_seller_proxies = self._download_proxies_from_proxy_seller()
+                all_proxies.extend(proxy_seller_proxies)
+            
+            # Загружаем с Floppydata (может требовать обход nginx JS challenge)
+            if PROXY_SOURCES.get('floppydata', {}).get('active', False):
+                floppydata_proxies = self._download_proxies_from_floppydata()
+                all_proxies.extend(floppydata_proxies)
+            
+            # Загружаем с Prosox (может требовать обход nginx JS challenge)
+            if PROXY_SOURCES.get('prosox', {}).get('active', False):
+                prosox_proxies = self._download_proxies_from_prosox()
+                all_proxies.extend(prosox_proxies)
+            
+            # Удаляем дубликаты по IP:PORT
             seen = set()
             filtered_proxies = []
             for proxy in all_proxies:
@@ -878,6 +1490,14 @@ class ProxyManager:
                     filtered_proxies.append(proxy)
             
             logger.info(f"After removing duplicates: {len(filtered_proxies)} unique proxies")
+            
+            # Фильтруем по странам СНГ
+            if self.country_filter:
+                before_filter = len(filtered_proxies)
+                filtered_proxies = filter_proxies_by_country(filtered_proxies, self.country_filter)
+                after_filter = len(filtered_proxies)
+                if before_filter != after_filter:
+                    logger.info(f"Filtered proxies by CIS countries: {before_filter} → {after_filter} (removed {before_filter - after_filter})")
             
             # Сохраняем прокси
             with open(PROXIES_FILE, 'w', encoding='utf-8') as f:
@@ -1021,36 +1641,26 @@ class ProxyManager:
                         last_error = RuntimeError("empty_page_source")
                         continue
                     
-                    page_source_lower = page_source.lower()
-                    max_wait = 30
-                    wait_time = 0
+                    # Используем единую функцию wait_for_cloudflare для обработки защиты
+                    from utils import wait_for_cloudflare
+                    cloudflare_success, page_source = wait_for_cloudflare(
+                        driver, 
+                        max_wait=30, 
+                        thread_name=f"{browser_name}",
+                        context=f"proxy {proxy_key}"
+                    )
                     
-                    while ("cloudflare" in page_source_lower or "checking your browser" in page_source_lower or 
-                           "just a moment" in page_source_lower) and wait_time < max_wait:
-                        logger.info(f"Cloudflare check ({browser_name})... waiting {wait_time}/{max_wait} sec")
-                        time.sleep(3)
-                        try:
-                            driver.refresh()
-                            time.sleep(2)
-                            page_source = safe_get_page_source(driver)
-                            if not page_source:
-                                logger.warning(f"Tab crash during Cloudflare wait for proxy {proxy_key}")
-                                last_error = RuntimeError("tab_crash_during_cloudflare")
-                                break
-                            page_source_lower = page_source.lower()
-                        except Exception as refresh_error:
-                            logger.warning(f"Error refreshing page for proxy {proxy_key}: {refresh_error}")
-                            last_error = refresh_error
-                            break
-                        wait_time += 5
+                    if not cloudflare_success:
+                        logger.warning(f"Protection check failed for proxy {proxy_key} ({browser_name})")
+                        if page_source:
+                            self._save_debug_html(proxy_key, page_source, f"{browser_name}_cloudflare_timeout")
+                            debug_html_saved = True
+                        last_error = RuntimeError("protection_timeout")
+                        continue
                     
-                    if wait_time >= max_wait:
-                        logger.warning(f"Cloudflare check failed for proxy {proxy_key} ({browser_name})")
-                        self._save_debug_html(proxy_key, page_source, f"{browser_name}_cloudflare_timeout")
-                        debug_html_saved = True
-                        return False, {}
-                    
-                    if last_error:
+                    if not page_source:
+                        logger.warning(f"Tab crash during protection wait for proxy {proxy_key}")
+                        last_error = RuntimeError("tab_crash_during_cloudflare")
                         continue
                     
                     logger.debug(f"Getting page count via proxy {proxy_key} ({browser_name})...")

@@ -188,7 +188,8 @@ def wait_for_cloudflare(
     context: str = ""
 ) -> Tuple[bool, Optional[str]]:
     """
-    Ожидает прохождения Cloudflare проверки.
+    Ожидает прохождения защиты сайта (nginx/Cloudflare/другие механизмы).
+    Обновлено для работы с nginx блокировкой.
     
     Args:
         driver: WebDriver объект
@@ -198,7 +199,7 @@ def wait_for_cloudflare(
         
     Returns:
         tuple: (success: bool, page_source: Optional[str])
-        - success: True если Cloudflare прошел, False если таймаут
+        - success: True если защита прошла, False если таймаут
         - page_source: Исходный HTML страницы или None при ошибке
     """
     if max_wait is None:
@@ -214,26 +215,59 @@ def wait_for_cloudflare(
     log_prefix = f"[{thread_name}] " if thread_name else ""
     context_suffix = f" {context}" if context else ""
     
-    while ("cloudflare" in page_source_lower or 
-           "checking your browser" in page_source_lower or 
-           "just a moment" in page_source_lower) and wait_time < max_wait:
-        logger.info(f"{log_prefix}Cloudflare check{context_suffix}... waiting {wait_time}/{max_wait} sec")
-        time.sleep(CLOUDFLARE_REFRESH_DELAY)
+    # Проверяем на различные типы защиты: nginx JS challenge, cloudflare, и другие
+    protection_keywords = [
+        "cloudflare", "checking your browser", "just a moment",
+        "nginx", "ngenix", "nginx/", "nginx cdn", "nginx js challenge",
+        "403 forbidden", "access denied", "service temporarily unavailable",
+        "temporarily unavailable", "please wait", "verifying you are human",
+        "challenge", "js challenge", "javascript challenge"
+    ]
+    
+    has_protection = any(keyword in page_source_lower for keyword in protection_keywords)
+    
+    while has_protection and wait_time < max_wait:
+        # Определяем тип защиты для логирования
+        if "nginx" in page_source_lower or "ngenix" in page_source_lower or "nginx js challenge" in page_source_lower:
+            protection_type = "nginx js challenge"
+        elif "403" in page_source_lower or "access denied" in page_source_lower:
+            protection_type = "nginx"
+        elif "cloudflare" in page_source_lower:
+            protection_type = "cloudflare"
+        elif "challenge" in page_source_lower or "verifying" in page_source_lower:
+            protection_type = "js challenge"
+        else:
+            protection_type = "protection"
+        
+        logger.info(f"{log_prefix}{protection_type.capitalize()} check{context_suffix}... waiting {wait_time}/{max_wait} sec")
+        
+        # Для JS challenge даем больше времени на выполнение JavaScript
+        if "challenge" in protection_type.lower():
+            time.sleep(CLOUDFLARE_REFRESH_DELAY + 2)  # Дополнительное время для JS
+        else:
+            time.sleep(CLOUDFLARE_REFRESH_DELAY)
+        
         try:
-            driver.refresh()
-            time.sleep(CLOUDFLARE_REFRESH_WAIT)
+            # Для JS challenge не делаем refresh сразу, даем время на выполнение
+            if "challenge" in protection_type.lower():
+                time.sleep(3)  # Дополнительное ожидание для выполнения JS
+            else:
+                driver.refresh()
+                time.sleep(CLOUDFLARE_REFRESH_WAIT)
+            
             page_source = safe_get_page_source(driver)
             if not page_source:
-                logger.error(f"{log_prefix}[TAB CRASH] Tab crash during Cloudflare wait{context_suffix}")
+                logger.error(f"{log_prefix}[TAB CRASH] Tab crash during protection wait{context_suffix}")
                 return False, None
             page_source_lower = page_source.lower()
+            has_protection = any(keyword in page_source_lower for keyword in protection_keywords)
         except Exception as refresh_error:
             logger.warning(f"{log_prefix}Error refreshing page{context_suffix}: {refresh_error}")
             return False, None
         wait_time += CLOUDFLARE_CHECK_INTERVAL
     
     if wait_time >= max_wait:
-        logger.warning(f"{log_prefix}Cloudflare check failed{context_suffix} (timeout: {max_wait}s)")
+        logger.warning(f"{log_prefix}Protection check failed{context_suffix} (timeout: {max_wait}s)")
         return False, page_source
     
     return True, page_source
@@ -262,7 +296,7 @@ def has_catalog_structure(soup: BeautifulSoup) -> bool:
 
 def is_page_blocked(soup: BeautifulSoup, page_source: str) -> Dict[str, any]:
     """
-    Проверяет, заблокирована ли страница Cloudflare или другими механизмами защиты.
+    Проверяет, заблокирована ли страница nginx или другими механизмами защиты.
     Улучшенная версия с проверкой на частичную загрузку и альтернативными селекторами.
     
     Args:
@@ -275,13 +309,24 @@ def is_page_blocked(soup: BeautifulSoup, page_source: str) -> Dict[str, any]:
     page_source_lower = page_source.lower() if page_source else ""
     
     blocker_keywords = [
+        # Nginx/Ngenix CDN JS Challenge блокировки
+        "nginx", "ngenix", "nginx/", "nginx cdn", "nginx js challenge",
+        "nginx error", "nginx blocking", "access denied by nginx",
+        "nginx access forbidden", "403 forbidden",
+        # JS Challenge признаки
+        "js challenge", "javascript challenge", "challenge", "verifying you are human",
+        "please wait", "please enable javascript", "executing javascript",
+        # Общие блокировки
         "cloudflare", "attention required", "checking your browser", "just a moment",
         "access denied", "forbidden", "service temporarily unavailable",
         "temporarily unavailable", "maintenance", "запрос отклонен",
         "доступ запрещен", "ошибка 403", "ошибка 503", "error 403", "error 503",
-        "captcha", "please enable javascript", "varnish cache server",
+        "captcha", "varnish cache server",
         "bad gateway", "gateway timeout", "502 bad gateway", "504 gateway timeout",
-        "too many requests", "rate limit", "blocked", "banned"
+        "too many requests", "rate limit", "blocked", "banned",
+        # Дополнительные признаки блокировки
+        "the page you are looking for is temporarily unavailable",
+        "this page isn't working", "refused to connect"
     ]
     
     for keyword in blocker_keywords:
@@ -849,7 +894,7 @@ def get_pages_count_with_driver(driver: webdriver.Remote, url: str = "https://tr
             # Для других ошибок пробрасываем дальше
             raise
         
-        # Ждем Cloudflare - используем безопасное получение page_source
+        # Ждем прохождения защиты (nginx/cloudflare) - используем безопасное получение page_source
         page_source = safe_get_page_source(driver)
         if not page_source:
             logger.error("Failed to get page_source after page load")
@@ -859,18 +904,46 @@ def get_pages_count_with_driver(driver: webdriver.Remote, url: str = "https://tr
         max_wait = CLOUDFLARE_WAIT_TIMEOUT
         wait_time = 0
         
-        while ("cloudflare" in page_source_lower or "checking your browser" in page_source_lower or 
-               "just a moment" in page_source_lower) and wait_time < max_wait:
-            logger.info(f"Cloudflare check... waiting {wait_time}/{max_wait} sec")
-            time.sleep(3)
+        # Проверяем на различные типы защиты (включая nginx JS challenge)
+        protection_keywords = [
+            "cloudflare", "checking your browser", "just a moment",
+            "nginx", "ngenix", "nginx js challenge", "nginx cdn",
+            "403 forbidden", "nginx/", "access denied",
+            "service temporarily unavailable", "challenge", "js challenge",
+            "verifying you are human", "please wait"
+        ]
+        has_protection = any(keyword in page_source_lower for keyword in protection_keywords)
+        
+        while has_protection and wait_time < max_wait:
+            # Определяем тип защиты
+            if "nginx" in page_source_lower or "ngenix" in page_source_lower or "nginx js challenge" in page_source_lower:
+                protection_type = "nginx js challenge"
+            elif "403" in page_source_lower or "access denied" in page_source_lower:
+                protection_type = "nginx"
+            elif "challenge" in page_source_lower or "verifying" in page_source_lower:
+                protection_type = "js challenge"
+            else:
+                protection_type = "protection"
+            logger.info(f"{protection_type.capitalize()} check... waiting {wait_time}/{max_wait} sec")
+            
+            # Для JS challenge даем больше времени на выполнение JavaScript
+            if "challenge" in protection_type.lower():
+                time.sleep(5)  # Дополнительное время для выполнения JS
+            else:
+                time.sleep(3)
+            
             try:
-                driver.refresh()
-                time.sleep(2)
+                # Для JS challenge не делаем refresh сразу, даем время на выполнение
+                if "challenge" not in protection_type.lower():
+                    driver.refresh()
+                    time.sleep(2)
+                
                 page_source = safe_get_page_source(driver)
                 if not page_source:
-                    logger.error("Tab crash during Cloudflare wait")
+                    logger.error("Tab crash during protection wait")
                     return None
                 page_source_lower = page_source.lower()
+                has_protection = any(keyword in page_source_lower for keyword in protection_keywords)
             except Exception as refresh_error:
                 logger.warning(f"Error refreshing page: {refresh_error}")
                 return None

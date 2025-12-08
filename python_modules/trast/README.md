@@ -1,10 +1,11 @@
 # Парсер trast-zapchast.ru
 
-Однопоточный парсер товаров с сайта trast-zapchast.ru с улучшенным обходом Cloudflare.
+Однопоточный парсер товаров с сайта trast-zapchast.ru с улучшенным обходом nginx и других систем защиты.
 
 ## Особенности
 
-- ✅ Однопоточность для лучшего обхода Cloudflare
+- ✅ Однопоточность для лучшего обхода защиты (nginx/cloudflare)
+- ✅ Фильтрация прокси только из СНГ стран
 - ✅ Использование undetected-chromedriver для Chrome
 - ✅ Умное переиспользование cookies через cloudscraper
 - ✅ Fallback на Selenium при необходимости
@@ -67,11 +68,13 @@ python main.py
 ```
 
 Парсер автоматически:
-1. Загрузит прокси из источников (proxymania.su, proxifly)
-2. Проверит прокси на доступность trast-zapchast.ru
-3. Получит количество страниц
-4. Начнет парсинг товаров
-5. Сохранит результаты в `output/trast.csv` и `output/trast.xlsx`
+1. Загрузит прокси из источников (proxymania.su, proxifly, Proxy6, Proxys.io, Proxy-Seller, Floppydata, Prosox и др.)
+2. Фильтрует прокси только из стран СНГ (RU, BY, KZ, AM, AZ, GE, KG, MD, TJ, TM, UZ, UA)
+3. Обходит nginx JS challenge и другие системы защиты
+4. Проверит прокси на доступность trast-zapchast.ru
+5. Получит количество страниц
+6. Начнет парсинг товаров
+7. Сохранит результаты в `output/trast.csv` и `output/trast.xlsx`
 
 ## Структура проекта
 
