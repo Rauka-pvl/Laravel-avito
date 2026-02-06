@@ -91,7 +91,7 @@ class ImagesController extends Controller
         $sql = "SELECT * FROM images WHERE LOWER(brand) = LOWER(:brand) AND LOWER(articul) LIKE LOWER(CONCAT('%', :articul, '%'))";
         $stmt = $pdo->prepare($sql);
         $stmt->bindParam(':brand', $brand, PDO::PARAM_STR);
-        $stmt->bindParam(':articul', $json->article, PDO::PARAM_STR);
+        $stmt->bindParam(':articul', $json->article . '.jpg', PDO::PARAM_STR);
         $stmt->execute();
         $result = $stmt->fetchAll(PDO::FETCH_OBJ);
 
