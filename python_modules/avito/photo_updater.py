@@ -143,7 +143,7 @@ def update_price(ad, brand, articul, db_connection):
         if price_elem is not None:
             ad.remove(price_elem)
         new_price = ET.SubElement(ad, 'Price')
-        new_price.text = str(best_price)
+        new_price.text = str(int(best_price))
 
         logging.info(f"Price updated for {brand} {articul}: old = {old_price}, new = {best_price}, distributor = {selected_distributor}")
 
