@@ -139,13 +139,25 @@ def update_price(ad, brand, articul, db_connection):
 
         # Обновляем XML
         price_elem = ad.find('Price')
-        old_price = price_elem.text if price_elem is not None else None
-        if price_elem is not None:
-            ad.remove(price_elem)
-        new_price = ET.SubElement(ad, 'Price')
-        new_price.text = str(int(best_price))
+        old_price_raw = price_elem.text if price_elem is not None else None
+        old_price_value = None
+        if old_price_raw is not None:
+            try:
+                old_price_value = int(float(str(old_price_raw).strip()))
+            except (TypeError, ValueError):
+                old_price_value = None
 
-        logging.info(f"Price updated for {brand} {articul}: old = {old_price}, new = {best_price}, distributor = {selected_distributor}")
+        new_price_value = int(best_price)
+        final_price_value = max(old_price_value, new_price_value) if old_price_value is not None else new_price_value
+
+        if price_elem is None:
+            price_elem = ET.SubElement(ad, 'Price')
+        price_elem.text = str(final_price_value)
+
+        logging.info(
+            f"Price updated for {brand} {articul}: old = {old_price_raw}, "
+            f"parsed = {new_price_value}, final = {final_price_value}, distributor = {selected_distributor}"
+        )
 
     except Exception as e:
         logging.error(f"Error in update_price: {e}")
