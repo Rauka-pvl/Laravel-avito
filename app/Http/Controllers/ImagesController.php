@@ -9,7 +9,6 @@ use Illuminate\Support\Facades\DB;
 use Exception;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
-use PDO;
 use Illuminate\Support\Facades\Log;
 
 use function PHPUnit\Framework\returnSelf;
@@ -28,101 +27,56 @@ class ImagesController extends Controller
     }
     public function getOnArticul(Request $request)
     {
-        // $brands = BrandSprav::select('brand')->where('brand', '=', $request->brand)->get();
-        // $brands = BrandSprav::where(function ($query) use ($request) {
-        //     $query->whereRaw('LOWER(brand) = LOWER(?)', [$request->brand])
-        //         ->orWhereRaw('LOWER(sprav) LIKE LOWER(CONCAT("% | ", ?, " | %"))', [$request->brand])
-        //         ->orWhereRaw('LOWER(sprav) LIKE LOWER(CONCAT("%", ?, "%"))', [$request->brand])
-        //         ->orWhereRaw('LOWER(sprav) = LOWER(?)', [$request->brand]);
-        // })->first();
-        // if ($brands && $brands->count() > 0) {
-        //     $brand = $brands->brand;
-        // } else {
-        //     $brand = $request->brand;
-        // }
-
-        // $images = Image::whereRaw('LOWER(brand) like LOWER(?)', ['%' . $brand . '%'])
-        //     ->whereRaw('LOWER(articul) like LOWER(?)', ['%' . $request->article . '%'])
-        //     ->get();
-
-        // $data = [];
-        // if ($images->count() > 0) {
-        //     foreach ($images as $image) {
-        //         $url = "https://233204.fornex.cloud/storage/uploads/" . strtolower($image->brand) . "/" . $image->articul;
-        //         $url = str_replace(' ', '%20', $url);
-        //         $imageInfo = getimagesize($url);
-        //         if ($imageInfo !== false) {
-        //             array_push($data, ["url" => $url]);
-        //         }
-        //     }
-
-        //     if (!empty($data)) {
-        //         return response()->json($data);
-        //     } else {
-        //         return response()->json(["error" => "Изображение не найдено"], 404);
-        //     }
-        // } else {
-        //     return response()->json(["error" => "Изображение не найдено!"], 404);
-        // }
-
-        $pdo = DB::connection()->getPdo();
         $json = json_decode($request->getContent());
-        $json = $json[0] ?? $json;
-        $stmt1 = $pdo->prepare("SELECT brand FROM brand_sprav
-            WHERE LOWER(brand) = LOWER(:brand)
-            OR LOWER(sprav) LIKE LOWER(CONCAT('% | ', :sprav1, ' | %'))
-            OR LOWER(sprav) LIKE LOWER(CONCAT('%', :sprav2, '%'))
-            OR LOWER(sprav) = LOWER(:sprav3)");
+        $json = is_array($json) ? ($json[0] ?? null) : $json;
 
-        $stmt1->execute([
-            ':brand' => $json->brand,
-            ':sprav1' => $json->brand,
-            ':sprav2' => $json->brand,
-            ':sprav3' => $json->brand,
-        ]);
-
-        $sprav = $stmt1->fetch(PDO::FETCH_COLUMN);
-        if ($sprav) {
-            $brand = $sprav;
-        } else {
-            $brand = $json->brand;
+        if (!$json || empty($json->brand) || !isset($json->article) || $json->article === '') {
+            return response()->json(['error' => 'Неверный формат запроса'], 400);
         }
 
-        $sql = "SELECT * FROM images WHERE LOWER(brand) = LOWER(:brand) AND LOWER(articul) REGEXP LOWER(CONCAT('^', :articul, '[0-9]+\\.jpg$'))";
-        $stmt = $pdo->prepare($sql);
-        $stmt->bindParam(':brand', $brand, PDO::PARAM_STR);
-        $stmt->bindParam(':articul', $json->article, PDO::PARAM_STR);
-        $stmt->execute();
-        $result = $stmt->fetchAll(PDO::FETCH_OBJ);
+        $brands = $this->getMatchingBrands($json->brand);
+        $normalizedArticle = $this->normalizeArticle($json->article);
+
+        $placeholders = implode(',', array_fill(0, count($brands), '?'));
+        $result = DB::select(
+            "SELECT * FROM images
+             WHERE LOWER(brand) IN ($placeholders)
+             AND LOWER(articul) LIKE LOWER(?)
+             ORDER BY articul",
+            array_merge($brands, [$normalizedArticle . '%'])
+        );
 
         $data = [];
-        if (!empty($result)) {
-            $baseUrl = $request->getSchemeAndHttpHost();
+        $baseUrl = $request->getSchemeAndHttpHost();
 
-            foreach ($result as $row) {
-                $relativePath = 'uploads/' . strtolower($row->brand) . '/' . $row->articul;
-
-                if (!Storage::disk('public')->exists($relativePath)) {
-                    continue;
-                }
-
-                if (@getimagesize(storage_path('app/public/' . $relativePath)) === false) {
-                    continue;
-                }
-
-                $url = $baseUrl . '/storage/' . $relativePath;
-                $url = str_replace(' ', '%20', $url);
-                $data[] = ['url' => $url];
+        foreach ($result as $row) {
+            if (!$this->isImageFile($row->articul)) {
+                continue;
             }
 
-            if (!empty($data)) {
-                return response()->json($data);
-            } else {
-                return response()->json(["error" => "Изображение не найдено"], 404);
+            $relativePath = 'uploads/' . strtolower($row->brand) . '/' . $row->articul;
+
+            if (!Storage::disk('public')->exists($relativePath)) {
+                continue;
             }
-        } else {
-            return response()->json(["error" => "Изображение не найдено!"], 404);
+
+            if (@getimagesize(storage_path('app/public/' . $relativePath)) === false) {
+                continue;
+            }
+
+            $url = $baseUrl . '/storage/' . $relativePath;
+            $data[] = ['url' => str_replace(' ', '%20', $url)];
         }
+
+        if (!empty($data)) {
+            return response()->json($data);
+        }
+
+        if (!empty($result)) {
+            return response()->json(['error' => 'Изображение не найдено'], 404);
+        }
+
+        return response()->json(['error' => 'Изображение не найдено!'], 404);
     }
     public function view(Request $request)
     {
@@ -154,12 +108,15 @@ class ImagesController extends Controller
         ]);
 
         $brand = Str::lower(trim($request->input('brand')));
-        $articul = Str::lower(preg_replace('/[-_\s]+/', '', $request->input('articul')));
+        $articul = $this->normalizeArticle($request->input('articul'));
         $uploadDirectory = 'public/uploads/' . $brand . '/';
 
         // Перебор загруженных файлов
         foreach ($request->file('images') as $key => $image) {
-            $filename = $articul . ($key > 0 ? "_$key" : '') . '.' . $image->getClientOriginalExtension();
+            $extension = strtolower($image->getClientOriginalExtension());
+            $filename = $key === 0
+                ? $articul . '.' . $extension
+                : $articul . '_' . $key . '.' . $extension;
 
             // Путь к файлу
             $uploadPath = $uploadDirectory . $filename;
@@ -207,9 +164,7 @@ class ImagesController extends Controller
             foreach ($request->file_names as $key => $fileName) {
                 // Получаем бренд и артикул
                 $brand = strtolower(trim($request->brands[$key]));
-                $articul = preg_replace('/[-_\s]+/', '', $fileName);
-                $articul = preg_replace('/\.(?=.*\.)/', '', $articul);
-                $articul = strtolower(trim($articul));
+                $articul = $this->normalizeUploadedFileName($fileName);
 
                 // Создаем директорию для бренда, если она не существует
                 $uploadDirectory = "uploads/{$brand}/"; // Директория для загрузки
@@ -301,5 +256,56 @@ class ImagesController extends Controller
         } else {
             return response()->json(['success' => false, 'false' => 'Ничего не выбрано!']);
         }
+    }
+
+    private function normalizeArticle(string $article): string
+    {
+        $article = strtolower(trim($article));
+        $article = preg_replace('/[-\s]+/', '', $article);
+        $article = preg_replace('/\.(jpe?g|png|gif|svg|webp)$/i', '', $article);
+
+        return $article;
+    }
+
+    private function normalizeUploadedFileName(string $fileName): string
+    {
+        $fileName = strtolower(trim($fileName));
+        $fileName = preg_replace('/[-\s]+/', '', $fileName);
+
+        if (!preg_match('/\.(jpe?g|png|gif|svg|webp)$/i', $fileName)) {
+            $fileName .= '.jpg';
+        }
+
+        return $fileName;
+    }
+
+    private function getMatchingBrands(string $brand): array
+    {
+        $brand = trim($brand);
+        $rows = BrandSprav::whereRaw('LOWER(brand) = LOWER(?)', [$brand])
+            ->orWhereRaw('LOWER(sprav) LIKE LOWER(?)', ['%' . $brand . '%'])
+            ->get();
+
+        $brands = collect([strtolower($brand)]);
+
+        foreach ($rows as $row) {
+            $brands->push(strtolower($row->brand));
+
+            if ($row->sprav) {
+                foreach (explode('|', $row->sprav) as $synonym) {
+                    $synonym = strtolower(trim($synonym));
+                    if ($synonym !== '') {
+                        $brands->push($synonym);
+                    }
+                }
+            }
+        }
+
+        return $brands->unique()->values()->all();
+    }
+
+    private function isImageFile(string $filename): bool
+    {
+        return (bool) preg_match('/\.(jpe?g|png|gif|svg|webp)$/i', $filename);
     }
 }
