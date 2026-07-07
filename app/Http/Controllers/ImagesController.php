@@ -11,8 +11,6 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
 
-use function PHPUnit\Framework\returnSelf;
-
 class ImagesController extends Controller
 {
     public function index()
@@ -41,7 +39,7 @@ class ImagesController extends Controller
         $result = DB::select(
             "SELECT * FROM images
              WHERE LOWER(brand) IN ($placeholders)
-             AND LOWER(articul) LIKE LOWER(?)
+             AND LOWER(REPLACE(REPLACE(articul, ' ', ''), '.', '')) LIKE LOWER(?)
              ORDER BY articul",
             array_merge($brands, [$normalizedArticle . '%'])
         );
@@ -51,6 +49,9 @@ class ImagesController extends Controller
 
         foreach ($result as $row) {
             if (!$this->isImageFile($row->articul)) {
+                continue;
+            }
+            if (!$this->matchesArticle($row->articul, $normalizedArticle)) {
                 continue;
             }
 
@@ -261,7 +262,7 @@ class ImagesController extends Controller
     private function normalizeArticle(string $article): string
     {
         $article = strtolower(trim($article));
-        $article = preg_replace('/[-\s]+/', '', $article);
+        $article = preg_replace('/[.\s]+/', '', $article);
         $article = preg_replace('/\.(jpe?g|png|gif|svg|webp)$/i', '', $article);
 
         return $article;
@@ -270,13 +271,36 @@ class ImagesController extends Controller
     private function normalizeUploadedFileName(string $fileName): string
     {
         $fileName = strtolower(trim($fileName));
-        $fileName = preg_replace('/[-\s]+/', '', $fileName);
+        $fileInfo = pathinfo($fileName);
+        $baseName = $fileInfo['filename'] ?? $fileName;
+        $baseName = preg_replace('/[.\s]+/', '', $baseName);
+        $extension = strtolower($fileInfo['extension'] ?? 'jpg');
 
-        if (!preg_match('/\.(jpe?g|png|gif|svg|webp)$/i', $fileName)) {
-            $fileName .= '.jpg';
+        if (!in_array($extension, ['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp'], true)) {
+            $extension = 'jpg';
         }
 
-        return $fileName;
+        return $baseName . '.' . $extension;
+    }
+
+    private function normalizeArticleStem(string $filename): string
+    {
+        $stem = pathinfo(strtolower(trim($filename)), PATHINFO_FILENAME);
+        return preg_replace('/[.\s]+/', '', $stem);
+    }
+
+    private function matchesArticle(string $filename, string $normalizedArticle): bool
+    {
+        $normalizedStem = $this->normalizeArticleStem($filename);
+
+        if ($normalizedStem === $normalizedArticle) {
+            return true;
+        }
+
+        return (bool) preg_match(
+            '/^' . preg_quote($normalizedArticle, '/') . '(_\d+|\(\d+\)|\d+)$/i',
+            $normalizedStem
+        );
     }
 
     private function getMatchingBrands(string $brand): array
