@@ -1,4 +1,5 @@
 import os
+import re
 import requests
 import certifi
 import logging
@@ -40,6 +41,27 @@ def get_matching_brands(brand: str, db):
         logging.error(f"Error fetching brands from reference table: {e}")
         return [brand.lower()]
 
+def _normalize_article(article: str) -> str:
+    article = article.lower().strip()
+    article = re.sub(r'[.\s]+', '', article)
+    article = re.sub(r'\.(jpe?g|png|gif|svg|webp)$', '', article, flags=re.I)
+    return article
+
+def matches_article(filename: str, article: str) -> bool:
+    """Exact article or multi-photo suffix (_1 / (1)). Rejects longer OEM prefixes."""
+    stem = os.path.splitext(filename.lower().strip())[0]
+    stem = re.sub(r'[.\s]+', '', stem)
+    article_norm = _normalize_article(article)
+
+    if stem == article_norm:
+        return True
+
+    return bool(re.match(
+        rf'^{re.escape(article_norm)}(_\d+|\(\d+\))$',
+        stem,
+        flags=re.I,
+    ))
+
 def update_photo(ad, db):
     try:
         ad_id = ad.find('Id').text
@@ -65,6 +87,8 @@ def update_photo(ad, db):
         with db.cursor(dictionary=True, buffered=True) as cursor:
             cursor.execute(query, (*valid_brands, f"{articul.lower()}%"))
             rows = cursor.fetchall()
+
+        rows = [row for row in rows if matches_article(row['articul'], articul)]
 
         if not rows:
             logging.warning(f"No images found for Brand: {brand}, Article: {articul}")

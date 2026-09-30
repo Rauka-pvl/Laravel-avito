@@ -4,6 +4,7 @@ import logging
 import xml.etree.ElementTree as ET
 from pathlib import Path
 import os
+import re
 import certifi
 import time
 from datetime import datetime
@@ -205,6 +206,27 @@ def connect_to_db():
         logging.error(f"Ошибка подключения к базе данных: {err}")
         raise
 
+def _normalize_article(article: str) -> str:
+    article = article.lower().strip()
+    article = re.sub(r'[.\s]+', '', article)
+    article = re.sub(r'\.(jpe?g|png|gif|svg|webp)$', '', article, flags=re.I)
+    return article
+
+def matches_article(filename: str, article: str) -> bool:
+    """Точный артикул или суффикс мультифото (_1 / (1)). Не берёт более длинный OEM."""
+    stem = os.path.splitext(filename.lower().strip())[0]
+    stem = re.sub(r'[.\s]+', '', stem)
+    article_norm = _normalize_article(article)
+
+    if stem == article_norm:
+        return True
+
+    return bool(re.match(
+        rf'^{re.escape(article_norm)}(_\d+|\(\d+\))$',
+        stem,
+        flags=re.I,
+    ))
+
 # Обновление фотографий
 def update_photo(ad, db_connection):
     try:
@@ -230,6 +252,8 @@ def update_photo(ad, db_connection):
         with db_connection.cursor(dictionary=True) as cursor:
             cursor.execute(query, (*valid_brands, f"{articul.lower()}%"))
             rows = cursor.fetchall()
+
+        rows = [row for row in rows if matches_article(row['articul'], articul)]
 
         if not rows:
             logging.warning(f"Фото не найдено для Бренда: {brand}, Артикул: {articul}")
@@ -271,6 +295,8 @@ def update_photo_yml(offer, db_connection):
         with db_connection.cursor(dictionary=True) as cursor:
             cursor.execute(query, (*valid_brands, f"{vendor_code.lower()}%"))
             rows = cursor.fetchall()
+
+        rows = [row for row in rows if matches_article(row['articul'], vendor_code)]
 
         if not rows:
             logging.warning(f"Фото не найдено для Бренда: {vendor}, Артикул: {vendor_code}")
