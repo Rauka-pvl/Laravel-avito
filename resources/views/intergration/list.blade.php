@@ -16,6 +16,23 @@
                 </div>
 
                 <div class="p-6 text-gray-900 dark:text-gray-100">
+                    <!-- Форма поиска -->
+                    <form method="GET" action="{{ route('intergration.list', $id) }}" class="mb-4 flex gap-4 items-center">
+                        <input type="text" name="search" placeholder="Бренд, артикул, описание" value="{{ request('search') }}"
+                            class="border text-black rounded p-2 w-1/3" style="color: black;">
+
+                        <label class="flex items-center gap-2 text-sm whitespace-nowrap">
+                            <input type="checkbox" name="cyrillic" value="1" {{ request('cyrillic') ? 'checked' : '' }}>
+                            Только с кириллицей
+                        </label>
+
+                        <button type="submit" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded">
+                            Применить
+                        </button>
+                    </form>
+                </div>
+
+                <div class="p-6 text-gray-900 dark:text-gray-100">
                     <div id="success-message" class="hidden bg-green-500 text-white p-2 rounded mb-2 text-sm"></div>
 
                     <table class="table-auto w-full border-collapse text-center" id="integration-table">
@@ -33,12 +50,9 @@
                         <tbody>
                             @foreach ($intergration as $brand)
                                 <tr data-id="{{ $brand->id }}">
-                                    <td contenteditable="true" class="editable px-2 py-1 border" data-field="brand">{{ $brand->brand }}</td>
-                                    <td contenteditable="true" class="editable px-2 py-1 border" data-field="article">{{ $brand->article }}</td>
-                                    <td contenteditable="true" class="editable px-2 py-1 border" data-field="description">{{ $brand->description }}</td>
-                                    <td contenteditable="true" class="editable px-2 py-1 border" data-field="brand_replace">{{ $brand->brand_replace }}</td>
-                                    <td contenteditable="true" class="editable px-2 py-1 border" data-field="description_replace">{{ $brand->description_replace }}</td>
-                                    <td contenteditable="true" class="editable px-2 py-1 border" data-field="article_replace">{{ $brand->article_replace }}</td>
+                                    @foreach (['brand', 'article', 'description', 'brand_replace', 'description_replace', 'article_replace'] as $field)
+                                        <td contenteditable="true" class="editable px-2 py-1 border" data-field="{{ $field }}">{!! request('cyrillic') ? preg_replace('/([А-Яа-яЁё])/u', '<span class="text-red-500 font-bold">$1</span>', e($brand->$field)) : e($brand->$field) !!}</td>
+                                    @endforeach
                                     <td class="px-2 py-2 border flex gap-2 justify-center">
                                         <button class="save-btn bg-green-500 hover:bg-green-600 text-white px-2 py-1 rounded-md text-sm transition hidden">Сохранить</button>
                                         <form action="{{ route('intergration.list.destroy', $brand->id) }}" method="POST" onsubmit="return confirm('Вы уверены?')">

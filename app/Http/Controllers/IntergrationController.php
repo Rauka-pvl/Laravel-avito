@@ -8,10 +8,25 @@ use Illuminate\Http\Request;
 
 class IntergrationController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        $typeInters = TypeIntergration::withCount('intergrations')->get();
-        // dd($typeInnter);
+        $query = TypeIntergration::withCount('intergrations');
+
+        // Поиск по названию и описанию интеграции
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', '%' . $search . '%')
+                    ->orWhere('description', 'like', '%' . $search . '%');
+            });
+        }
+
+        // Только записи с кириллицей в названиях
+        if ($request->boolean('cyrillic')) {
+            $query->whereRaw("(name REGEXP '[А-Яа-яЁё]' OR description REGEXP '[А-Яа-яЁё]')");
+        }
+
+        $typeInters = $query->get();
         return view('intergration.index', compact('typeInters'));
     }
     public function createEdit($id = null)
@@ -61,10 +76,33 @@ class IntergrationController extends Controller
     }
 
 
-    public function list($id)
+    public function list(Request $request, $id)
     {
         $typeInter = TypeIntergration::find($id)->name;
-        $intergration = Intergration::where('type_integration', '=', $id)->paginate(30);
+        $query = Intergration::where('type_integration', '=', $id);
+
+        $searchableFields = ['brand', 'article', 'description', 'brand_replace', 'article_replace', 'description_replace'];
+
+        // Поиск по всем текстовым полям
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $query->where(function ($q) use ($searchableFields, $search) {
+                foreach ($searchableFields as $field) {
+                    $q->orWhere($field, 'like', '%' . $search . '%');
+                }
+            });
+        }
+
+        // Только записи с кириллицей в названиях
+        if ($request->boolean('cyrillic')) {
+            $cyrillicWhere = implode(' OR ', array_map(
+                fn($field) => "$field REGEXP '[А-Яа-яЁё]'",
+                $searchableFields
+            ));
+            $query->whereRaw("($cyrillicWhere)");
+        }
+
+        $intergration = $query->paginate(30)->appends($request->query());
         return view('intergration.list', compact('id', 'intergration', 'typeInter'));
     }
     public function listCreateEdit(Request $request, $id = null)

@@ -13,6 +13,23 @@
                          Создать интеграцию
                      </a>
                 </div>
+
+                <div class="p-6 text-gray-900 dark:text-gray-100">
+                    <!-- Форма поиска -->
+                    <form method="GET" action="{{ route('intergration.index') }}" class="mb-4 flex gap-4 items-center">
+                        <input type="text" name="search" placeholder="Название или описание" value="{{ request('search') }}"
+                            class="border text-black rounded p-2 w-1/3" style="color: black;">
+
+                        <label class="flex items-center gap-2 text-sm whitespace-nowrap">
+                            <input type="checkbox" name="cyrillic" value="1" {{ request('cyrillic') ? 'checked' : '' }}>
+                            Только с кириллицей
+                        </label>
+
+                        <button type="submit" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded">
+                            Применить
+                        </button>
+                    </form>
+                </div>
                 <div class="p-6 text-gray-900 dark:text-gray-100">
                     @if (session('success'))
                         <div class="bg-green-500 text-white p-4 rounded mb-4">
@@ -40,8 +57,8 @@
                         <tbody>
                             @foreach ( $typeInters as $inter )
                                 <tr>
-                                    <td class="px-4 py-2 border">{{ $inter->name }}</td>
-                                    <td class="px-4 py-2 border">{{ $inter->description }}</td>
+                                    <td class="px-4 py-2 border">{!! preg_replace('/([А-Яа-яЁё])/u', '<span class="text-red-500 font-bold">$1</span>', e($inter->name)) !!}</td>
+                                    <td class="px-4 py-2 border">{!! preg_replace('/([А-Яа-яЁё])/u', '<span class="text-red-500 font-bold">$1</span>', e($inter->description)) !!}</td>
                                     <td class="px-4 py-2 border">{{ $inter->intergrations_count }}</td>
                                     <td class="px-4 py-2 border flex gap-2">
                                         <a href="{{ route('intergration.list', $inter->id) }}"

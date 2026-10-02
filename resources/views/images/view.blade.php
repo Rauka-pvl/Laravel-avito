@@ -27,12 +27,17 @@
                         {{ session('error') }}
                     </div>
                     <!-- Форма фильтрации -->
-                    <form method="GET" action="{{ route('images.view') }}" class="mb-4 flex gap-4">
+                    <form method="GET" action="{{ route('images.view') }}" class="mb-4 flex gap-4 items-center">
                         <input type="text" name="brand" placeholder="Бренд" value="{{ request('brand') }}"
                             class="border text-black rounded p-2 w-1/3" style="color: black;">
 
                         <input type="text" name="article" placeholder="Артикул" value="{{ request('article') }}"
                             class="border text-black rounded p-2 w-1/3" style="color: black;">
+
+                        <label class="flex items-center gap-2 text-sm whitespace-nowrap">
+                            <input type="checkbox" name="cyrillic" value="1" {{ request('cyrillic') ? 'checked' : '' }}>
+                            Только с кириллицей
+                        </label>
 
                         <button type="submit" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded">
                             Применить
@@ -61,8 +66,8 @@
                                             value="{{ $image->id }}">
                                     </td>
                                     <td class="border border-gray-400 p-2">{{ $loop->iteration }}</td>
-                                    <td class="border border-gray-400 p-2">{{ $image->brand }}</td>
-                                    <td class="border border-gray-400 p-2">{{ $image->articul }}</td>
+                                    <td class="border border-gray-400 p-2">{!! preg_replace('/([А-Яа-яЁё])/u', '<span class="text-red-500 font-bold">$1</span>', e($image->brand)) !!}</td>
+                                    <td class="border border-gray-400 p-2">{!! preg_replace('/([А-Яа-яЁё])/u', '<span class="text-red-500 font-bold">$1</span>', e($image->articul)) !!}</td>
                                     <td class="border border-gray-400 p-2 text-center">
                                         <button type="button"
                                             class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded"

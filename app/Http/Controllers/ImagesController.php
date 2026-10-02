@@ -92,8 +92,13 @@ class ImagesController extends Controller
             $query->where('articul', 'like', '%' . $request->article . '%');
         }
 
+        // Только записи с кириллицей в названиях
+        if ($request->boolean('cyrillic')) {
+            $query->whereRaw("(brand REGEXP '[А-Яа-яЁё]' OR articul REGEXP '[А-Яа-яЁё]')");
+        }
+
         // Пагинация с 10 записями на странице
-        $images = $query->paginate(40);
+        $images = $query->paginate(40)->appends($request->query());
 
         return view('images.view', compact('images'));
     }

@@ -8,9 +8,26 @@ use Illuminate\Http\Request;
 
 class BrandSpravController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        $brands = Image::select('brand')->distinct('brand')->paginate(30);
+        $query = Image::select('brand')->distinct('brand');
+
+        // Поиск по названию бренда
+        if ($request->filled('search')) {
+            $query->where('brand', 'like', '%' . $request->search . '%');
+        }
+
+        // Только бренды с кириллицей (включая справочник синонимов brand_sprav)
+        if ($request->boolean('cyrillic')) {
+            $spravBrands = BrandSprav::whereRaw("brand REGEXP '[А-Яа-яЁё]' OR sprav REGEXP '[А-Яа-яЁё]'")
+                ->select('brand');
+            $query->where(function ($q) use ($spravBrands) {
+                $q->whereRaw("brand REGEXP '[А-Яа-яЁё]'")
+                    ->orWhereIn('brand', $spravBrands);
+            });
+        }
+
+        $brands = $query->paginate(30)->appends($request->query());
         return view("brand", compact("brands"));
     }
     public function view($brand)
