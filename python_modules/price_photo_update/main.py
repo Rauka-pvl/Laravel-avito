@@ -213,7 +213,7 @@ def _normalize_article(article: str) -> str:
     return article
 
 def matches_article(filename: str, article: str) -> bool:
-    """Точный артикул или суффикс мультифото (_1 / (1)). Не берёт более длинный OEM."""
+    """Точный артикул, _N / (N) или ровно одна цифра в конце (a2c93217600802)."""
     stem = os.path.splitext(filename.lower().strip())[0]
     stem = re.sub(r'[.\s]+', '', stem)
     article_norm = _normalize_article(article)
@@ -221,8 +221,9 @@ def matches_article(filename: str, article: str) -> bool:
     if stem == article_norm:
         return True
 
+    # Уточнение 2026-10-13, пользователь: одна голая цифра — всегда фото этого артикула
     return bool(re.match(
-        rf'^{re.escape(article_norm)}(_\d+|\(\d+\))$',
+        rf'^{re.escape(article_norm)}(_\d+|\(\d+\)|\d)$',
         stem,
         flags=re.I,
     ))
